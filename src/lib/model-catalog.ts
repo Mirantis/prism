@@ -5,7 +5,7 @@
  * Two layers. The **bundled floor** (`model-limits.generated.json`, vendored from
  * models.dev by `src/scripts/generate-model-limits.ts`) is always present and
  * always sufficient on its own. A **remote overlay** from `MODELS_DEV_URL`
- * (models.dev unless an operator sets `off`) is fetched at boot and once a day
+ * (opt-in: unset means none) is fetched at boot and once a day
  * (`services/model-catalog-refresh.ts`), so a model released or repriced since
  * the last build gets a real window and price.
  *
@@ -438,7 +438,7 @@ export async function refreshModelCatalog(): Promise<ModelCatalog | null> {
   const url = config.modelsDevUrl;
   if (!url) {
     state = 'disabled';
-    logger.info('[ModelCatalog] MODELS_DEV_URL is off; using the bundled catalog');
+    logger.info('[ModelCatalog] MODELS_DEV_URL is not set; using the bundled catalog');
     return null;
   }
 

@@ -51,8 +51,10 @@ const child = spawn(server, [], {
     // Don't connect to Slack during the smoke test.
     SLACK_BOT_TOKEN: '',
     SLACK_APP_TOKEN: '',
-    // Nor reach a model registry: the bundled catalog is what the binary ships with.
-    MODELS_DEV_URL: 'off',
+    // Nor reach a model registry. Off by default, but this spreads process.env
+    // and boots for real on every OS in CI, so pin it: the bundled catalog is what
+    // the binary ships with anyway.
+    MODELS_DEV_URL: '',
     // This test checks the binary. A Linux runner has a container engine, and the
     // server would pull the exec image before it serves /health.
     EXECUTION_ENVIRONMENT: 'local',

@@ -12,6 +12,7 @@ import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { VoiceConversation, type VoiceConversationOptions } from '../voice-conversation';
 import { MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE } from '../resampler';
+import { currentSpendContext } from '../../../lib/spend-context';
 
 vi.mock('../realtime-usage', () => ({ recordRealtimeUsage: vi.fn() }));
 
@@ -719,6 +720,31 @@ describe('deferred tools', () => {
       'gh__create_issue',
       'load_tools',
     ]);
+  });
+});
+
+describe('tool spend', () => {
+  it('runs a tool inside the session\'s spend context', async () => {
+    let seen: ReturnType<typeof currentSpendContext>;
+    const tools = {
+      declarations: [{ name: 'code', description: 'code', parameters: {} }],
+      count: 1,
+      execute: vi.fn(async () => {
+        seen = currentSpendContext();
+        return 'done';
+      }),
+    };
+    const { h, send } = await speakingHarness(MEETING_SAMPLE_RATE, {
+      tools,
+      spend: { purpose: 'meeting', requestId: 'call-7', threadId: 'thread-7' },
+    });
+    active = h;
+
+    send({ type: 'response.function_call_arguments.done', call_id: 'c1', name: 'code', arguments: '{}' });
+    await settle();
+
+    expect(tools.execute).toHaveBeenCalled();
+    expect(seen).toEqual({ requestId: 'call-7', threadId: 'thread-7', source: { kind: 'meeting' } });
   });
 });
 

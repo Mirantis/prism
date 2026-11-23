@@ -770,12 +770,14 @@ const rawContextWindowTokens = parseInt(process.env.CONTEXT_WINDOW_TOKENS || '',
 const contextWindowTokensOverride =
   Number.isFinite(rawContextWindowTokens) && rawContextWindowTokens > 0 ? rawContextWindowTokens : null;
 
-// The registry the model catalog refreshes from: models.dev unless the operator
-// names another URL, or `off` for an install that must make no outbound call of
-// its own. A blank value is the default.
+// Opt-in: null unless the operator names a registry URL, so the runtime makes no
+// outbound call of its own by default. Enablement derives from whether a value is
+// set, matching `nexusMcpUrl` and `otelEndpoint` — there is no separate boolean.
+// Whitespace collapses to null so a blank line in a .env file reads as "off"
+// rather than as an unreachable URL that would warn on every boot, and `off`
+// reads as off too rather than as a URL.
 const rawModelsDevUrl = (process.env.MODELS_DEV_URL ?? '').trim();
-const modelsDevUrlOverride =
-  rawModelsDevUrl.toLowerCase() === 'off' ? null : rawModelsDevUrl || 'https://models.dev/api.json';
+const modelsDevUrlOverride = rawModelsDevUrl.toLowerCase() === 'off' ? null : rawModelsDevUrl || null;
 
 // Compaction threshold: 0 explicitly disables auto-compaction (null); 1–100 is
 // a valid percent; anything else falls back to the default.

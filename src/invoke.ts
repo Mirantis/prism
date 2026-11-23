@@ -938,16 +938,6 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
 }
 
 /**
- * Aggregating wrapper around invokeStream(): drains the step stream into a
- * single InvokeResponse. Used by callers that need the full result before
- * acting (heartbeat, task tool, cron). Streaming callers should use
- * invokeStream() directly.
- *
- * All preflight, context fetch, and friendly error formatting live in
- * invokeStream() — this wrapper has no try/catch, since errors arrive as
- * yielded steps (with optional structured `error` metadata).
- */
-/**
  * The spend context of an `invoke()` run: its own request, started by its mode. A
  * subagent runs inside its parent's request.
  */
@@ -961,6 +951,16 @@ function spendContextFor(request: InvokeRequest): SpendContext {
   };
 }
 
+/**
+ * Aggregating wrapper around invokeStream(): drains the step stream into a
+ * single InvokeResponse. Used by callers that need the full result before
+ * acting (heartbeat, task tool, cron). Streaming callers should use
+ * invokeStream() directly.
+ *
+ * All preflight, context fetch, and friendly error formatting live in
+ * invokeStream() — this wrapper has no try/catch, since errors arrive as
+ * yielded steps (with optional structured `error` metadata).
+ */
 export async function invoke(request: InvokeRequest): Promise<InvokeResponse> {
   // Best-effort lookup so the log line below carries the agent name.
   // invokeStream() does its own context fetch; we re-query here purely

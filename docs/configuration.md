@@ -557,7 +557,7 @@ defines**.
 | `LITELLM_MODEL_ID` | **(LiteLLM)** Main model, as your proxy names it | `claude-opus-5-5` |
 | `LITELLM_CLASSIFICATION_MODEL_ID` | **(LiteLLM)** Fast model for classification gates, as your proxy names it. Name a Claude or other non-reasoning model: the gates allow a few output tokens, and a reasoning model can use them up before it answers. | `claude-haiku-5-5` |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window (tokens) to assume for the agent's model. Only needed when the catalog doesn't recognize it. Ignored unless a positive integer. | derived from the model ID |
-| `MODELS_DEV_URL` | Where the runtime fetches model windows and prices, at startup and once a day. `off` makes no outbound call and uses the catalog shipped with the release. | `https://models.dev/api.json` |
+| `MODELS_DEV_URL` | Refresh the model catalog (windows and prices) from a registry at startup and once a day. Unset means no outbound call, bundled catalog only. | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-[compact](compaction.md) a conversation when its context occupancy reaches this percent of the model's window. `0` disables auto-compaction; out-of-range values fall back to the default. | `90` |
 | `COMPACTION_TAIL_MESSAGES` | At most this many of the newest messages stay out of compaction and remain in the context verbatim. A long latest reply stays whole when it fits. `0` summarizes everything. | `6` |
 | `IDLE_COMPACTION` | `off` stops [compacting](compaction.md) a large conversation while it sits idle, which happens only under `CHAT_CACHE_TTL=1h`. Choose `off` to keep the longer cache and threshold compaction but never summarize a conversation only because it paused. | on |
@@ -644,19 +644,23 @@ report a model's window size or price, so the runtime reads both from a catalog
 sourced from [models.dev](https://models.dev). A copy ships with each release and
 needs no network.
 
-The runtime also fetches models.dev at startup and once a day, so a model released
-or repriced after the build gets a real window and price. A failed fetch never
-blocks startup: the last catalog fetched, or the copy in the release, stays in use.
-models.dev is community-maintained, so a wrong number upstream reaches your
-deployment on the next fetch without review.
+That copy is the only source by default. Set
+`MODELS_DEV_URL=https://models.dev/api.json` to also refresh the catalog at
+startup and once a day, so a model released or repriced after the build gets a
+real window and price. The refresh never blocks or fails startup: lookups use the
+last catalog fetched, or the copy in the release, until it lands, and permanently
+if it doesn't. A refreshed entry wins over a bundled one, but no bundled entry is
+lost. Enable it deliberately: models.dev is community-maintained, so a wrong
+number upstream reaches your deployment on the next fetch without review.
 
-**In a sandboxed or egress-filtered deployment, the fetch needs `models.dev`
-allow-listed.** An allow-list is not per-process: once the domain is reachable, it
-is reachable by the **agent's own tools** too. Treat it as adding a domain of
-untrusted, community-edited content to the web the agent can reach, with the same
-review any other reachable domain would get.
+**In a sandboxed or egress-filtered deployment, this is more than a runtime flag.**
+Enabling it means allow-listing `models.dev`, and an allow-list is not per-process:
+once the domain is reachable, it is reachable by the **agent's own tools** too, not
+just by the refresh. Treat it as adding a domain of untrusted, community-edited
+content to the web the agent can reach, with the same review any other reachable
+domain would get.
 
-In policy-governed deployments, set `MODELS_DEV_URL=off`. Refresh the shipped
+In policy-governed deployments, leave `MODELS_DEV_URL` unset. Refresh the shipped
 catalog instead by running `npm run generate:model-limits` and committing the
 result: the windows and prices still get current, a person reviews the diff before
 it ships, and no new domain becomes reachable at runtime.

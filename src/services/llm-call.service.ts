@@ -137,7 +137,11 @@ interface RecordTokensInput extends RecordContext {
   tokens: CallTokens | undefined;
   /** The call ran on a subscription, which bills no tokens: its cost is zero. */
   subscription?: boolean;
-  /** A cost in US dollars that the caller's tool reported, used when the catalog has no price for the model. */
+  /**
+   * A cost in US dollars that the caller's tool reported. It wins over the catalog:
+   * a coding agent reports one row for many requests, and only the tool knows what
+   * each request cost.
+   */
   reportedCostUsd?: number;
 }
 
@@ -164,17 +168,26 @@ function pricedTokens(purpose: string, tokens: CallTokens): PricedTokens {
   };
 }
 
+/**
+ * Purposes whose one row sums many model requests: a coding agent reports the
+ * tokens of a whole task (Claude Code) or turn (Codex). A price tier applies to
+ * one request's prompt, and the sum says nothing about any one prompt, so these
+ * rows take the base price.
+ */
+const SUMMED_PURPOSES: ReadonlySet<string> = new Set<LlmCallPurpose>(['coding-agent']);
+
 function catalogCost(price: ModelPrice, purpose: string, tokens: CallTokens): number {
-  return costMicroUsd(price, pricedTokens(purpose, tokens));
+  const priced = SUMMED_PURPOSES.has(purpose) ? { ...price, tiers: undefined } : price;
+  return costMicroUsd(priced, pricedTokens(purpose, tokens));
 }
 
 function costOf(input: RecordTokensInput): { costMicroUsd: number | null; costSource: string | null } {
   if (input.subscription) return { costMicroUsd: 0, costSource: 'subscription' };
-  const price = priceFor(input.model);
-  if (price && input.tokens) return { costMicroUsd: catalogCost(price, input.purpose, input.tokens), costSource: 'catalog' };
   if (input.reportedCostUsd !== undefined && Number.isFinite(input.reportedCostUsd)) {
     return { costMicroUsd: Math.round(input.reportedCostUsd * 1_000_000), costSource: 'reported' };
   }
+  const price = priceFor(input.model);
+  if (price && input.tokens) return { costMicroUsd: catalogCost(price, input.purpose, input.tokens), costSource: 'catalog' };
   return { costMicroUsd: null, costSource: null };
 }
 
