@@ -297,3 +297,64 @@ fn records_every_mode_under_its_own_purpose() {
     assert_eq!(purpose_for(InvokeMode::Goal), LlmCallPurpose::Goal);
     assert_eq!(purpose_for(InvokeMode::Webhook), LlmCallPurpose::Webhook);
 }
+
+#[test]
+fn gives_each_run_a_request_of_its_own_on_its_thread() {
+    let request = InvokeRequest {
+        mode: InvokeMode::Heartbeat,
+        thread_id: Some("thread-1".into()),
+        ..InvokeRequest::default()
+    };
+    let first = spend_context_for(&request);
+    let second = spend_context_for(&request);
+    assert_eq!(first.thread_id.as_deref(), Some("thread-1"));
+    assert_eq!(
+        first.source,
+        Some(SpendSource::of(SpendSourceKind::Heartbeat))
+    );
+    assert!(!first.request_id.is_empty());
+    assert_ne!(second.request_id, first.request_id);
+}
+
+#[tokio::test]
+async fn keeps_the_request_a_caller_names_and_not_the_request_of_the_turn_it_was_started_from() {
+    let parent = SpendContext {
+        request_id: "message-1".into(),
+        thread_id: Some("thread-1".into()),
+        source: None,
+    };
+    let request = InvokeRequest {
+        mode: InvokeMode::Goal,
+        thread_id: Some("thread-2".into()),
+        request_id: Some("goal-1".into()),
+        source_id: Some("goal-1".into()),
+        ..InvokeRequest::default()
+    };
+    let spend = with_spend_context(parent, async { spend_context_for(&request) }).await;
+    assert_eq!(
+        spend,
+        SpendContext {
+            request_id: "goal-1".into(),
+            thread_id: Some("thread-2".into()),
+            source: Some(SpendSource {
+                kind: SpendSourceKind::Goal,
+                id: Some("goal-1".into()),
+            }),
+        }
+    );
+}
+
+#[tokio::test]
+async fn spends_a_subagents_run_on_its_parents_request() {
+    let parent = SpendContext {
+        request_id: "message-1".into(),
+        thread_id: Some("thread-1".into()),
+        source: None,
+    };
+    let request = InvokeRequest {
+        mode: InvokeMode::Subagent,
+        ..InvokeRequest::default()
+    };
+    let spend = with_spend_context(parent.clone(), async { spend_context_for(&request) }).await;
+    assert_eq!(spend, parent);
+}

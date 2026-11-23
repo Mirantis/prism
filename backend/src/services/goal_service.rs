@@ -41,6 +41,7 @@ use crate::invoke::invoke;
 use crate::lib::classification::get_gate_request;
 use crate::lib::log_redaction::err_json;
 use crate::lib::model_call::{ModelCallMeta, apply_telemetry, call_model};
+use crate::lib::spend_context::{SpendSource, SpendSourceKind};
 use crate::lib::telemetry::{langfuse_telemetry, track_event};
 use crate::prompts::context_builder::format_time_ago;
 use crate::prompts::goal_prompt::{
@@ -691,9 +692,7 @@ impl GoalService {
                 return Ok(());
             }
 
-            let complete = self
-                .should_declare_goal_complete(&goal.objective, &turn.text)
-                .await;
+            let complete = self.should_declare_goal_complete(&goal, &turn.text).await;
 
             let budget_label = goal
                 .token_budget
@@ -798,6 +797,9 @@ impl GoalService {
             agent_id: goal.agent_id.clone(),
             mode: InvokeMode::Goal,
             thread_id: Some(goal.thread_id.clone()),
+            // Every turn of a goal, and its completion checks, is one request.
+            request_id: Some(goal.id.clone()),
+            source_id: Some(goal.id.clone()),
             origin_channel: Some(goal_channel(goal)),
             origin_channel_id: goal.origin_channel_id.clone(),
             prompt: build_goal_continuation_prompt(&GoalPromptInput {
@@ -1029,7 +1031,7 @@ impl GoalService {
     /// Completion gate — the sole completion signal. Fail → CONTINUE so a
     /// gate error can never prematurely complete a goal (the turn/stall caps bound
     /// the loop regardless).
-    async fn should_declare_goal_complete(&self, objective: &str, latest_turn_text: &str) -> bool {
+    async fn should_declare_goal_complete(&self, goal: &Goal, latest_turn_text: &str) -> bool {
         if js::trim(latest_turn_text).is_empty() {
             return false;
         }
@@ -1040,7 +1042,8 @@ impl GoalService {
             params.provider_options = Some(gate.provider_options);
             params.system = Some(GOAL_COMPLETION_GATE_PROMPT.into());
             params.messages = Some(vec![ModelMessage::user(format!(
-                "## Objective\n{objective}\n\n## Agent's Latest Update\n{latest_turn_text}"
+                "## Objective\n{}\n\n## Agent's Latest Update\n{latest_turn_text}",
+                goal.objective
             ))]);
             // 16 is the OpenAI Responses API minimum (a cap — the verdict is one word).
             params.max_output_tokens = Some(16);
@@ -1049,7 +1052,16 @@ impl GoalService {
                 &mut params,
                 langfuse_telemetry("goal-completion-gate", None, None),
             );
-            let result = call_model(ModelCallMeta::new(LlmCallPurpose::GoalGate), params).await?;
+            let meta = ModelCallMeta {
+                thread_id: Some(goal.thread_id.clone()),
+                request_id: Some(goal.id.clone()),
+                source: Some(SpendSource {
+                    kind: SpendSourceKind::Goal,
+                    id: Some(goal.id.clone()),
+                }),
+                ..ModelCallMeta::new(LlmCallPurpose::GoalGate)
+            };
+            let result = call_model(meta, params).await?;
             let text = result.text();
             let decision = js::trim(&text);
             let complete = decision.to_uppercase().starts_with("COMPLETE");
@@ -1147,7 +1159,14 @@ mod tests {
 
     #[test]
     fn delivers_to_the_channel_the_goal_was_started_in() {
-        let goal = |channel: &str| Goal {
+        assert_eq!(goal_channel(&goal_on("slack")), ChannelName::Slack);
+        assert_eq!(goal_channel(&goal_on("websocket")), ChannelName::Websocket);
+        assert_eq!(goal_channel(&goal_on("pigeon")), ChannelName::Websocket);
+    }
+
+    /// A goal started on `channel`.
+    fn goal_on(channel: &str) -> Goal {
+        Goal {
             id: "g".into(),
             agent_id: "a".into(),
             user_id: "u".into(),
@@ -1165,10 +1184,7 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             completed_at: None,
-        };
-        assert_eq!(goal_channel(&goal("slack")), ChannelName::Slack);
-        assert_eq!(goal_channel(&goal("websocket")), ChannelName::Websocket);
-        assert_eq!(goal_channel(&goal("pigeon")), ChannelName::Websocket);
+        }
     }
 
     #[tokio::test]
@@ -1262,7 +1278,7 @@ mod tests {
     async fn never_completes_a_goal_on_an_empty_update() {
         assert!(
             !service()
-                .should_declare_goal_complete("Ship it", "   ")
+                .should_declare_goal_complete(&goal_on("websocket"), "   ")
                 .await
         );
     }

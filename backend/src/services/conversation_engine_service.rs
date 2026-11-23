@@ -26,6 +26,7 @@ use crate::invoke::invoke_stream;
 use crate::lib::classification::get_gate_request;
 use crate::lib::log_redaction::err_json;
 use crate::lib::model_call::{ModelCallMeta, call_model};
+use crate::lib::spend_context::{SpendContext, SpendSource, SpendSourceKind, with_spend_context};
 use crate::lib::telemetry::{is_telemetry_enabled, langfuse_telemetry, track_event};
 use crate::lib::tool_lifecycle::ToolLifecycleListener;
 use crate::prompts::agent_message_prompt::{agent_message_columns, render_agent_message};
@@ -1051,6 +1052,9 @@ impl ConversationEngineService {
                     // attachment that failed to download), so they belong to the first
                     // turn only — repeating them in a follow-up would re-report stale events.
                     let mut runtime_notices = input.runtime_notices.clone();
+                    // The model calls of a turn are spent on the first message it answers.
+                    // A message steered into the turn joins that message's request.
+                    let mut request_id = exchange.lock().owed.first().cloned().unwrap_or_default();
 
                     loop {
                         let turn_metadata = match &input.channel_label_for {
@@ -1109,8 +1113,15 @@ impl ConversationEngineService {
                                 take(&exchange, claim.drain(Some(&selected)).unwrap_or_default());
                             })
                         };
-                        let streamed = self
-                            .stream_turn(StreamTurnParams {
+                        let spend = SpendContext {
+                            request_id: request_id.clone(),
+                            thread_id: Some(thread_id.clone()),
+                            source: Some(SpendSource::of(SpendSourceKind::Chat)),
+                        };
+                        // Boxed, so the turn's future does not grow the exchange's.
+                        let streamed = with_spend_context(
+                            spend,
+                            self.stream_turn(StreamTurnParams {
                                 user_id: user_id.clone(),
                                 agent_id: agent_id.clone(),
                                 thread_id: thread_id.clone(),
@@ -1133,7 +1144,9 @@ impl ConversationEngineService {
                                 on_history_read,
                                 prompt_message_id: prompt_message_id.clone(),
                             })
-                            .await?;
+                            .boxed(),
+                        )
+                        .await?;
 
                         if !streamed.text.is_empty() {
                             response_texts.push(streamed.text);
@@ -1194,6 +1207,7 @@ impl ConversationEngineService {
                         append_prompt = true;
                         prompt_source = prompt_source_of(&leftover);
                         appended_message_ids = leftover.iter().map(|p| p.id.clone()).collect();
+                        request_id = leftover[0].id.clone();
                         prompt_message_id = None;
                         runtime_notices = None;
                     }
@@ -1884,4 +1898,58 @@ pub(crate) mod testing {
         Arc<dyn Fn(InvokeRequest) -> BoxStream<'static, anyhow::Result<InvokeStep>> + Send + Sync>;
 
     pub(crate) static INVOKE: RwLock<Option<Invoke>> = RwLock::new(None);
+}
+
+#[cfg(test)]
+mod spend_tests {
+    use std::sync::Arc;
+
+    use futures::StreamExt;
+
+    use super::*;
+    use crate::lib::spend_context::current_spend_context;
+    use crate::services::question_cards::question_card_service::tests::{
+        THREAD, USER, agent, agent_id, rows,
+    };
+    use crate::types::{InvokeRequest, InvokeStep};
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn spends_the_model_calls_of_a_turn_on_the_message_it_answers() {
+        let _db = agent().await;
+        let seen: Arc<parking_lot::Mutex<Vec<Option<SpendContext>>>> = Arc::default();
+        let record = seen.clone();
+        *testing::INVOKE.write() = Some(Arc::new(move |_: InvokeRequest| {
+            record.lock().push(current_spend_context());
+            futures::stream::iter(vec![Ok(InvokeStep {
+                text: "ok".into(),
+                ..InvokeStep::default()
+            })])
+            .boxed()
+        }));
+
+        Box::pin(CONVERSATION_ENGINE_SERVICE.chat(ChatInput {
+            agent_id: agent_id(),
+            user_id: USER.into(),
+            message: "hi".into(),
+            thread_id: Some(THREAD.into()),
+            ..ChatInput::default()
+        }))
+        .await
+        .unwrap();
+
+        let stored = rows(THREAD)
+            .await
+            .into_iter()
+            .find(|row| row.role == crate::db::models::MessageRole::User)
+            .unwrap();
+        assert_eq!(
+            *seen.lock(),
+            vec![Some(SpendContext {
+                request_id: stored.id,
+                thread_id: Some(THREAD.into()),
+                source: Some(SpendSource::of(SpendSourceKind::Chat)),
+            })]
+        );
+    }
 }

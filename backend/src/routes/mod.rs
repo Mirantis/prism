@@ -27,6 +27,7 @@ pub mod model_selection;
 pub mod question_cards;
 pub mod slack;
 pub mod slack_router;
+pub mod spending;
 pub mod teams;
 pub mod threads;
 pub mod update;

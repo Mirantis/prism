@@ -45,6 +45,7 @@ use crate::services::computer::picture_stream::ScreenFrame;
 use crate::services::conversation_service::CONVERSATION_SERVICE;
 use crate::services::meeting::audio_playback::clock_ms;
 use crate::services::meeting::gate_stats::mean_gate_latency_ms;
+use crate::services::meeting::realtime_usage::{RealtimePurpose, RealtimeSpend};
 use crate::services::meeting::response_policy::ResponseMode;
 use crate::services::meeting::tool_bridge::{MeetingToolBridgeInput, prepare_meeting_tools};
 use crate::services::meeting::voice_conversation::{
@@ -658,6 +659,7 @@ impl VoiceChatService {
             model: None,
             voice: Some(agent_voice.voice.clone()),
             endpoint_override: None,
+            spend: RealtimeSpend::new(RealtimePurpose::VoiceChat, thread_id.clone()),
             on_session_lost: Some(Arc::new(move |reason: String| {
                 tokio::spawn(async move {
                     self.end(epoch, VoiceChatEndStatus::Error, &reason, None)

@@ -27,7 +27,8 @@ use crate::config::{CONFIG, ClaudeCodeTierModel, CodingAgentName, TierSet};
 use crate::lib::coding_agents::cli_run::{CliRunSpec, run_cli};
 use crate::lib::coding_agents::coding_agent::{
     CodingAgent, CodingAgentEvent, CodingAgentHome, CodingAgentMode, CodingAgentRefusal,
-    CodingAgentRun, CodingAgentStopReason, CodingAgentTask, PLAN_ONLY_INSTRUCTION,
+    CodingAgentRun, CodingAgentStopReason, CodingAgentTask, CodingAgentUsage,
+    PLAN_ONLY_INSTRUCTION,
 };
 use crate::lib::coding_agents::deferred_run::{aborted, deferred_run};
 use crate::lib::coding_agents::shared_skills_home::prepare_shared_skills_home;
@@ -200,7 +201,7 @@ impl CodingAgent for ClaudeCodeAgent {
                                 cwd: launch_task.workdir.clone(),
                                 env,
                                 parse_line: Box::new(move |line| {
-                                    parse_line(line, &parse_task, &parse_settings)
+                                    parse_line(line, &parse_task, &parse_settings, subscription)
                                 }),
                             },
                             Some(launch_target),
@@ -359,6 +360,7 @@ fn parse_line(
     line: &str,
     task: &CodingAgentTask,
     settings: &Settings,
+    subscription: bool,
 ) -> anyhow::Result<Vec<CodingAgentEvent>> {
     let parsed: Value = serde_json::from_str(line)?;
     if parsed.is_null() {
@@ -404,6 +406,28 @@ fn parse_line(
             }
         }
     } else if line_type == Some("result") {
+        // On the `result` line: every model the run used, its own side calls
+        // included. A run stopped before this line reports no usage.
+        let model_usage = present(&parsed, "modelUsage").and_then(Value::as_object);
+        for (model, usage) in model_usage.into_iter().flatten() {
+            let count = |key: &str| {
+                present(usage, key)
+                    .and_then(Value::as_f64)
+                    .map_or(0, |count| count as i64)
+            };
+            events.push(CodingAgentEvent::Usage {
+                usage: CodingAgentUsage {
+                    model: model.clone(),
+                    input_tokens: count("inputTokens"),
+                    cache_read_tokens: count("cacheReadInputTokens"),
+                    cache_write_tokens: count("cacheCreationInputTokens"),
+                    long_cache_write_tokens: count("cacheCreationEphemeral1hInputTokens"),
+                    output_tokens: count("outputTokens"),
+                    cost_usd: usage.get("costUSD").and_then(Value::as_f64),
+                    subscription,
+                },
+            });
+        }
         let refusals = match present(&parsed, "permission_denials") {
             Some(denials) => denials
                 .as_array()

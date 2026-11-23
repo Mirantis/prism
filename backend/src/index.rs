@@ -40,7 +40,7 @@ use crate::lib::langfuse::{init_langfuse, shutdown_langfuse};
 use crate::lib::llm_providers::create_provider::{create_provider, missing_provider_settings};
 use crate::lib::log_redaction::err_json;
 use crate::lib::mcp_client::close_mcp_clients;
-use crate::lib::model_catalog::{cancel_model_catalog_refresh, refresh_model_catalog};
+use crate::lib::model_catalog::cancel_model_catalog_refresh;
 use crate::lib::single_agent_bootstrap::resolve_or_bootstrap_single_agent;
 use crate::lib::startup_telemetry::{TrackAgentStartedOptions, track_agent_started};
 use crate::lib::telemetry::{init_telemetry, shutdown_telemetry, track_event};
@@ -72,6 +72,7 @@ use crate::services::heartbeat_service::{HEARTBEAT_SERVICE, HeartbeatSchedule};
 use crate::services::inbound_message_service::INBOUND_MESSAGE_SERVICE;
 use crate::services::meeting::meeting_bot_service::MEETING_BOT_SERVICE;
 use crate::services::message_delivery_service::MESSAGE_DELIVERY_SERVICE;
+use crate::services::model_catalog_refresh::start_model_catalog_refresh;
 use crate::services::pending_work_service::{
     PENDING_WORK_SERVICE, PendingWorkKind, PendingWorkResumer,
 };
@@ -103,6 +104,8 @@ use indexmap::IndexMap;
 /// The file janitor's hourly sweep, stopped by the shutdown.
 static FILE_JANITOR: LazyLock<Mutex<Option<JoinHandle<()>>>> = LazyLock::new(|| Mutex::new(None));
 static USAGE_TELEMETRY: LazyLock<Mutex<Option<JoinHandle<()>>>> =
+    LazyLock::new(|| Mutex::new(None));
+static MODEL_CATALOG_REFRESH: LazyLock<Mutex<Option<JoinHandle<()>>>> =
     LazyLock::new(|| Mutex::new(None));
 
 /// The process entry. Loads `.env` before any thread starts (it writes the
@@ -257,9 +260,6 @@ async fn start() -> i32 {
 
     // Initialize product telemetry (OTEL Logs → Collector → S3)
     init_telemetry(|| RUNTIME_STATE_SERVICE.deployment_id()).await;
-
-    // Refresh the model-window catalog in the background; lookups use the bundle until it lands.
-    tokio::spawn(refresh_model_catalog());
 
     let app = create_app();
     // Other agents' messages, on a port of their own (`AGENT_MESSAGES_PORT`), and
@@ -684,6 +684,10 @@ async fn initialize() -> anyhow::Result<()> {
     // minutes (see lib/usage_telemetry.rs). Nothing runs without an OTLP endpoint.
     *USAGE_TELEMETRY.lock() = start_usage_telemetry(&agent.id);
 
+    // Model windows and prices: with MODELS_DEV_URL set, the stored catalog now and
+    // the registry in the background and then daily (see services/model_catalog_refresh.rs).
+    *MODEL_CATALOG_REFRESH.lock() = Some(start_model_catalog_refresh().await);
+
     // Embed the memory entries that have no vector yet. In-process and best-effort:
     // it never blocks startup, and a failure costs a log line.
     tokio::spawn(async {
@@ -859,6 +863,9 @@ async fn shutdown(signal: &'static str, servers: Arc<Mutex<Option<Servers>>>) {
     }
     if let Some(usage) = USAGE_TELEMETRY.lock().take() {
         usage.abort();
+    }
+    if let Some(refresh) = MODEL_CATALOG_REFRESH.lock().take() {
+        refresh.abort();
     }
     // A signal early in boot would otherwise leave the catalog fetch holding a
     // socket, so the server close waits and the 5 s force exit below fires.

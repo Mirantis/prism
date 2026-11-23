@@ -28,6 +28,7 @@ use crate::db::sql_types::DbDateTime;
 use crate::lib::log_redaction::err_json;
 use crate::lib::telemetry::{flush_telemetry, is_telemetry_enabled, llm_routing, track_event};
 use crate::log_warn;
+use crate::services::llm_call_service::OTHER_MODEL_PURPOSES;
 use crate::services::runtime_state_service::{LLM_USAGE_REPORTED_THROUGH, RUNTIME_STATE_SERVICE};
 use crate::support::{from_ms, iso, now_ms, parse_iso};
 
@@ -129,11 +130,17 @@ async fn report_window(
     sink: &impl UsageSink,
 ) -> anyhow::Result<bool> {
     let owner = agent_id.to_string();
+    // The agent's own model alone: the event names one provider, the one config gives.
+    let other_models: Vec<String> = OTHER_MODEL_PURPOSES
+        .iter()
+        .map(|purpose| purpose.as_str().into_owned())
+        .collect();
     let rows: Vec<(String, DbDateTime, i64, i64, i64, i64)> = crate::db::read(move |conn| {
         Ok(l::llm_calls
             .filter(l::agent_id.eq(&owner))
             .filter(l::created_at.ge(DbDateTime(from_ms(start))))
             .filter(l::created_at.lt(DbDateTime(from_ms(end))))
+            .filter(l::purpose.ne_all(&other_models))
             .select((
                 l::model,
                 l::created_at,
@@ -308,6 +315,41 @@ mod tests {
         crate::services::memory_store::tests::ensure_agent(OWNER);
         crate::services::memory_store::tests::ensure_agent(OTHER_AGENT);
         db
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn reports_the_agents_own_model_alone_leaving_out_the_coding_agents_and_the_voice_models_calls()
+     {
+        let _db = setup();
+        record_call(h10() + 1000, CHAT_MODEL, [1000, 0, 0, 0], OWNER).await;
+        for (purpose, model) in [
+            ("coding-agent", "claude-sonnet-5-5"),
+            ("voice-chat", "gpt-realtime-2.1"),
+        ] {
+            let mut row = NewLlmCall::new(OWNER, purpose, model);
+            row.created_at = DbDateTime(from_ms(h10() + 2000));
+            row.input_tokens = 500;
+            crate::db::run(move |conn| {
+                diesel::insert_into(l::llm_calls)
+                    .values(&row)
+                    .execute(conn)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        }
+
+        let sink = Recorder::default();
+        report_closed_hours_at(OWNER, now(), &sink).await;
+
+        let models: Vec<String> = sink
+            .events
+            .lock()
+            .iter()
+            .map(|e| e["usage.model"].clone())
+            .collect();
+        assert_eq!(models, vec![CHAT_MODEL.to_string()]);
     }
 
     #[tokio::test]

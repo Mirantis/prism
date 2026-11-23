@@ -1,11 +1,12 @@
-//! The model catalog: which input-context window each model has.
+//! The model catalog: which input-context window each model has, and what its
+//! tokens cost.
 //!
 //! Two layers. The **bundled floor** (`model_limits.generated.json`, vendored from
 //! models.dev by `src/scripts/generate_model_limits.rs`) is always present and always
-//! sufficient on its own — by default it is the only layer. Setting
-//! `MODELS_DEV_URL` opts into a **remote overlay** fetched once at startup, so a
-//! model released since the last build gets a real window instead of being
-//! silently unmeasurable.
+//! sufficient on its own. A **remote overlay** from `MODELS_DEV_URL` (opt-in: unset
+//! means none) is fetched at boot and once a day
+//! (`services/model_catalog_refresh.rs`), so a model released or repriced since the
+//! last build gets a real window and price.
 //!
 //! Why models.dev is the source at all: none of the providers this runtime talks to
 //! report a context window. Anthropic's Models API — the only source of
@@ -36,7 +37,8 @@
 //! `MIN_PLAUSIBLE_CONTEXT` are rejected outright (a tiny window would otherwise
 //! force compaction on every turn); the newest tail messages are always preserved
 //! and nothing is deleted (originals stay in the DB); and the nothing-to-compact +
-//! once-per-exchange guards cap the damage at wasted summarize calls.
+//! once-per-exchange guards cap the damage at wasted summarize calls. A price from
+//! here reaches the spending estimate alone.
 
 use std::sync::{Arc, LazyLock};
 
@@ -53,17 +55,80 @@ use crate::config::CONFIG;
 use crate::lib::log_redaction::err_json;
 use crate::lib::proxy_dispatcher::get_proxy_dispatcher;
 use crate::lib::telemetry::track_event;
-use crate::support::now_ms;
+use crate::support::{js, now_ms};
 use crate::{log_debug, log_info, log_warn};
 
 /// The bundled floor, as vendored from models.dev.
 const BUNDLED_JSON: &str = include_str!("model_limits.generated.json");
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// A model's prices, in US dollars per million tokens, as models.dev lists them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPrice {
+    #[serde(serialize_with = "js::number_serde::serialize")]
+    pub input: f64,
+    #[serde(serialize_with = "js::number_serde::serialize")]
+    pub output: f64,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "js::number_serde::serialize_option"
+    )]
+    pub cache_read: Option<f64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "js::number_serde::serialize_option"
+    )]
+    pub cache_write: Option<f64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "js::number_serde::serialize_option"
+    )]
+    pub input_audio: Option<f64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "js::number_serde::serialize_option"
+    )]
+    pub output_audio: Option<f64>,
+    /// Higher prices for a prompt above `above` tokens, lowest threshold first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tiers: Option<Vec<PriceTier>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PriceTier {
+    #[serde(serialize_with = "js::number_serde::serialize")]
+    pub above: f64,
+    #[serde(serialize_with = "js::number_serde::serialize")]
+    pub input: f64,
+    #[serde(serialize_with = "js::number_serde::serialize")]
+    pub output: f64,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "js::number_serde::serialize_option"
+    )]
+    pub cache_read: Option<f64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "js::number_serde::serialize_option"
+    )]
+    pub cache_write: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CatalogEntry {
     /// Max input tokens the model accepts.
     pub context: i64,
     pub output: Option<i64>,
+    /// Absent where models.dev lists no price.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<ModelPrice>,
 }
 
 /// Provider (`bedrock` | `azure` | `openai` | `anthropic`) -> model ID -> limits.
@@ -74,7 +139,7 @@ pub type ModelCatalog = IndexMap<String, IndexMap<String, CatalogEntry>>;
 pub enum CatalogState {
     /// No refresh configured — the bundled floor is the whole story.
     Disabled,
-    /// A refresh is in flight; reads are served from the bundled floor.
+    /// A refresh is in flight; reads are served from the current catalog.
     Pending,
     /// No refresh has run (or none will) and the floor is current.
     Bundled,
@@ -151,6 +216,65 @@ pub fn is_usable_registry_entry(id: &str, model: &Value, registry_id: &str) -> b
     }
 }
 
+/// A registry price field, or `None` when it is not a usable rate.
+fn rate(value: Option<&Value>) -> Option<f64> {
+    value
+        .and_then(Value::as_f64)
+        .filter(|v| v.is_finite() && *v >= 0.0)
+}
+
+/// A registry entry's price, or `None` when it lists no input and output rate.
+fn price_of(cost: Option<&Value>) -> Option<ModelPrice> {
+    let field = |name: &str| rate(cost.and_then(|c| c.get(name)));
+    let input = field("input")?;
+    let output = field("output")?;
+
+    let mut tiers: Vec<PriceTier> = cost
+        .and_then(|c| c.get("tiers"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|tier| {
+            let spec = tier.get("tier");
+            if spec.and_then(|t| t.get("type")).and_then(Value::as_str) != Some("context") {
+                return None;
+            }
+            Some(PriceTier {
+                above: rate(spec.and_then(|t| t.get("size")))?,
+                input: rate(tier.get("input"))?,
+                output: rate(tier.get("output"))?,
+                cache_read: rate(tier.get("cache_read")),
+                cache_write: rate(tier.get("cache_write")),
+            })
+        })
+        .collect();
+    tiers.sort_by(|a, b| a.above.total_cmp(&b.above));
+
+    Some(ModelPrice {
+        input,
+        output,
+        cache_read: field("cache_read"),
+        cache_write: field("cache_write"),
+        input_audio: field("input_audio"),
+        output_audio: field("output_audio"),
+        tiers: (!tiers.is_empty()).then_some(tiers),
+    })
+}
+
+/// The catalog entry for a usable registry entry (see `is_usable_registry_entry`).
+/// Shared with the generator.
+pub fn catalog_entry_of(model: &Value) -> CatalogEntry {
+    let limit = &model["limit"];
+    CatalogEntry {
+        context: limit["context"].as_f64().unwrap_or(0.0) as i64,
+        output: limit
+            .get("output")
+            .and_then(Value::as_f64)
+            .map(|o| o as i64),
+        cost: price_of(model.get("cost")),
+    }
+}
+
 static BUNDLED_CATALOG: LazyLock<Arc<ModelCatalog>> = LazyLock::new(|| {
     let catalog: ModelCatalog =
         serde_json::from_str(BUNDLED_JSON).expect("the bundled model catalog parses");
@@ -174,6 +298,88 @@ pub fn bundled_model_catalog() -> Arc<ModelCatalog> {
 
 pub fn model_catalog_state() -> CatalogState {
     *STATE.lock()
+}
+
+/// Bedrock cross-region inference profiles prefix the model ID with a geo scope
+/// (`us.`, `eu.`, `au.`, `jp.`, `global.`). models.dev lists most of these
+/// explicitly, but new geos appear before the registry catches up, so strip a known
+/// prefix and retry rather than going dark on `sa.anthropic.claude-opus-5`.
+static REGION_PREFIX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:us|eu|apac|au|jp|ca|sa|in|global)\.").unwrap());
+
+/// Bedrock version suffixes (`-v1:0`, `-v2:1`, `-v1`) that some ID spellings omit.
+static VERSION_SUFFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"-v\d+(?::\d+)?$").unwrap());
+
+/// A context-size marker (`claude-opus-5-5[1m]`).
+static SIZE_MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[^\]]*\]$").unwrap());
+
+/// An OpenRouter-style vendor segment (`anthropic/claude-opus-5`).
+static VENDOR_PATH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z0-9-]+/").unwrap());
+
+static VENDOR_SEGMENT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:anthropic|openai)\.").unwrap());
+
+/// The catalog entry for `model_id`, or `None` when no spelling of it is listed.
+///
+/// The active provider's own entry wins, since the registry tracks providers and
+/// regions separately and their limits and prices differ; another provider's entry
+/// for the same model is the fallback, so an operator can point `LLM_PROVIDER=azure`
+/// at a Bedrock-style ID and a coding agent on another vendor still resolves.
+pub fn find_catalog_entry(model_id: &str) -> Option<CatalogEntry> {
+    if model_id.is_empty() {
+        return None;
+    }
+    let catalog = model_catalog();
+    let active = CONFIG.llm_provider.as_str();
+    let ordered: Vec<_> = catalog
+        .get(active)
+        .into_iter()
+        .chain(
+            catalog
+                .iter()
+                .filter(|(provider, _)| provider.as_str() != active)
+                .map(|(_, models)| models),
+        )
+        .collect();
+
+    for candidate in id_candidates(model_id) {
+        for models in &ordered {
+            if let Some(hit) = models.get(&candidate) {
+                return Some(hit.clone());
+            }
+        }
+    }
+    None
+}
+
+/// `model_id` plus progressively-normalized spellings, most specific first.
+fn id_candidates(model_id: &str) -> Vec<String> {
+    let mut seen: IndexSet<String> = IndexSet::new();
+    // A context-size marker and an OpenRouter-style vendor segment are not part of
+    // any registry id.
+    let unmarked = SIZE_MARKER.replace(model_id, "");
+    let plain = VENDOR_PATH.replace(&unmarked, "").into_owned();
+    let bare = REGION_PREFIX.replace(&plain, "").into_owned();
+    // Azure deployment names are bare (`claude-opus-5`) while Bedrock IDs have an
+    // `anthropic.` vendor segment; try across that boundary too. Bedrock names
+    // OpenAI's models `openai.gpt-…`, which the `openai` provider lists bare.
+    let without_vendor = VENDOR_SEGMENT.replace(&bare, "").into_owned();
+
+    for id in [
+        model_id.to_string(),
+        plain.clone(),
+        bare.clone(),
+        VERSION_SUFFIX.replace(&plain, "").into_owned(),
+        VERSION_SUFFIX.replace(&bare, "").into_owned(),
+        without_vendor.clone(),
+        VERSION_SUFFIX.replace(&without_vendor, "").into_owned(),
+    ] {
+        if !id.is_empty() {
+            seen.insert(id);
+        }
+    }
+
+    seen.into_iter().collect()
 }
 
 /// Turn a raw models.dev payload into a provider-scoped catalog, or `None` when
@@ -208,13 +414,7 @@ pub fn reshape_registry(raw: &Value) -> Option<ModelCatalog> {
             if !is_usable_registry_entry(id, model, registry_id) {
                 continue;
             }
-            let limit = &model["limit"];
-            let context = limit["context"].as_f64().unwrap_or(0.0) as i64;
-            let output = limit
-                .get("output")
-                .and_then(Value::as_f64)
-                .map(|o| o as i64);
-            entries.insert(id.clone(), CatalogEntry { context, output });
+            entries.insert(id.clone(), catalog_entry_of(model));
             total += 1;
         }
 
@@ -271,7 +471,7 @@ pub fn install_remote_catalog(remote: &ModelCatalog) -> InstallResult {
         // Overlay wins per entry; anything only the floor has survives.
         let mut models = floor.clone();
         for (id, entry) in overlay {
-            models.insert(id.clone(), *entry);
+            models.insert(id.clone(), entry.clone());
         }
         merged.insert(provider.clone(), models);
     }
@@ -328,15 +528,14 @@ struct RejectedPayload {
     message: String,
 }
 
-/// Fetch models.dev once and install the result as an overlay.
+/// Fetch models.dev once and install the result as an overlay. Answers the overlay
+/// it installed, or `None`.
 ///
-/// **Total — never fails.** Every failure degrades to the bundled floor, which was
-/// already serving lookups, so there is nothing for a caller to handle. Spawn it;
-/// do not await it on the boot path.
+/// **Total — never fails.** Every failure keeps the catalog that was already serving
+/// lookups, so there is nothing for a caller to handle.
 ///
-/// Without `MODELS_DEV_URL` the state becomes `disabled` and it logs at debug
-/// `[ModelCatalog] MODELS_DEV_URL unset; using the bundled catalog (no outbound
-/// call)`. Otherwise the state is `pending` while the fetch runs (one deadline of
+/// Without `MODELS_DEV_URL` the state becomes `disabled` and it logs
+/// `[ModelCatalog] MODELS_DEV_URL is not set; using the bundled catalog`. Otherwise the state is `pending` while the fetch runs (one deadline of
 /// `FETCH_TIMEOUT_MS` composed with the cancel token), then `remote` with the info
 /// line `[ModelCatalog] refreshed from models.dev in ${ms}ms (${provider=count …},
 /// ${added} new, ${changed} changed)` and, when entries diverged, the warning
@@ -344,18 +543,14 @@ struct RejectedPayload {
 /// than 2x; regenerate the snapshot to review`. A cancel returns the state to
 /// `bundled` (debug `[ModelCatalog] refresh canceled`); a rejected payload sets
 /// `failed` and warns `[ModelCatalog] models.dev payload rejected (${message});
-/// using the bundled catalog`; any other failure sets `failed` and warns `{ err }`
-/// `[ModelCatalog] refresh failed; using the bundled catalog`. Each outcome but the
+/// keeping the current catalog`; any other failure sets `failed` and warns `{ err }`
+/// `[ModelCatalog] refresh failed; keeping the current catalog`. Each outcome but the
 /// cancel emits `model catalog refreshed`.
-pub async fn refresh_model_catalog() {
+pub async fn refresh_model_catalog() -> Option<ModelCatalog> {
     let Some(url) = CONFIG.models_dev_url.clone().filter(|url| !url.is_empty()) else {
         *STATE.lock() = CatalogState::Disabled;
-        // debug, not info: this is the default, so an info line would add one entry
-        // to every boot log saying nothing happened.
-        log_debug!(
-            "[ModelCatalog] MODELS_DEV_URL unset; using the bundled catalog (no outbound call)"
-        );
-        return;
+        log_info!("[ModelCatalog] MODELS_DEV_URL is not set; using the bundled catalog");
+        return None;
     };
 
     *STATE.lock() = CatalogState::Pending;
@@ -375,7 +570,7 @@ pub async fn refresh_model_catalog() {
         },
     };
 
-    match outcome {
+    let installed = match outcome {
         Ok(remote) => {
             let counts = install_remote_catalog(&remote);
             *STATE.lock() = CatalogState::Remote;
@@ -403,11 +598,13 @@ pub async fn refresh_model_catalog() {
             }
 
             emit_outcome("remote", started_at, Some(&remote), Some(&counts), None);
+            Some(remote)
         }
         // Our own abort means shutdown, which is not an outcome worth reporting.
         Err(RefreshError::Canceled) => {
             *STATE.lock() = CatalogState::Bundled;
             log_debug!("[ModelCatalog] refresh canceled");
+            None
         }
         Err(RefreshError::Failed(error)) if error.downcast_ref::<RejectedPayload>().is_some() => {
             *STATE.lock() = CatalogState::Failed;
@@ -415,7 +612,7 @@ pub async fn refresh_model_catalog() {
                 .downcast_ref::<RejectedPayload>()
                 .expect("checked above");
             log_warn!(
-                "[ModelCatalog] models.dev payload rejected ({}); using the bundled catalog",
+                "[ModelCatalog] models.dev payload rejected ({}); keeping the current catalog",
                 rejected.message
             );
             let outcome = if matches!(rejected.kind, FailureKind::Shape | FailureKind::Parse) {
@@ -424,6 +621,7 @@ pub async fn refresh_model_catalog() {
                 "failed"
             };
             emit_outcome(outcome, started_at, None, None, Some(rejected.kind));
+            None
         }
         Err(other) => {
             *STATE.lock() = CatalogState::Failed;
@@ -437,13 +635,15 @@ pub async fn refresh_model_catalog() {
             };
             log_warn!(
                 json!({ "err": err_json(&error) }),
-                "[ModelCatalog] refresh failed; using the bundled catalog"
+                "[ModelCatalog] refresh failed; keeping the current catalog"
             );
             emit_outcome("failed", started_at, None, None, Some(kind));
+            None
         }
-    }
+    };
 
     *CONTROLLER.lock() = None;
+    installed
 }
 
 /// How a refresh ended without a catalog.
@@ -626,13 +826,17 @@ mod tests {
     }
 
     fn entry(context: i64, output: Option<i64>) -> CatalogEntry {
-        CatalogEntry { context, output }
+        CatalogEntry {
+            context,
+            output,
+            cost: None,
+        }
     }
 
     fn catalog(provider: &str, entries: &[(&str, CatalogEntry)]) -> ModelCatalog {
         let mut models = IndexMap::new();
         for (id, entry) in entries {
-            models.insert(id.to_string(), *entry);
+            models.insert(id.to_string(), entry.clone());
         }
         let mut catalog = ModelCatalog::new();
         catalog.insert(provider.to_string(), models);
@@ -737,6 +941,60 @@ mod tests {
     }
 
     #[test]
+    fn keeps_the_prices_with_the_long_context_tiers_lowest_first_and_drops_what_is_not_a_rate() {
+        // Field names and values as models.dev lists them.
+        let reshaped = reshape_registry(&json!({
+            "openai": {
+                "models": {
+                    "gpt-5.5": {
+                        "limit": { "context": 1_050_000, "output": 128_000 },
+                        "cost": {
+                            "input": 5, "output": 30, "cache_read": 0.5,
+                            "tiers": [
+                                { "input": 10, "output": 45, "cache_read": 1, "tier": { "type": "context", "size": 272_000 } },
+                                { "input": 99, "output": 99, "tier": { "type": "requests", "size": 10 } },
+                            ],
+                            "context_over_200k": { "input": 10, "output": 45, "cache_read": 1 },
+                        },
+                    },
+                    "gpt-realtime-2.1": {
+                        "limit": { "context": 128_000, "output": 32_000 },
+                        "cost": { "input": 4, "output": 24, "cache_read": 0.4, "input_audio": 32, "output_audio": 64 },
+                    },
+                    "gpt-free-text": { "limit": { "context": 128_000 }, "cost": { "input": "n/a", "output": 1 } },
+                },
+            },
+        }))
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&reshaped["openai"]).unwrap(),
+            json!({
+                "gpt-5.5": {
+                    "context": 1_050_000,
+                    "output": 128_000,
+                    "cost": { "input": 5, "output": 30, "cacheRead": 0.5, "tiers": [{ "above": 272_000, "input": 10, "output": 45, "cacheRead": 1 }] },
+                },
+                "gpt-realtime-2.1": {
+                    "context": 128_000,
+                    "output": 32_000,
+                    "cost": { "input": 4, "output": 24, "cacheRead": 0.4, "inputAudio": 32, "outputAudio": 64 },
+                },
+                "gpt-free-text": { "context": 128_000, "output": null },
+            })
+        );
+    }
+
+    #[test]
+    fn writes_the_bundled_catalog_back_as_it_reads() {
+        let bundled: Value = serde_json::from_str(BUNDLED_JSON).unwrap();
+        assert_eq!(
+            serde_json::to_value(&*bundled_model_catalog()).unwrap(),
+            bundled
+        );
+    }
+
+    #[test]
     fn ignores_providers_it_is_not_configured_for() {
         let mut payload = registry();
         payload["openai"] =
@@ -820,7 +1078,7 @@ mod tests {
         let (other, other_entry) = bedrock
             .iter()
             .find(|(id, _)| id.as_str() != BEDROCK_CHAT_DEFAULT)
-            .map(|(id, entry)| (id.clone(), *entry))
+            .map(|(id, entry)| (id.clone(), entry.clone()))
             .unwrap();
         let result = install_remote_catalog(&catalog(
             "bedrock",
@@ -860,7 +1118,7 @@ mod tests {
             return;
         }
         reset_model_catalog();
-        refresh_model_catalog().await;
+        assert_eq!(refresh_model_catalog().await, None);
         assert_eq!(model_catalog_state(), CatalogState::Disabled);
         reset_model_catalog();
     }

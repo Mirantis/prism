@@ -13,6 +13,7 @@ use crate::ai::{
 use serde_json::Value;
 
 use crate::lib::inference_gate::INFERENCE_GATE;
+use crate::lib::spend_context::SpendSource;
 use crate::lib::telemetry::LangfuseTelemetry;
 use crate::services::llm_call_service::{LLM_CALL_SERVICE, LlmCallPurpose, RecordInput};
 
@@ -22,6 +23,10 @@ pub struct ModelCallMeta {
     pub purpose: LlmCallPurpose,
     /// The thread this call belongs to, where it has one.
     pub thread_id: Option<String>,
+    /// The request this call served, where the spend context names another.
+    pub request_id: Option<String>,
+    /// What started that request, where the spend context names another.
+    pub source: Option<SpendSource>,
     /// The subagent the call ran for, where it was not the owner's own work.
     pub agent_id: Option<String>,
 }
@@ -32,6 +37,8 @@ impl ModelCallMeta {
         Self {
             purpose,
             thread_id: None,
+            request_id: None,
+            source: None,
             agent_id: None,
         }
     }
@@ -112,6 +119,8 @@ pub async fn call_model(
                 model,
                 usage: Some(step.usage.clone()),
                 thread_id: meta.thread_id,
+                request_id: meta.request_id,
+                source: meta.source,
                 agent_id: meta.agent_id,
             });
             if let Some(on_step_finish) = &caller_on_step_finish {
@@ -141,6 +150,8 @@ pub async fn call_model_for_object(
             model: model.clone(),
             usage,
             thread_id: meta.thread_id.clone(),
+            request_id: meta.request_id.clone(),
+            source: meta.source.clone(),
             agent_id: meta.agent_id.clone(),
         });
     };
@@ -252,6 +263,8 @@ mod tests {
                 purpose: LlmCallPurpose::Chat,
                 thread_id: Some("thread-1".into()),
                 agent_id: None,
+                request_id: None,
+                source: None,
             },
             params,
         )

@@ -883,6 +883,7 @@ impl WebhookService {
             user_id: user_id.to_string(),
             agent_id: agent_id.to_string(),
             mode: InvokeMode::Webhook,
+            source_id: Some(subscription.id.clone()),
             prompt: prompt.to_string(),
             after_restart,
             abort_signal: Some(shutdown.clone()),

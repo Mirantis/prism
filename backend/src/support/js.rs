@@ -73,6 +73,22 @@ pub fn number(value: f64) -> Value {
     }
 }
 
+/// Serde helpers that write an `f64` field as [`number`] writes it.
+pub mod number_serde {
+    use serde::{Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &f64, s: S) -> Result<S::Ok, S::Error> {
+        super::number(*value).serialize(s)
+    }
+
+    pub fn serialize_option<S: Serializer>(value: &Option<f64>, s: S) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(value) => serialize(value, s),
+            None => s.serialize_none(),
+        }
+    }
+}
+
 /// `String(number)`: an integral value has no fraction.
 pub fn number_text(value: f64) -> String {
     if value.is_finite() && value.fract() == 0.0 && value.abs() < 1e21 {

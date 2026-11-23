@@ -562,6 +562,7 @@ fn models_dev_url_is_off_unless_a_url_is_named() {
     assert_eq!(load(&[]).models_dev_url, None);
     assert_eq!(load(&[("MODELS_DEV_URL", "")]).models_dev_url, None);
     assert_eq!(load(&[("MODELS_DEV_URL", "   ")]).models_dev_url, None);
+    assert_eq!(load(&[("MODELS_DEV_URL", " OFF ")]).models_dev_url, None);
     assert_eq!(
         load(&[("MODELS_DEV_URL", "https://models.dev/api.json")])
             .models_dev_url

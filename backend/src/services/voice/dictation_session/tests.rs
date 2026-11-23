@@ -9,6 +9,7 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 
 use super::*;
+use crate::config::CONFIG;
 use crate::services::meeting::realtime_session::tests::{MockServer, eventually};
 
 /// `ms` of pcm16 at 24 kHz filled with `byte`, the size a client frame has.
@@ -178,7 +179,10 @@ async fn keeps_audio_sent_while_connecting_and_forwards_it_in_order_once_ready()
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn commits_on_stop_and_answers_the_transcript_deltas_first() {
+    let _db = crate::db::testing::test_db();
+    crate::services::memory_store::tests::ensure_agent(&CONFIG.agent_id().unwrap());
     let mut h = harness(Limits::default()).await;
     h.accept();
     (&mut h.started).await.unwrap();
@@ -189,7 +193,12 @@ async fn commits_on_stop_and_answers_the_transcript_deltas_first() {
 
     h.server.emit(json!({ "type": "conversation.item.input_audio_transcription.delta", "item_id": "i1", "delta": "Hello, " }));
     h.server.emit(json!({ "type": "conversation.item.input_audio_transcription.delta", "item_id": "i1", "delta": "world." }));
-    h.server.emit(json!({ "type": "conversation.item.input_audio_transcription.completed", "item_id": "i1", "transcript": " Hello, world. " }));
+    h.server.emit(json!({
+        "type": "conversation.item.input_audio_transcription.completed",
+        "item_id": "i1",
+        "transcript": " Hello, world. ",
+        "usage": { "type": "tokens", "input_tokens": 25, "output_tokens": 4 },
+    }));
     eventually("the transcript", || h.signal.calls().len() >= 4).await;
 
     assert_eq!(
@@ -202,6 +211,33 @@ async fn commits_on_stop_and_answers_the_transcript_deltas_first() {
         ]
     );
     assert_eq!(h.ended.load(Ordering::SeqCst), 1);
+
+    use crate::db::schema::llm_calls::dsl as l;
+    use diesel::prelude::*;
+    let mut rows: Vec<(String, String, i64, i64)> = Vec::new();
+    for _ in 0..100 {
+        rows = crate::db::run(|conn| {
+            Ok(l::llm_calls
+                .filter(l::purpose.eq("dictation"))
+                .select((l::purpose, l::model, l::input_tokens, l::output_tokens))
+                .load(conn)?)
+        })
+        .await
+        .unwrap();
+        if !rows.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        rows,
+        vec![(
+            "dictation".to_string(),
+            CONFIG.openai_transcription_model.clone(),
+            25,
+            4
+        )]
+    );
 }
 
 #[tokio::test]

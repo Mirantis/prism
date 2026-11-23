@@ -372,8 +372,67 @@ async fn reads_the_documented_json_event_stream() {
             CodingAgentEvent::Text {
                 text: "Project inspected.".into()
             },
+            CodingAgentEvent::Usage {
+                usage: CodingAgentUsage {
+                    model: "codex".into(),
+                    input_tokens: 12,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                    long_cache_write_tokens: 0,
+                    output_tokens: 4,
+                    cost_usd: None,
+                    subscription: false,
+                },
+            },
             result(CodingAgentStopReason::EndTurn, 1, "Project inspected."),
         ]
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn reports_the_tokens_of_a_turn_against_the_model_the_task_asked_for_cached_input_apart() {
+    let child = FakeChild::new();
+    let (environment, _) = spawning(child.clone());
+    let run = create_codex_agent(Some(environment.arc())).run(CodingAgentTask {
+        model_tier: Some(ModelTier::Small),
+        ..task()
+    });
+    // A `turn.completed` line captured from Codex.
+    child.emit_line(
+        &json!({
+            "type": "turn.completed",
+            "usage": { "input_tokens": 19830, "cached_input_tokens": 8448, "cache_write_input_tokens": 0, "output_tokens": 40, "reasoning_output_tokens": 33 },
+        })
+        .to_string(),
+    );
+    child.finish(Some(0));
+    let usage: Vec<CodingAgentEvent> = collect(&run)
+        .await
+        .into_iter()
+        .filter(|event| matches!(event, CodingAgentEvent::Usage { .. }))
+        .collect();
+    let small = CONFIG
+        .coding_agent_models
+        .codex
+        .get("small")
+        .unwrap()
+        .openai
+        .clone();
+    assert_eq!(
+        usage,
+        [CodingAgentEvent::Usage {
+            usage: CodingAgentUsage {
+                model: small,
+                input_tokens: 11382,
+                cache_read_tokens: 8448,
+                cache_write_tokens: 0,
+                long_cache_write_tokens: 0,
+                output_tokens: 40,
+                cost_usd: None,
+                subscription: false,
+            },
+        }]
     );
 }
 
@@ -405,7 +464,7 @@ async fn allows_a_successful_retry_after_an_error_event() {
 
 #[test]
 fn names_the_last_error_when_a_failed_turn_gives_none() {
-    let mut parse = create_parser();
+    let mut parse = create_parser("codex".into(), false);
     assert_eq!(
         parse(r#"{"type":"error","message":"Reconnecting"}"#).unwrap(),
         []
@@ -415,7 +474,8 @@ fn names_the_last_error_when_a_failed_turn_gives_none() {
         [result(CodingAgentStopReason::Error, 1, "Reconnecting")]
     );
     assert_eq!(
-        create_parser()(r#"{"type":"turn.failed","error":{"message":""}}"#).unwrap(),
+        create_parser("codex".into(), false)(r#"{"type":"turn.failed","error":{"message":""}}"#)
+            .unwrap(),
         [result(CodingAgentStopReason::Error, 1, "Codex task failed")]
     );
 }

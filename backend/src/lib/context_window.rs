@@ -8,23 +8,19 @@
 //! lifecycle but no context length.
 //!
 //! This module is a pure resolver; `lib/model_catalog.rs` owns the data as two
-//! layers — a bundled floor that always answers, plus an overlay fetched once at
-//! boot when `MODELS_DEV_URL` opts into it, so a newly-released model isn't
-//! unmeasurable until the next release. Reads here are synchronous, which is what
-//! lets an unfinished refresh fall back to the floor for free.
+//! layers — a bundled floor that always answers, plus an overlay fetched from
+//! models.dev, so a newly-released model isn't unmeasurable until the next release.
+//! Reads here are synchronous, which is what lets an unfinished refresh fall back to
+//! the floor for free.
 //!
 //! Unknown IDs return `None` rather than a guess. A wrong window silently
 //! misreports how much room is left, which is worse than showing nothing — so
 //! callers must render nothing when this returns `None`.
 
-use std::sync::LazyLock;
-
-use indexmap::IndexSet;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::config::CONFIG;
-use crate::lib::model_catalog::model_catalog;
+use crate::lib::model_catalog::find_catalog_entry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextWindow {
@@ -77,18 +73,6 @@ pub fn build_context_snapshot(
     })
 }
 
-/// Bedrock cross-region inference profiles prefix the model ID with a geo scope
-/// (`us.`, `eu.`, `au.`, `jp.`, `global.`). models.dev lists most of these
-/// explicitly, but new geos appear before the registry catches up, so strip a known
-/// prefix and retry rather than going dark on `sa.anthropic.claude-opus-5`.
-static REGION_PREFIX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(?:us|eu|apac|au|jp|ca|sa|global)\.").unwrap());
-
-/// Bedrock version suffixes (`-v1:0`, `-v2:1`, `-v1`) that some ID spellings omit.
-static VERSION_SUFFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"-v\d+(?::\d+)?$").unwrap());
-
-static ANTHROPIC_SEGMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^anthropic\.").unwrap());
-
 /// The input-context window for `model_id`, or `None` when it can't be determined.
 ///
 /// `model_id` must be the *resolved* model — what `invoke_stream()` actually passed
@@ -106,60 +90,9 @@ pub fn context_window_for(model_id: &str) -> Option<ContextWindow> {
         return Some(ContextWindow { tokens });
     }
 
-    // Read the catalog once: it's the bundled floor plus any overlay the boot-time
-    // refresh installed, already merged, so this is a plain lookup.
-    let catalog = model_catalog();
-
-    // Prefer the active provider's own entry. Every `context` value in the bundled
-    // floor happens to agree across providers and regions, so this preference is not
-    // yet observable there — but the registry tracks them separately and they do
-    // diverge in practice, and a remote overlay can introduce a context divergence
-    // at any time.
-    let active = CONFIG.llm_provider.as_str();
-    let preferred = catalog.get(active);
-    let others = catalog
-        .iter()
-        .filter(|(provider, _)| provider.as_str() != active)
-        .map(|(_, models)| models);
-    let ordered: Vec<_> = preferred.into_iter().chain(others).collect();
-
-    for candidate in id_candidates(model_id) {
-        // Exact provider match first, then the other provider(s) as a fallback — an
-        // operator can point LLM_PROVIDER=azure at a Bedrock-style ID.
-        for models in &ordered {
-            if let Some(hit) = models.get(&candidate) {
-                return Some(ContextWindow {
-                    tokens: hit.context,
-                });
-            }
-        }
-    }
-
-    None
-}
-
-/// `model_id` plus progressively-normalized spellings, most specific first.
-fn id_candidates(model_id: &str) -> Vec<String> {
-    let mut seen: IndexSet<String> = IndexSet::new();
-    let bare = REGION_PREFIX.replace(model_id, "").into_owned();
-    let without_vendor = ANTHROPIC_SEGMENT.replace(&bare, "").into_owned();
-
-    for id in [
-        model_id.to_string(),
-        bare.clone(),
-        VERSION_SUFFIX.replace(model_id, "").into_owned(),
-        VERSION_SUFFIX.replace(&bare, "").into_owned(),
-        // Azure deployment names are bare (`claude-opus-5`) while Bedrock IDs have
-        // an `anthropic.` vendor segment; try across that boundary too.
-        without_vendor.clone(),
-        VERSION_SUFFIX.replace(&without_vendor, "").into_owned(),
-    ] {
-        if !id.is_empty() {
-            seen.insert(id);
-        }
-    }
-
-    seen.into_iter().collect()
+    find_catalog_entry(model_id).map(|entry| ContextWindow {
+        tokens: entry.context,
+    })
 }
 
 #[cfg(test)]
@@ -223,6 +156,17 @@ mod tests {
             );
         }
         assert_eq!(window("claude-opus-4-6"), Some(1_000_000));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn resolves_the_spellings_a_coding_agent_and_openrouter_use() {
+        if !without_override() {
+            return;
+        }
+        assert_eq!(window("claude-haiku-5-5[1m]"), Some(1_000_000));
+        assert_eq!(window("anthropic/claude-haiku-5-5"), Some(1_000_000));
+        assert!(window("openai.gpt-5.6-terra").is_some());
     }
 
     #[test]

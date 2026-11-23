@@ -15,6 +15,29 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 use super::*;
 
+/// Where a test session's tokens are spent.
+fn spend() -> RealtimeSpend {
+    RealtimeSpend {
+        purpose: crate::services::meeting::realtime_usage::RealtimePurpose::Meeting,
+        request_id: "call-1".into(),
+        thread_id: None,
+    }
+}
+
+impl Default for RealtimeSessionOptions {
+    fn default() -> Self {
+        RealtimeSessionOptions {
+            instructions: String::new(),
+            tools: Vec::new(),
+            model: None,
+            voice: None,
+            agent_name: None,
+            endpoint_override: None,
+            spend: spend(),
+        }
+    }
+}
+
 enum Command {
     Emit(Value),
     Raw(String),
@@ -278,6 +301,86 @@ fn spawn_probe(
 ) -> tokio::task::JoinHandle<Option<String>> {
     let session = session.clone();
     tokio::spawn(async move { session.request_out_of_band_text(request).await })
+}
+
+mod usage {
+    use super::*;
+    use crate::db::models::LlmCall;
+    use crate::db::schema::llm_calls::dsl as l;
+    use diesel::prelude::*;
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn records_the_usage_of_every_finished_response_and_transcription() {
+        let _db = crate::db::testing::test_db();
+        crate::services::memory_store::tests::ensure_agent(&CONFIG.agent_id().unwrap());
+        let h = harness().await;
+        let usage = json!({ "input_tokens": 120, "output_tokens": 40, "input_token_details": { "audio_tokens": 100 } });
+
+        h.emit(json!({ "type": "response.done", "response": { "id": "resp-1", "status": "completed", "usage": usage } }));
+        h.emit(json!({
+            "type": "conversation.item.input_audio_transcription.completed",
+            "item_id": "item-1",
+            "transcript": "hello",
+            "usage": { "type": "tokens", "input_tokens": 30, "output_tokens": 2 },
+        }));
+        h.sync().await;
+
+        let mut rows: Vec<LlmCall> = Vec::new();
+        for _ in 0..100 {
+            rows = crate::db::run(|conn| {
+                Ok(l::llm_calls
+                    .filter(l::request_id.eq("call-1"))
+                    .order(l::input_tokens.desc())
+                    .select(LlmCall::as_select())
+                    .load(conn)?)
+            })
+            .await
+            .unwrap();
+            if rows.len() == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let shown: Vec<(&str, &str, i64, i64, i64, Option<&str>, Option<&str>)> = rows
+            .iter()
+            .map(|r| {
+                (
+                    r.purpose.as_str(),
+                    r.model.as_str(),
+                    r.input_tokens,
+                    r.output_tokens,
+                    r.audio_input_tokens,
+                    r.request_id.as_deref(),
+                    r.source_kind.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shown,
+            vec![
+                (
+                    "meeting",
+                    CONFIG.openai_realtime_model.as_str(),
+                    120,
+                    40,
+                    100,
+                    Some("call-1"),
+                    Some("meeting")
+                ),
+                (
+                    "meeting",
+                    CONFIG.openai_transcription_model.as_str(),
+                    30,
+                    2,
+                    0,
+                    Some("call-1"),
+                    Some("meeting")
+                ),
+            ]
+        );
+        h.session.close();
+    }
 }
 
 mod configuration {

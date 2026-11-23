@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use super::*;
 use crate::services::meeting::meeting_provider_interface::SpeakerDetails;
 use crate::services::meeting::realtime_session::tests::{MockServer, eventually, settle, sync};
+use crate::services::meeting::realtime_usage::{RealtimePurpose, RealtimeSpend};
 use crate::services::meeting::transcript_log;
 
 struct NullSink;
@@ -41,6 +42,11 @@ fn options(server: &MockServer, sample_rate: u32) -> VoiceConversationOptions {
         model: None,
         voice: None,
         endpoint_override: Some(server.endpoint()),
+        spend: RealtimeSpend {
+            purpose: RealtimePurpose::Meeting,
+            request_id: "call-1".into(),
+            thread_id: None,
+        },
         on_session_lost: None,
     }
 }
@@ -657,4 +663,57 @@ async fn answers_no_utterance_that_closes_while_it_writes() {
     h.commit("item-late");
     h.settle().await;
     assert!(h.spoken_requests().is_empty());
+}
+
+#[tokio::test]
+async fn runs_a_tool_inside_the_sessions_spend_context() {
+    use crate::lib::spend_context::{
+        SpendContext, SpendSource, SpendSourceKind, current_spend_context,
+    };
+
+    let seen: Arc<Mutex<Option<Option<SpendContext>>>> = Arc::default();
+    let record = seen.clone();
+    let tools = PreparedTools {
+        declarations: Arc::new(|| {
+            Arc::new(vec![RealtimeFunctionTool {
+                name: "code".into(),
+                description: "code".into(),
+                parameters: json!({}),
+            }])
+        }),
+        count: 1,
+        catalog: None,
+        execute: Arc::new(move |_name: String, _args: String| {
+            let record = record.clone();
+            async move {
+                *record.lock() = Some(current_spend_context());
+                "done".to_string()
+            }
+            .boxed()
+        }),
+    };
+    let h = harness_with(MEETING_SAMPLE_RATE, |o| {
+        o.tools = tools;
+        o.spend = RealtimeSpend {
+            purpose: RealtimePurpose::Meeting,
+            request_id: "call-7".into(),
+            thread_id: Some("thread-7".into()),
+        };
+    })
+    .await;
+    h.server.emit(json!({
+        "type": "response.function_call_arguments.done",
+        "call_id": "c1",
+        "name": "code",
+        "arguments": "{}",
+    }));
+    eventually("the tool ran", || seen.lock().is_some()).await;
+    assert_eq!(
+        seen.lock().clone().unwrap(),
+        Some(SpendContext {
+            request_id: "call-7".into(),
+            thread_id: Some("thread-7".into()),
+            source: Some(SpendSource::of(SpendSourceKind::Meeting)),
+        })
+    );
 }

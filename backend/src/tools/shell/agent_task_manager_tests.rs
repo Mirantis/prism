@@ -1408,3 +1408,88 @@ async fn leaves_a_task_without_a_conversation_to_its_polls() {
             .unwrap();
     assert_eq!(status.result.as_deref(), Some("ok"));
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn records_the_tokens_the_agent_reports_against_the_request_and_thread_that_started_the_task()
+{
+    use crate::db::models::LlmCall;
+    use crate::db::schema::llm_calls::dsl as l;
+    use crate::lib::spend_context::{SpendSource, SpendSourceKind, with_spend_context};
+    use diesel::prelude::*;
+
+    let h = harness();
+    crate::services::memory_store::tests::ensure_agent(&CONFIG.agent_id().unwrap());
+    let spend = SpendContext {
+        request_id: "message-1".into(),
+        thread_id: Some("thread-1".into()),
+        source: Some(SpendSource::of(SpendSourceKind::Chat)),
+    };
+    let started = with_spend_context(spend, h.manager.start_task(sample()))
+        .await
+        .unwrap();
+    // Kept with the task, so a relaunch after a restart records against them too.
+    let stored = row(&started.task_id).await.unwrap();
+    assert_eq!(
+        stored["params"]["spend"],
+        json!({ "requestId": "message-1", "threadId": "thread-1", "source": { "kind": "chat" } })
+    );
+
+    h.run().emit(CodingAgentEvent::Usage {
+        usage: CodingAgentUsage {
+            model: "claude-haiku-5-5".into(),
+            input_tokens: 2,
+            cache_read_tokens: 10,
+            cache_write_tokens: 143_355,
+            long_cache_write_tokens: 143_355,
+            output_tokens: 4,
+            cost_usd: Some(0.14),
+            subscription: false,
+        },
+    });
+    h.run().succeed();
+    poll_until_complete(&h.manager, &started.task_id).await;
+
+    let mut calls: Vec<LlmCall> = Vec::new();
+    for _ in 0..100 {
+        calls = crate::db::run(|conn| Ok(l::llm_calls.select(LlmCall::as_select()).load(conn)?))
+            .await
+            .unwrap();
+        if !calls.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let call = &calls[0];
+    assert_eq!(
+        (
+            call.purpose.as_str(),
+            call.model.as_str(),
+            call.thread_id.as_deref(),
+            call.request_id.as_deref(),
+            call.source_kind.as_deref(),
+        ),
+        (
+            "coding-agent",
+            "claude-haiku-5-5",
+            Some("thread-1"),
+            Some("message-1"),
+            Some("chat")
+        )
+    );
+    assert_eq!(
+        (
+            call.total_tokens,
+            call.input_tokens,
+            call.output_tokens,
+            call.cache_read_tokens,
+            call.cache_write_tokens,
+            call.no_cache_tokens,
+        ),
+        (143_371, 143_367, 4, 10, 143_355, 2)
+    );
+    assert_eq!(
+        (call.cost_micro_usd, call.cost_source.as_deref()),
+        (Some(140_000), Some("reported"))
+    );
+}

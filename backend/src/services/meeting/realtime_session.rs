@@ -57,6 +57,7 @@ use crate::services::meeting::openai_endpoint::{
     RealtimeEndpoint, build_realtime_socket_options, connect_realtime_socket, handshake_status,
     resolve_realtime_endpoint, url_host,
 };
+use crate::services::meeting::realtime_usage::{RealtimeSpend, record_realtime_usage};
 use crate::services::meeting::resampler::REALTIME_SAMPLE_RATE;
 use crate::services::meeting::transcript_log;
 use crate::{log_debug, log_error, log_info, log_warn};
@@ -328,7 +329,7 @@ fn str_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RealtimeSessionOptions {
     /// The agent's system prompt — Soul, User, Agent Guide, memory, and the rest.
     pub instructions: String,
@@ -349,6 +350,8 @@ pub struct RealtimeSessionOptions {
     pub agent_name: Option<String>,
     /// Injected in tests so they can point at a local mock server.
     pub endpoint_override: Option<RealtimeEndpoint>,
+    /// Where the session's tokens are spent.
+    pub spend: RealtimeSpend,
 }
 
 /// Emitted when the model calls one of the agent's tools.
@@ -975,6 +978,11 @@ impl RealtimeSession {
             }
 
             "conversation.item.input_audio_transcription.completed" => {
+                record_realtime_usage(
+                    &self.options.spend,
+                    &CONFIG.openai_transcription_model,
+                    event.get("usage"),
+                );
                 let item_id = str_field(event, "item_id").unwrap_or("");
                 if let Some(transcript) = str_field(event, "transcript") {
                     let trimmed = crate::support::js::trim(transcript);
@@ -1081,6 +1089,18 @@ impl RealtimeSession {
 
             "response.done" => {
                 let done = event.get("response");
+                // Every response bills, a probe and a stale one included.
+                let model = self
+                    .options
+                    .model
+                    .clone()
+                    .filter(|model| !model.is_empty())
+                    .unwrap_or_else(|| CONFIG.openai_realtime_model.clone());
+                record_realtime_usage(
+                    &self.options.spend,
+                    &model,
+                    done.and_then(|d| d.get("usage")),
+                );
                 let mut state = self.state.lock();
                 // A probe finishing must release nothing: the conversation's own response
                 // may still be generating, and clearing the slot here would both fire a

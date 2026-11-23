@@ -2,8 +2,10 @@
 //! model catalog, from the models.dev registry (`MODELS_DEV_URL`, else
 //! `https://models.dev/api.json`).
 //!
-//! The runtime needs each model's input-context window, and no provider it talks to
-//! reports one, so models.dev is the source and this command vendors it: the committed
+//! The runtime needs each model's input-context window to show how much context a
+//! conversation has used, and each model's prices to estimate what the agent spends.
+//! No provider it talks to reports the window, so models.dev is the source and this
+//! command vendors it: the committed
 //! JSON is the floor that needs no network. Entries stay provider-scoped and keyed by
 //! exact model ID, because regions diverge in the registry.
 //!
@@ -66,9 +68,11 @@ pub async fn main() -> i32 {
 }
 
 async fn run() -> anyhow::Result<()> {
+    // `off` stops the runtime's own fetch, not this command's.
     let source = std::env::var("MODELS_DEV_URL")
         .ok()
-        .filter(|url| !url.is_empty())
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty() && !url.eq_ignore_ascii_case("off"))
         .unwrap_or_else(|| DEFAULT_SOURCE.to_string());
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -104,6 +108,41 @@ mod tests {
     use super::*;
     use crate::lib::model_catalog::bundled_model_catalog;
 
+    /// A catalog price written back in the registry's field names.
+    fn registry_cost(price: &crate::lib::model_catalog::ModelPrice) -> Value {
+        let mut cost = serde_json::json!({ "input": price.input, "output": price.output });
+        for (name, value) in [
+            ("cache_read", price.cache_read),
+            ("cache_write", price.cache_write),
+            ("input_audio", price.input_audio),
+            ("output_audio", price.output_audio),
+        ] {
+            if let Some(value) = value {
+                cost[name] = serde_json::json!(value);
+            }
+        }
+        if let Some(tiers) = &price.tiers {
+            cost["tiers"] = tiers
+                .iter()
+                .map(|tier| {
+                    let mut entry = serde_json::json!({
+                        "input": tier.input,
+                        "output": tier.output,
+                        "tier": { "type": "context", "size": tier.above },
+                    });
+                    if let Some(read) = tier.cache_read {
+                        entry["cache_read"] = serde_json::json!(read);
+                    }
+                    if let Some(write) = tier.cache_write {
+                        entry["cache_write"] = serde_json::json!(write);
+                    }
+                    entry
+                })
+                .collect();
+        }
+        cost
+    }
+
     #[test]
     fn fails_when_a_provider_is_missing() {
         let err = snapshot(&serde_json::json!({})).unwrap_err();
@@ -119,7 +158,11 @@ mod tests {
             let models: serde_json::Map<String, Value> = bundled[provider]
                 .iter()
                 .map(|(id, entry)| {
-                    (id.clone(), serde_json::json!({ "limit": { "context": entry.context, "output": entry.output } }))
+                    let mut model = serde_json::json!({ "limit": { "context": entry.context, "output": entry.output } });
+                    if let Some(price) = &entry.cost {
+                        model["cost"] = registry_cost(price);
+                    }
+                    (id.clone(), model)
                 })
                 .collect();
             registry.insert(

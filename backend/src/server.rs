@@ -5,6 +5,7 @@
 //!      /agents/*       — management routes (heartbeat, chat, cron lifecycle)
 //!                        + self-update (/agents/update, /agents/update/status)
 //!                        + activity reads (/agents/activity/*)
+//!                        + estimated model spend (/agents/spending/*)
 //!      /threads, /latest-thread — thread resolve/list/open
 //!      /messages       — thread history replay
 //!      /               — Prism Agent Web UI (static SPA bundle from web/dist)
@@ -89,6 +90,8 @@ fn api_routes() -> Router {
         .merge(routes::update::router())
         // GET /agents/activity/*
         .merge(routes::activity::router())
+        // GET /agents/spending/*
+        .merge(routes::spending::router())
         // Scheduled tasks (/agents/cron-tasks)
         .merge(routes::cron_tasks::router())
         // Whether this agent is working, for the other agents of the project

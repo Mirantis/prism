@@ -49,6 +49,7 @@ use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::config::CONFIG;
+use crate::lib::spend_context::with_spend_context;
 use crate::services::computer::agent_computer::ModelChannel;
 use crate::services::meeting::addressed_audio_gate::{
     ADDRESSED_DEADLINE_MS, JudgeAddressedInput, judge_addressed,
@@ -61,6 +62,7 @@ use crate::services::meeting::realtime_session::{
     OutOfBandRequest, RealtimeFunctionCall, RealtimeFunctionTool, RealtimeSession,
     RealtimeSessionEvent, RealtimeSessionOptions, RecordingSegment,
 };
+use crate::services::meeting::realtime_usage::RealtimeSpend;
 use crate::services::meeting::resampler::{
     Downsampler, MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE, Upsampler,
 };
@@ -120,6 +122,8 @@ pub struct VoiceConversationOptions {
     pub model: Option<String>,
     pub voice: Option<String>,
     pub endpoint_override: Option<RealtimeEndpoint>,
+    /// Where the session's tokens are spent.
+    pub spend: RealtimeSpend,
     /// The session died on its own — the agent has no voice and no ears any more.
     ///
     /// Only fired for a close we did not ask for: `stop()` sets `stopped` before it
@@ -286,6 +290,7 @@ impl VoiceConversation {
             voice: options.voice.clone(),
             agent_name: Some(options.agent_name.clone()),
             endpoint_override: options.endpoint_override.clone(),
+            spend: options.spend.clone(),
         });
         let response_policy = ResponsePolicy::new(ResponsePolicyOptions {
             mode: options.response_mode,
@@ -658,7 +663,13 @@ impl VoiceConversation {
     /// Run one tool call, then hand its output back. Declarations a `load_tools` call
     /// changed are sent first, so the response the output asks for can call what loaded.
     async fn run_tool(&self, call_id: String, name: String, arguments_json: String) {
-        let output = self.options.tools.execute(&name, &arguments_json).await;
+        // The session's spend context, so the model calls a tool makes (a coding-agent
+        // task, a subagent) are spent on this call rather than on no request.
+        let output = with_spend_context(
+            self.options.spend.context(),
+            self.options.tools.execute(&name, &arguments_json),
+        )
+        .await;
         let changed = {
             let mut state = self.state.lock();
             if state.stopped {

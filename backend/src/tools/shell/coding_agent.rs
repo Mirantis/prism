@@ -226,6 +226,7 @@ pub async fn run_coding_agent(
         session_id: input.session_id,
         debug: input.debug,
         notify: notify.clone(),
+        spend: None,
     };
     let task = get_agent_task_manager().start_task(params).await?;
     Ok(CodingAgentStarted {

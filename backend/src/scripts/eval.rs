@@ -601,6 +601,8 @@ async fn turn(
             purpose: purpose_of(mode)?,
             thread_id: None,
             agent_id: Some(agent_id),
+            request_id: None,
+            source: None,
         },
         options,
     )
@@ -750,6 +752,8 @@ async fn summarize(params: SummarizeParams) -> anyhow::Result<Value> {
             purpose: LlmCallPurpose::Compaction,
             thread_id: None,
             agent_id: Some(eval_agent_id()?),
+            request_id: None,
+            source: None,
         },
         options,
     )
