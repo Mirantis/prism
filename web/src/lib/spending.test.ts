@@ -72,8 +72,20 @@ describe('withMentionNames', () => {
     );
   });
 
+  it('reads a mention whose id is a GUID', () => {
+    expect(withMentionNames('<@6f1c2d3e-0000-4000-8000-00000000a001:Ana Example>: hi')).toBe('Ana Example: hi');
+  });
+
   it('reads a mention a title cut short as the name up to the cut', () => {
     expect(withMentionNames('<@U01ET9F2HK4:Ana Lop…')).toBe('Ana Lop…');
+    expect(withMentionNames('<@U01ET9F2HK4:Ana Lop...')).toBe('Ana Lop...');
+  });
+
+  it('drops a mention a title cut before its name, and keeps the ellipsis', () => {
+    // deriveThreadTitle of "<@U01ET9F2HK4:Li>: <@U0B7X8UM7FV:Prismith> can you check".
+    expect(withMentionNames('<@U01ET9F2HK4:Li>: <@...')).toBe('Li:...');
+    expect(withMentionNames('<@U01ET9F2HK4:Li>: <@U0B7…')).toBe('Li:…');
+    expect(withMentionNames('<@U0B7')).toBe('');
   });
 
   it('leaves text without a mention unchanged', () => {

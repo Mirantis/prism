@@ -31,6 +31,7 @@ import {
 } from './conversation-thread-activity.service';
 import { messageDeliveryService } from './message-delivery.service';
 import { conversationService } from './conversation.service';
+import { WEB_THREAD } from './web-thread';
 import { eventStreamService } from './event-stream.service';
 import { pendingWorkService } from './pending-work.service';
 import {
@@ -349,10 +350,10 @@ class InboundMessageService {
   /** Only this agent's web conversations that clients may see take messages from the socket. */
   async checkThread(threadId: string, agentId: string): Promise<void> {
     const thread = await prisma.conversationThread.findUnique({
-      where: { id: threadId, AND: await conversationService.clientThreadFilter(agentId, config.ownerUserId) },
-      select: { agentId: true, threadSource: true },
+      where: { id: threadId, ...WEB_THREAD, AND: await conversationService.clientThreadFilter(agentId, config.ownerUserId) },
+      select: { agentId: true },
     });
-    if (!thread || thread.agentId !== agentId || thread.threadSource !== 'DATABASE') {
+    if (!thread || thread.agentId !== agentId) {
       throw new InboundMessageError('unknown_thread', 'That conversation does not exist.');
     }
   }

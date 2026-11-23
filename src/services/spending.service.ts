@@ -14,6 +14,7 @@ import { config } from '../config';
 import { wallClock, zonedInstant } from '../lib/zoned-time';
 import type { SpendSourceKind } from '../lib/spend-context';
 import { spendKindOf, type SpendKind } from './llm-call.service';
+import { isWebThread } from './web-thread';
 
 export interface SpendTotals {
   costUsd: number;
@@ -340,8 +341,13 @@ class SpendingService {
     };
   }
 
-  /** One thread's totals and its requests, newest first, or null for a thread with no calls. */
-  async thread(threadId: string): Promise<(SpendBreakdown & { threadId: string; title: string | null; requests: RequestSpend[] }) | null> {
+  /**
+   * One thread's totals and its requests, newest first, or null for a thread with no calls.
+   * `opensInChat` is true for a web thread, which web chat opens by its id.
+   */
+  async thread(
+    threadId: string,
+  ): Promise<(SpendBreakdown & { threadId: string; title: string | null; opensInChat: boolean; requests: RequestSpend[] }) | null> {
     const breakdown = await this.breakdown({ threadId });
     if (breakdown.calls === 0) return null;
 
@@ -353,7 +359,7 @@ class SpendingService {
         _min: { createdAt: true, sourceKind: true },
         orderBy: { _min: { createdAt: 'desc' } },
       }),
-      prisma.conversationThread.findUnique({ where: { id: threadId }, select: { title: true } }),
+      prisma.conversationThread.findUnique({ where: { id: threadId }, select: { title: true, threadSource: true, externalThreadId: true } }),
     ]);
     const messages = new Map(
       (
@@ -367,6 +373,7 @@ class SpendingService {
     return {
       threadId,
       title: thread?.title ?? null,
+      opensInChat: thread ? isWebThread(thread) : false,
       ...breakdown,
       requests: requestRows.map((row) => {
         const message = messages.get(row.requestId!);

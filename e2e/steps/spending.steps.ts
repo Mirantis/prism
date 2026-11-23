@@ -5,9 +5,12 @@
 
 import { createBdd } from 'playwright-bdd';
 import { expect, type Page } from '@playwright/test';
+import { deriveThreadTitle } from '../../src/utils/thread-title';
+import { HomePage } from '../pages/home.page';
 import * as dbHelper from '../support/db-helper';
+import { getCurrentAgentId } from './common.steps';
 
-const { When, Then } = createBdd();
+const { Given, When, Then } = createBdd();
 
 interface Spend {
   costUsd: number;
@@ -143,4 +146,84 @@ When("I expand my message's spending", async ({ page }) => {
 
 Then("its calls include the agent's replies", async ({ page }) => {
   await expect(page.getByTestId('spending-request-details')).toContainText('Agent replies');
+});
+
+Then('the sheet links to my conversation', async ({ page }) => {
+  const { threadId } = await myMessage();
+  await expect(page.getByTestId('spending-thread-sheet').getByRole('link', { name: 'Open conversation' })).toHaveAttribute(
+    'href',
+    `/chat/${threadId}`,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// A channel conversation
+// ---------------------------------------------------------------------------
+
+/** A channel message as the runtime stores it: each person is a `<@id:name>` tag. */
+const MENTIONING = '<@U0E2EANA01:Ana>: <@U0E2EPRISM1:Prismith> can you check the build';
+/** The stored title, cut inside the second tag: `<@U0E2EANA01:Ana>: <@...`. */
+const MENTIONING_TITLE = deriveThreadTitle(MENTIONING);
+const BUCKET_MS = 15 * 60 * 1000;
+
+// A channel's thread with stored history: the source is the database, the id is the channel's.
+Given('a channel conversation whose message mentions people has spent on models', async () => {
+  const db = dbHelper.getPrisma();
+  const agentId = getCurrentAgentId();
+  const threadId = await dbHelper.createThread(agentId, {
+    title: MENTIONING_TITLE,
+    externalThreadId: `1700000000.${Date.now()}`,
+    externalChannelId: 'C_MOCK_E2E',
+    messages: [{ role: 'USER', content: MENTIONING }],
+  });
+  const message = await db.conversationMessage.findFirstOrThrow({ where: { threadId }, select: { id: true } });
+  const now = Date.now();
+  await db.llmCall.create({
+    data: {
+      agentId,
+      purpose: 'chat',
+      model: 'claude-opus-5',
+      threadId,
+      requestId: message.id,
+      inputTokens: 1000,
+      outputTokens: 100,
+      costMicroUsd: 25_000,
+      costSource: 'catalog',
+      createdAt: new Date(now),
+      bucket: new Date(now - (now % BUCKET_MS)),
+    },
+  });
+});
+
+When('I open the spending page', async ({ page }) => {
+  await new HomePage(page).goto('/spending');
+});
+
+Then('the channel conversation is listed under top conversations by the names in its title', async ({ page }) => {
+  expect(MENTIONING_TITLE).toContain('<@');
+  const row = page.getByTestId('spending-thread-row');
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText('Ana:...');
+  await expect(row).not.toContainText('<@');
+});
+
+When("I open the channel conversation's spending", async ({ page }) => {
+  await page.getByTestId('spending-thread-row').click();
+  await expect(page.getByTestId('spending-thread-sheet')).toBeVisible();
+});
+
+Then('its title and its message show the names in their mentions', async ({ page }) => {
+  const sheet = page.getByTestId('spending-thread-sheet');
+  await expect(sheet.locator('[data-slot="sheet-title"]')).toHaveText('Ana:...');
+  const request = sheet.getByTestId('spending-request');
+  await expect(request).toHaveCount(1);
+  await expect(request).toContainText('Ana: Prismith can you check the build');
+  await expect(request).not.toContainText('<@');
+});
+
+Then('the sheet has no link to open the conversation', async ({ page }) => {
+  const sheet = page.getByTestId('spending-thread-sheet');
+  // The sheet reads the conversation before it decides on the link.
+  await expect(sheet.getByTestId('spending-request')).toHaveCount(1);
+  await expect(sheet.getByRole('link', { name: 'Open conversation' })).toHaveCount(0);
 });

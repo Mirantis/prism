@@ -25,6 +25,7 @@ import { ThreadMessageProvider } from './thread-provider.interface';
 import { DatabaseThreadProvider } from './providers/database-thread.provider';
 import { attachmentService, type AttachmentMeta } from './attachment.service';
 import { runtimeStateService, SINGLE_THREAD } from './runtime-state.service';
+import { WEB_THREAD } from './web-thread';
 // The pure derivation, not contextUsageService — that service imports this
 // module, so depending on it here would be a cycle.
 import { buildContextSnapshot, type ContextUsageSnapshot } from '../lib/context-window';
@@ -32,15 +33,6 @@ import { buildContextSnapshot, type ContextUsageSnapshot } from '../lib/context-
 export type CompactedMessage = Pick<ConversationMessage, 'role' | 'content' | 'toolCalls' | 'internalStep' | 'createdAt'> & {
   position: number;
 };
-
-/**
- * A conversation started in the web UI or the terminal. A channel's threads all hold an
- * external id and are read in the channel, so a client never opens one.
- */
-export const WEB_THREAD = {
-  threadSource: ThreadSource.DATABASE,
-  externalThreadId: null,
-} satisfies Prisma.ConversationThreadWhereInput;
 
 const COMPACTED_SEARCH_BATCH = 200;
 
@@ -246,9 +238,9 @@ class ConversationService {
   }
 
   /**
-   * The threads a client may list, read or write to. In single-thread mode that is
-   * the one conversation and the channel threads; every other web thread stays in
-   * the database for when the agent runs in multi-thread mode again.
+   * The threads a client may list in single-thread mode: the one conversation and the
+   * channel threads. Every other web thread stays in the database for when the agent
+   * runs in multi-thread mode again. A read or a write also takes `WEB_THREAD`.
    */
   async clientThreadFilter(agentId: string, userId: string): Promise<Prisma.ConversationThreadWhereInput> {
     if (config.threadMode !== 'single') return {};

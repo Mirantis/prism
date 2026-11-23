@@ -12,7 +12,8 @@
 
 import { config } from '../config';
 import prisma from '../lib/prisma';
-import { conversationService, WEB_THREAD } from './conversation.service';
+import { conversationService } from './conversation.service';
+import { WEB_THREAD } from './web-thread';
 import { runtimeStateService } from './runtime-state.service';
 
 const conversationKey = (conversationId: string) => `agentConversation:${conversationId}`;
