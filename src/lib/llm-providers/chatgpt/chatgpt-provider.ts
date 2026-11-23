@@ -21,7 +21,7 @@ import {
 } from '../deferred-tools';
 import { openAiCacheRequest, openAiCacheTtlMs } from '../openai/openai-provider';
 import { createOpenAiCompatibleProvider } from '../openai-compatible';
-import { STREAM_ONLY } from './stream-only';
+import { streamOnly } from './stream-only';
 import { mergeProviderOptions, type LlmProvider } from '../llm-provider';
 
 function withBearer(init: RequestInit | undefined, token: string): RequestInit {
@@ -63,7 +63,7 @@ export function createChatGptProvider(baseURL: string = CHATGPT_API_RESOURCE): L
     baseURL,
     fetch: chatGptFetch,
     // The endpoint also answers only streamed requests.
-    middleware: [NO_STORE, STREAM_ONLY],
+    middleware: [NO_STORE, streamOnly(`${baseURL}/responses`)],
   });
 
   return Object.assign(provider, {
