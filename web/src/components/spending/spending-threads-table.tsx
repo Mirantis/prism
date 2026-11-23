@@ -1,12 +1,11 @@
 import { useMemo } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { runtimeApi, type SpendRange } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 import { formatRelativeTime } from '@/lib/format';
-import { formatUsd } from '@/lib/spending';
+import { formatUsd, withMentionNames } from '@/lib/spending';
 
 const PAGE_SIZE = 20;
 
@@ -40,7 +39,7 @@ export function SpendingThreadsTable({
     });
   }, [data]);
 
-  if (isPending) return <Skeleton className="h-32 w-full rounded-xl" />;
+  if (isPending) return <div className="h-32 rounded-xl bg-card ring-1 ring-foreground/10" />;
   if (isError) return <p className="text-sm text-muted-foreground">The conversations could not be read.</p>;
   if (threads.length === 0) {
     return <p className="rounded-xl bg-card p-6 text-center text-sm text-muted-foreground ring-1 ring-foreground/10">No conversation spent anything in this range.</p>;
@@ -64,7 +63,7 @@ export function SpendingThreadsTable({
               <TableRow key={thread.threadId} data-testid="spending-thread-row" className="cursor-pointer" onClick={() => onOpen(thread.threadId)}>
                 <TableCell className="max-w-0 w-full">
                   <button type="button" className="block w-full truncate text-left text-sm text-foreground outline-none hover:underline focus-visible:underline" onClick={(e) => { e.stopPropagation(); onOpen(thread.threadId); }}>
-                    {thread.title ?? 'Untitled conversation'}
+                    {thread.title ? withMentionNames(thread.title) : 'Untitled conversation'}
                   </button>
                 </TableCell>
                 <TableCell className="hidden text-xs whitespace-nowrap text-muted-foreground sm:table-cell">{formatRelativeTime(thread.lastCallAt)}</TableCell>

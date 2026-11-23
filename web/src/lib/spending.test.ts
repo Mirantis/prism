@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatUsd, monthTotals, periodLabel, shortModel } from './spending';
+import { formatUsd, monthTotals, periodLabel, shortModel, withMentionNames } from './spending';
 import type { PeriodSpend } from '@/types';
 
 function day(start: string, costUsd: number): PeriodSpend {
@@ -62,6 +62,22 @@ describe('periodLabel', () => {
     expect(periodLabel('week', '2026-11-16', 'long')).toBe('Week of November 16');
     expect(periodLabel('month', '2026-11-01', 'long')).toBe('November 2026');
     expect(periodLabel('month', '2026-11-01')).toBe('Nov');
+  });
+});
+
+describe('withMentionNames', () => {
+  it('reads each stored mention as its name', () => {
+    expect(withMentionNames('<@U01ET9F2HK4:Ana Lopez>: <@U0B7X8UM7FV:Prismith> can you check')).toBe(
+      'Ana Lopez: Prismith can you check',
+    );
+  });
+
+  it('reads a mention a title cut short as the name up to the cut', () => {
+    expect(withMentionNames('<@U01ET9F2HK4:Ana Lop…')).toBe('Ana Lop…');
+  });
+
+  it('leaves text without a mention unchanged', () => {
+    expect(withMentionNames('Fix the flaky test')).toBe('Fix the flaky test');
   });
 });
 

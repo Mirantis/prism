@@ -8,7 +8,6 @@ import { SectionHeader } from '@/components/layout/section-header';
 import { EmptyState } from '@/components/shared/empty-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SpendingBreakdown } from '@/components/spending/spending-breakdown';
 import { SpendingChart } from '@/components/spending/spending-chart';
@@ -126,7 +125,7 @@ function SpendingPage() {
               {periods ? (
                 <SpendingChart periods={periods} length={length} selected={selected} onSelect={setSelected} />
               ) : (
-                <Skeleton className="h-56 w-full" />
+                <div className="h-56" />
               )}
             </div>
           </section>

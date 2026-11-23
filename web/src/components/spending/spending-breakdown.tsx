@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { SpendRange } from '@/api/runtime-client';
 import {
@@ -44,11 +43,7 @@ export function SpendingBreakdown({
       </Tabs>
 
       {isLoading ? (
-        <div className="space-y-3">
-          <Skeleton className="h-6 w-full" />
-          <Skeleton className="h-6 w-3/4" />
-          <Skeleton className="h-6 w-1/2" />
-        </div>
+        <div className="h-24" />
       ) : rows.length === 0 ? (
         <p className="py-4 text-center text-sm text-muted-foreground">Nothing spent in this range.</p>
       ) : (

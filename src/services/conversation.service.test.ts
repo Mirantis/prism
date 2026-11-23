@@ -219,9 +219,21 @@ describe('ConversationService', () => {
 
       expect(id).toBe('thread-x');
       expect(mockPrisma.conversationThread.findFirst).toHaveBeenCalledWith({
-        where: { id: 'thread-x', agentId: 'agent-123', userId: 'user-123' },
+        where: { id: 'thread-x', agentId: 'agent-123', userId: 'user-123', threadSource: 'DATABASE', externalThreadId: null },
         select: { id: true },
       });
+    });
+
+    it('reads a web thread only, for getThread too: a channel thread is read in its channel', async () => {
+      mockPrisma.conversationThread.findFirst.mockResolvedValue(null);
+
+      expect(await conversationService.getOwnedThreadId('user-123', 'agent-123', 'thread-slack')).toBeNull();
+      expect(await conversationService.getThread('user-123', 'agent-123', 'thread-slack')).toBeNull();
+
+      for (const [query] of mockPrisma.conversationThread.findFirst.mock.calls) {
+        expect(query.where).toMatchObject({ id: 'thread-slack', threadSource: 'DATABASE', externalThreadId: null });
+      }
+      expect(mockPrisma.conversationMessage.findMany).not.toHaveBeenCalled();
     });
 
     it('returns null when the thread is missing / not owned', async () => {

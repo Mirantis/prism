@@ -38,6 +38,18 @@ beforeEach(() => {
 });
 
 describe('SpendingThreadsTable', () => {
+  it('shows a mention in a title as the name', async () => {
+    mockThreads.mockResolvedValue({ threads: [{ ...thread(1), title: '<@U01ET9F2HK4:Ana Lop…' }], nextOffset: null });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <SpendingThreadsTable range={RANGE} total={1} onOpen={() => {}} />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole('button', { name: 'Ana Lop…' })).toBeInTheDocument();
+  });
+
   it('reads each Show more page from the last page\'s offset, at the same page size', async () => {
     // Far past the route's 200-row limit: every request still asks for one page.
     mockThreads.mockImplementation(async (_range, { limit, offset }: { limit: number; offset: number }) => ({
@@ -60,5 +72,6 @@ describe('SpendingThreadsTable', () => {
     expect(mockThreads.mock.calls.map(([, opts]) => opts)).toEqual(
       Array.from({ length: 12 }, (_, i) => ({ limit: 20, offset: i * 20 })),
     );
-  });
+    // 240 rows take about 2 s alone and over 4 s beside the rest of the suite.
+  }, 15_000);
 });

@@ -8,7 +8,10 @@ import { HomePage } from '../pages/home.page';
 import * as dbHelper from '../support/db-helper';
 import { getCurrentAgentId } from './common.steps';
 
-const { Given, Then } = createBdd();
+const { Given, When, Then } = createBdd();
+
+/** The stored Slack thread the scenario opens by its address. */
+let slackThreadId = '';
 
 Given('I have an older conversation with the following messages:', async ({}, dataTable: DataTable) => {
   const rows = dataTable.rows();
@@ -26,6 +29,24 @@ Given('I have a Slack-sourced conversation with the following messages:', async 
     content,
   }));
   await dbHelper.createSlackConversation(getCurrentAgentId(), messages);
+});
+
+// A Slack thread whose history is stored, as a routed Slack thread or a direct message is.
+Given('I have a stored Slack thread with the following messages:', async ({}, dataTable: DataTable) => {
+  const messages = dataTable.rows().map(([role, content]) => ({ role: role as 'USER' | 'AGENT', content }));
+  slackThreadId = await dbHelper.createThread(getCurrentAgentId(), {
+    externalThreadId: `1700000000.${Date.now()}`,
+    externalChannelId: 'C_MOCK_E2E',
+    messages,
+  });
+});
+
+When("I open that Slack thread's chat address", async ({ page }) => {
+  await new HomePage(page).goto(`/chat/${slackThreadId}`);
+});
+
+Then('the chat leaves that Slack thread', async ({ page }) => {
+  await expect(page).not.toHaveURL(new RegExp(slackThreadId));
 });
 
 Then('I should not see the message {string} in the conversation', async ({ page }, text: string) => {
