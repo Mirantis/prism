@@ -2,6 +2,7 @@
 //! SDK builds from a configuration: Streamable HTTP and legacy SSE.
 
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use indexmap::IndexMap;
@@ -102,10 +103,14 @@ pub fn create_mcp_transport(config: MCPTransportConfig) -> anyhow::Result<Arc<dy
     })
 }
 
-/// Node's global `fetch`: no proxy, and a redirect fails the request.
+/// Node's global `fetch`: no proxy, a redirect fails the request, and undici's default
+/// timeouts of ten seconds to connect and five minutes for the response headers and
+/// between body reads.
 pub(crate) static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .no_proxy()
+        .connect_timeout(Duration::from_secs(10))
+        .read_timeout(Duration::from_secs(300))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             attempt.error("unexpected redirect")
         }))
