@@ -95,7 +95,7 @@ systemctl --user restart prism-server.service
 
 ```powershell
 # Windows
-Restart-ScheduledTask -TaskName PrismServer
+Stop-ScheduledTask -TaskName PrismServer; Start-ScheduledTask -TaskName PrismServer
 ```
 
 You can restart at any time. The agent continues the work it was doing when it
