@@ -272,6 +272,24 @@ fn has_no_webhook_origin_when_the_deployment_exposes_only_the_web_port() {
 }
 
 #[test]
+fn starts_with_a_bad_channel_port_and_keeps_why_for_its_listener() {
+    let defaults = load(&[]);
+    assert_eq!(
+        (defaults.teams_port, defaults.slack_port),
+        (Ok(3979), Ok(3980))
+    );
+    let cfg = load(&[("TEAMS_PORT", "70000"), ("SLACK_PORT", "teams")]);
+    assert_eq!(
+        cfg.teams_port,
+        Err("TEAMS_PORT must be a port number, got \"70000\"".to_string())
+    );
+    assert_eq!(
+        cfg.slack_port,
+        Err("SLACK_PORT must be a port number, got \"teams\"".to_string())
+    );
+}
+
+#[test]
 fn checks_the_agent_messages_port() {
     assert_eq!(load(&[]).agent_messages_port, 3005);
     assert!(

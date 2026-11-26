@@ -2742,8 +2742,13 @@ impl ChannelAdapter for TeamsAdapterService {
         )
         .await
         .map(Arc::new);
-        self.start(connection, app, &CONFIG.host, CONFIG.teams_port)
-            .await;
+        match CONFIG.teams_port.clone() {
+            Ok(port) => self.start(connection, app, &CONFIG.host, port).await,
+            Err(reason) => {
+                let app = app.and_then(|_| Err(anyhow::anyhow!(reason)));
+                self.start(connection, app, &CONFIG.host, 0).await
+            }
+        }
         Ok(())
     }
 
