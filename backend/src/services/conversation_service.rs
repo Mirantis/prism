@@ -35,6 +35,7 @@ use crate::services::runtime_state_service::{RUNTIME_STATE_SERVICE, SINGLE_THREA
 use crate::services::thread_provider_interface::{
     MessageReadOptions, MessageView, ThreadMessageProvider,
 };
+use crate::services::web_thread::web_thread;
 use crate::support::js;
 use crate::utils::thread_title::derive_thread_title;
 
@@ -741,8 +742,7 @@ impl ConversationService {
             Ok(t::conversation_threads
                 .filter(t::agent_id.eq(agent))
                 .filter(t::user_id.eq(user))
-                .filter(t::external_thread_id.is_null())
-                .filter(t::thread_source.eq(ThreadSource::Database))
+                .filter(web_thread())
                 .order(t::created_at.desc())
                 .select(ConversationThread::as_select())
                 .first(conn)
@@ -885,8 +885,8 @@ impl ConversationService {
         .await
     }
 
-    /// The thread `thread_id` when it belongs to the agent and the user and a client
-    /// may see it.
+    /// The web thread `thread_id` when it belongs to the agent and the user and a
+    /// client may see it.
     async fn client_thread(
         &self,
         user_id: &str,
@@ -904,6 +904,7 @@ impl ConversationService {
                 .filter(t::id.eq(id))
                 .filter(t::agent_id.eq(agent))
                 .filter(t::user_id.eq(user))
+                .filter(web_thread())
                 .into_boxed();
             Ok(client_threads(query, &filter)
                 .select(ConversationThread::as_select())
@@ -913,7 +914,7 @@ impl ConversationService {
         .await
     }
 
-    /// Get a thread by ID (with ownership check). With `page`, it holds that page of
+    /// Get a web thread by ID (with ownership check). With `page`, it holds that page of
     /// messages instead of the whole history.
     pub async fn get_thread(
         &self,
@@ -926,7 +927,7 @@ impl ConversationService {
             return Ok(None);
         };
 
-        let provider = self.provider_for(Some(thread.thread_source));
+        let provider = Arc::clone(&self.database_provider);
 
         // CLIENT history (web SPA): hide concise-mode internal steps. The model path
         // (get_thread_context) reads without this option so it still replays them.
@@ -976,8 +977,8 @@ impl ConversationService {
         }))
     }
 
-    /// Lightweight ownership/existence check: returns the thread id when it
-    /// belongs to this agent+user, else `None`. Unlike `get_thread` it does NOT load
+    /// Lightweight ownership/existence check: returns the thread id when it is a web
+    /// thread of this agent+user, else `None`. Unlike `get_thread` it does NOT load
     /// the thread's messages or attachment metadata, so callers that only need to
     /// authorize a thread id (e.g. the CLI's /messages replay) stay cheap.
     pub async fn get_owned_thread_id(
@@ -1020,11 +1021,7 @@ impl ConversationService {
                 query = query.filter(t::workspace_root.eq(root));
             }
             match options.thread_source {
-                Some(ThreadSource::Database) => {
-                    query = query
-                        .filter(t::thread_source.eq(ThreadSource::Database))
-                        .filter(t::external_thread_id.is_null());
-                }
+                Some(ThreadSource::Database) => query = query.filter(web_thread()),
                 Some(source) => query = query.filter(t::thread_source.eq(source)),
                 None => {}
             }

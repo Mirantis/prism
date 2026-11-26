@@ -18,6 +18,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::config::CONFIG;
+use crate::db::models::ThreadSource;
 use crate::db::schema::llm_calls::dsl as l;
 use crate::db::schema::{
     conversation_messages, conversation_threads, cron_tasks, goals, webhook_subscriptions,
@@ -27,6 +28,7 @@ use crate::lib::spend_context::SpendSourceKind;
 use crate::lib::timezone::resolve_timezone;
 use crate::lib::zoned_time::{date_utc, wall_clock, zoned_instant};
 use crate::services::llm_call_service::{SpendKind, spend_kind_of};
+use crate::services::web_thread::is_web_thread;
 use crate::support::{from_ms, iso, js};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
@@ -218,6 +220,8 @@ pub struct RequestSpend {
 pub struct ThreadSpendDetail {
     pub thread_id: String,
     pub title: Option<String>,
+    /// True for a web thread, which web chat opens by its id.
+    pub opens_in_chat: bool,
     #[serde(flatten)]
     pub breakdown: SpendBreakdown,
     pub requests: Vec<RequestSpend>,
@@ -693,7 +697,7 @@ impl SpendingService {
         }
 
         let (owner, thread) = (owner(), thread_id.to_string());
-        let (request_rows, title, messages) = crate::db::read(move |conn| {
+        let (request_rows, stored, messages) = crate::db::read(move |conn| {
             let request_rows: Vec<(Option<String>, Sums, Option<DateTime<Utc>>, Option<String>)> =
                 l::llm_calls
                     .filter(l::agent_id.eq(&owner))
@@ -708,11 +712,16 @@ impl SpendingService {
                     ))
                     .order_by(first_at(l::created_at).desc())
                     .load(conn)?;
-            let title: Option<Option<String>> = conversation_threads::table
-                .filter(conversation_threads::id.eq(&thread))
-                .select(conversation_threads::title)
-                .first(conn)
-                .optional()?;
+            let stored: Option<(Option<String>, ThreadSource, Option<String>)> =
+                conversation_threads::table
+                    .filter(conversation_threads::id.eq(&thread))
+                    .select((
+                        conversation_threads::title,
+                        conversation_threads::thread_source,
+                        conversation_threads::external_thread_id,
+                    ))
+                    .first(conn)
+                    .optional()?;
             let ids: Vec<String> = request_rows
                 .iter()
                 .filter_map(|row| row.0.clone())
@@ -726,7 +735,7 @@ impl SpendingService {
                     conversation_messages::triggered_by,
                 ))
                 .load(conn)?;
-            Ok((request_rows, title.flatten(), messages))
+            Ok((request_rows, stored, messages))
         })
         .await?;
         let messages: HashMap<String, (String, String)> = messages
@@ -734,9 +743,14 @@ impl SpendingService {
             .map(|(id, content, triggered_by)| (id, (content, triggered_by)))
             .collect();
 
+        let (title, opens_in_chat) = match stored {
+            Some((title, source, external)) => (title, is_web_thread(source, external.as_deref())),
+            None => (None, false),
+        };
         Ok(Some(ThreadSpendDetail {
             thread_id: thread_id.to_string(),
             title,
+            opens_in_chat,
             breakdown,
             requests: request_rows
                 .into_iter()
@@ -1524,6 +1538,67 @@ mod tests {
                 (None, None, 0.0002, 1),
             ]
         );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn opens_only_a_web_thread_in_chat() {
+        let _db = setup();
+        let threads = [
+            ("web", ThreadSource::Database, None),
+            // A channel's thread with stored history: the source is the database, the id is the channel's.
+            (
+                "stored-channel",
+                ThreadSource::Database,
+                Some("1700000000.000100"),
+            ),
+            (
+                "live-channel",
+                ThreadSource::Slack,
+                Some("1700000000.000200"),
+            ),
+        ];
+        for (id, source, external) in threads {
+            let mut thread = NewConversationThread::new(owner_id(), "user-1");
+            thread.id = id.to_string();
+            thread.thread_source = source;
+            thread.external_thread_id = external.map(str::to_string);
+            crate::db::run(move |conn| {
+                diesel::insert_into(conversation_threads::table)
+                    .values(&thread)
+                    .execute(conn)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        }
+        record(vec![
+            Call {
+                thread_id: Some("web"),
+                request_id: Some("r-1"),
+                ..call("2026-11-20T10:00:00Z", Some(10))
+            },
+            Call {
+                thread_id: Some("stored-channel"),
+                request_id: Some("r-2"),
+                ..call("2026-11-20T10:00:00Z", Some(10))
+            },
+            Call {
+                thread_id: Some("live-channel"),
+                request_id: Some("r-3"),
+                ..call("2026-11-20T10:00:00Z", Some(10))
+            },
+        ])
+        .await;
+
+        for (id, opens) in [
+            ("web", true),
+            ("stored-channel", false),
+            ("live-channel", false),
+        ] {
+            let thread = SPENDING_SERVICE.thread(id).await.unwrap().unwrap();
+            assert_eq!(thread.opens_in_chat, opens, "{id}");
+        }
     }
 
     #[tokio::test]

@@ -17,6 +17,7 @@ use crate::db::models::ThreadSource;
 use crate::db::schema::conversation_threads::dsl as t;
 use crate::services::conversation_service::CONVERSATION_SERVICE;
 use crate::services::runtime_state_service::RUNTIME_STATE_SERVICE;
+use crate::services::web_thread::web_thread;
 
 /// The `runtime_state` key that holds the web conversation of `conversation_id`.
 fn conversation_key(conversation_id: &str) -> String {
@@ -54,8 +55,7 @@ impl AgentConversationService {
                 .filter(t::id.eq(thread_id))
                 .filter(t::agent_id.eq(agent))
                 .filter(t::user_id.eq(owner))
-                .filter(t::external_thread_id.is_null())
-                .filter(t::thread_source.eq(ThreadSource::Database))
+                .filter(web_thread())
                 .select(crate::db::models::ConversationThread::as_select())
                 .first(conn)
                 .optional()?)

@@ -55,6 +55,7 @@ use crate::services::event_stream_service::EVENT_STREAM_SERVICE;
 use crate::services::message_delivery_service::MESSAGE_DELIVERY_SERVICE;
 use crate::services::pending_work_service::{PENDING_WORK_SERVICE, PendingWorkKind};
 use crate::services::web_chat_label::web_chat_label;
+use crate::services::web_thread::web_thread;
 use crate::support::after_accept::{AcceptGate, spawn_after_accept, within_gate};
 use crate::types::{AgentMessageOrigin, ResumedReply, TaskNotificationOrigin};
 use crate::{log_error, log_info};
@@ -624,16 +625,14 @@ impl InboundMessageService {
         let thread = crate::db::run(move |conn| {
             Ok(t::conversation_threads
                 .filter(t::id.eq(id))
+                .filter(web_thread())
                 .select(crate::db::models::ConversationThread::as_select())
                 .first(conn)
                 .optional()?)
         })
         .await?;
-        let known = thread.is_some_and(|thread| {
-            filter.allows(&thread)
-                && thread.agent_id == agent_id
-                && thread.thread_source == ThreadSource::Database
-        });
+        let known =
+            thread.is_some_and(|thread| filter.allows(&thread) && thread.agent_id == agent_id);
         if !known {
             return Err(InboundMessageError::new(
                 NackCode::UnknownThread,

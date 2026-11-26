@@ -297,6 +297,40 @@ async fn answers_the_id_of_an_owned_thread_only() {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn reads_a_web_thread_only_since_a_channel_thread_is_read_in_its_channel() {
+    let _db = crate::db::testing::test_db();
+    seed_agent().await;
+    thread("stored-channel", 1, |t| {
+        t.external_thread_id = Some("1700000000.000100".into())
+    })
+    .await;
+    thread("thread-slack", 2, |t| {
+        t.external_thread_id = Some("C1:1.0".into());
+        t.thread_source = ThreadSource::Slack;
+    })
+    .await;
+    for id in ["stored-channel", "thread-slack"] {
+        assert_eq!(
+            CONVERSATION_SERVICE
+                .get_owned_thread_id(USER, AGENT, id)
+                .await
+                .unwrap(),
+            None,
+            "{id}"
+        );
+        assert!(
+            CONVERSATION_SERVICE
+                .get_thread(USER, AGENT, id, None)
+                .await
+                .unwrap()
+                .is_none(),
+            "{id}"
+        );
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn returns_the_latest_web_thread_or_creates_one_and_announces_it() {
     let _db = crate::db::testing::test_db();
     seed_agent().await;
