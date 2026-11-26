@@ -149,7 +149,8 @@ impl SlackRouterService {
         &'static self,
         handlers: Arc<dyn SlackRouterHandlers>,
     ) -> anyhow::Result<()> {
-        self.listen(handlers, &CONFIG.host, CONFIG.slack_port).await
+        let port = CONFIG.slack_port.clone().map_err(anyhow::Error::msg)?;
+        self.listen(handlers, &CONFIG.host, port).await
     }
 
     async fn listen(

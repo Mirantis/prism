@@ -1823,7 +1823,7 @@ impl SlackAdapterService {
                     .await
             {
                 log_error!(
-                    json!({ "err": err_json(&error), "port": CONFIG.slack_port }),
+                    json!({ "err": err_json(&error), "port": CONFIG.slack_port.as_ref().ok() }),
                     "Could not open the Slack router listener"
                 );
             }

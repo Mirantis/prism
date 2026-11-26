@@ -588,7 +588,7 @@ pub struct Config {
     pub slack_api_url: Option<String>,
     /// `SLACK_PORT`: routed mode's listener, which serves
     /// `POST /agents/slack/router` and nothing else.
-    pub slack_port: u16,
+    pub slack_port: ListenPort,
 
     /// Microsoft Teams: a Single Tenant Entra app registration behind an Azure
     /// Bot resource. TEAMS_APP_PASSWORD is the client secret, or on Mirantis Agent Platform
@@ -598,7 +598,7 @@ pub struct Config {
     pub teams_app_tenant_id: Option<String>,
     /// The bot endpoint's own port. It serves POST /agents/teams/messages and
     /// nothing else, so it is the one port a deployment publishes to Microsoft.
-    pub teams_port: u16,
+    pub teams_port: ListenPort,
 
     /// External MCP server URL, injected as NEXUS_MCP_URL by the Mirantis Agent Platform
     /// sandbox. Already a complete URL; do NOT append /mcp. `None` when unset.
@@ -1648,11 +1648,11 @@ impl Config {
             slack_bot_token: e.get("SLACK_BOT_TOKEN").map(str::to_string),
             slack_expected_app_id: e.get("SLACK_EXPECTED_APP_ID").map(str::to_string),
             slack_api_url: read_slack_api_url(&e)?,
-            slack_port: parse_port(e.or("SLACK_PORT").unwrap_or("3980"), "SLACK_PORT")?,
+            slack_port: listen_port(e.or("SLACK_PORT").unwrap_or("3980"), "SLACK_PORT"),
             teams_app_id: e.get("TEAMS_APP_ID").map(str::to_string),
             teams_app_password: e.get("TEAMS_APP_PASSWORD").map(str::to_string),
             teams_app_tenant_id: e.get("TEAMS_APP_TENANT_ID").map(str::to_string),
-            teams_port: parse_port(e.or("TEAMS_PORT").unwrap_or("3979"), "TEAMS_PORT")?,
+            teams_port: listen_port(e.or("TEAMS_PORT").unwrap_or("3979"), "TEAMS_PORT"),
             nexus_mcp_url: e.get("NEXUS_MCP_URL").map(str::to_string),
             langfuse_secret_key: e.get("LANGFUSE_SECRET_KEY").map(str::to_string),
             langfuse_public_key: e.get("LANGFUSE_PUBLIC_KEY").map(str::to_string),
@@ -1774,6 +1774,14 @@ fn parse_port(text: &str, name: &str) -> anyhow::Result<u16> {
         .filter(|p| (0..=65535).contains(p))
         .map(|p| p as u16)
         .ok_or_else(|| anyhow::anyhow!("{name} must be a port number"))
+}
+
+/// The port of a channel's own listener, or why the text is not one. Only that
+/// listener fails to open on a bad value; the runtime still starts.
+pub type ListenPort = Result<u16, String>;
+
+fn listen_port(text: &str, name: &str) -> ListenPort {
+    parse_port(text, name).map_err(|_| format!("{name} must be a port number, got \"{text}\""))
 }
 
 /// `SLACK_API_URL`: the Slack Web API base URL every Slack client calls. The
