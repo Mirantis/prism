@@ -5,7 +5,6 @@
 
 import { createBdd } from 'playwright-bdd';
 import { expect, type Page } from '@playwright/test';
-import { deriveThreadTitle } from '../../src/utils/thread-title';
 import { HomePage } from '../pages/home.page';
 import * as dbHelper from '../support/db-helper';
 import { getCurrentAgentId } from './common.steps';
@@ -162,8 +161,8 @@ Then('the sheet links to my conversation', async ({ page }) => {
 
 /** A channel message as the runtime stores it: each person is a `<@id:name>` tag. */
 const MENTIONING = '<@U0E2EANA01:Ana>: <@U0E2EPRISM1:Prismith> can you check the build';
-/** The stored title, cut inside the second tag: `<@U0E2EANA01:Ana>: <@...`. */
-const MENTIONING_TITLE = deriveThreadTitle(MENTIONING);
+/** The title the runtime stores for it, cut inside the second tag. */
+const MENTIONING_TITLE = '<@U0E2EANA01:Ana>: <@...';
 const BUCKET_MS = 15 * 60 * 1000;
 
 // A channel's thread with stored history: the source is the database, the id is the channel's.
