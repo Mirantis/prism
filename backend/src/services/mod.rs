@@ -66,6 +66,7 @@ pub mod tool_ledger_service;
 pub mod update;
 pub mod voice;
 pub mod web_chat_label;
+pub mod web_thread;
 pub mod webhook_receiver_service;
 pub mod webhook_run_service;
 pub mod webhook_service;
