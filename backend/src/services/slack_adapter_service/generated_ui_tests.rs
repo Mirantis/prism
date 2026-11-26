@@ -230,6 +230,64 @@ async fn autonomous_delivery_posts_a_ui_only_to_the_main_channel_not_also_to_the
 
 #[tokio::test]
 #[serial_test::serial]
+async fn a_ui_in_reply_to_a_dm_posts_only_to_that_dm_thread() {
+    let _db = agent().await;
+    set_slack_config_for_tests(Some(connection()));
+    let api = fake_slack_api(Arc::new(|method, _| match method {
+        "chat.postMessage" => (200, json!({ "ok": true, "ts": TS })),
+        _ => (200, json!({ "ok": true })),
+    }))
+    .await;
+    let _app = install_app(TEAM, &api.url);
+    let mut mapping = crate::db::models::NewSlackMapping::new(TEAM, agent_id());
+    mapping.lens_user_id = Some(USER.into());
+    mapping.dm_channel_id = Some("D0ADA".into());
+    mapping.slack_channel_id = Some("C1".into());
+    mapping.is_main_channel = true;
+    crate::db::run(move |conn| {
+        diesel::insert_into(crate::db::schema::slack_mappings::table)
+            .values(&mapping)
+            .execute(conn)?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let ui = ui();
+    seed_ui(&ui).await;
+    let row = rows(THREAD).await.remove(0);
+    let dm_turn = ChannelContext {
+        channel: ChannelName::Slack,
+        channel_id: None,
+        channel_thread_id: Some("1767225500.000100".into()),
+        thread_id: THREAD.into(),
+        include_feedback: None,
+    };
+    adapter()
+        .deliver(USER, &DeliverableMessage::bare(row), Some(&dm_turn))
+        .await
+        .unwrap();
+    __reset_slack_config_for_tests();
+
+    let posts = api.calls("chat.postMessage");
+    let targets: Vec<(Option<String>, Option<String>)> = posts
+        .iter()
+        .map(|post| (post.field("channel"), post.field("thread_ts")))
+        .collect();
+    assert_eq!(
+        targets,
+        [(
+            Some("D0ADA".to_string()),
+            Some("1767225500.000100".to_string())
+        )]
+    );
+    assert_eq!(
+        rows(THREAD).await[0].external_message_id.as_deref(),
+        Some(TS)
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn posts_the_text_version_when_slack_refuses_the_blocks_with_each_refusal_code() {
     for code in REFUSED_BLOCKS {
         let _db = agent().await;
