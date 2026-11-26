@@ -54,6 +54,34 @@ Given(
   },
 );
 
+Given(
+  'the workspace\'s .mcp.json has a server {string} that exits at once',
+  async ({}, name: string) => {
+    fs.mkdirSync(E2E_WORKSPACE, { recursive: true });
+    const config = path.join(E2E_WORKSPACE, '.mcp.json');
+    written.push(config);
+    fs.writeFileSync(config, JSON.stringify({
+      mcpServers: { [name]: { type: 'stdio', command: 'node', args: ['-e', 'process.exit(1)'] } },
+    }));
+  },
+);
+
+Then(
+  'the coding task reports it ran without the MCP server {string}',
+  async ({}, name: string) => {
+    const statuses = (await storedToolCalls())
+      .filter((call) => call.tool === 'coding_agent_status' && call.output)
+      .map((call) => JSON.parse(call.output as string) as {
+        completed?: boolean;
+        result?: string;
+        unconnectedMcpServers?: Array<{ name: string; host?: string }>;
+      });
+    const done = statuses.find((status) => status.completed);
+    expect(done?.unconnectedMcpServers, JSON.stringify(done)).toContainEqual({ name });
+    expect(done?.result).toContain(`could not connect these MCP servers, so the task ran without their tools:\n- ${name}`);
+  },
+);
+
 Then('the activity shows a {string} tool call', async ({ page, $testInfo }, label: string) => {
   await expect(
     new ActivityPage(page).toolCalls.getByText(label, { exact: true }).first(),

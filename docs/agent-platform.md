@@ -67,3 +67,6 @@ and [voice messages](dictation.md) use it, whatever backend runs chat.
   or Azure, and no `OPENAI_REALTIME_API_KEY` is set.
 - **A tool call fails with a network error.** The sandbox's network policy
   blocks the host. Allow it in the platform.
+- **A coding task's result says it ran without an MCP server's tools.** The
+  sandbox's network policy may block the server's host. For a claude.ai
+  connector, allow `mcp-proxy.anthropic.com`.

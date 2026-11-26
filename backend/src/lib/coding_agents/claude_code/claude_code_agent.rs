@@ -28,8 +28,8 @@ use crate::config::{CONFIG, ClaudeCodeTierModel, CodingAgentName, TierSet};
 use crate::lib::coding_agents::cli_run::{CliRunSpec, run_cli};
 use crate::lib::coding_agents::coding_agent::{
     CodingAgent, CodingAgentEvent, CodingAgentHome, CodingAgentMode, CodingAgentRefusal,
-    CodingAgentRun, CodingAgentStopReason, CodingAgentTask, CodingAgentUsage,
-    PLAN_ONLY_INSTRUCTION,
+    CodingAgentRun, CodingAgentStopReason, CodingAgentTask, CodingAgentUnconnectedServer,
+    CodingAgentUsage, PLAN_ONLY_INSTRUCTION,
 };
 use crate::lib::coding_agents::deferred_run::{aborted, deferred_run};
 use crate::lib::coding_agents::shared_skills_home::prepare_shared_skills_home;
@@ -389,6 +389,15 @@ fn parse_line(
         });
     }
 
+    // The opening line lists each MCP server's status; a connection failure
+    // appears there and in no tool output.
+    if text(&parsed, "subtype") == Some("init") {
+        let servers = unconnected_servers(&parsed, task);
+        if !servers.is_empty() {
+            events.push(CodingAgentEvent::Unconnected { servers });
+        }
+    }
+
     let line_type = text(&parsed, "type");
     let content = parsed
         .get("message")
@@ -451,6 +460,29 @@ fn parse_line(
     }
 
     Ok(events)
+}
+
+/// The host Claude Code connects every claude.ai connector through.
+const CONNECTOR_HOST: &str = "mcp-proxy.anthropic.com";
+
+/// The servers an `init` line lists as `failed`, apart from the runtime's own,
+/// which the runtime connects for the agent too. A claude.ai connector comes
+/// with the host it connects through.
+fn unconnected_servers(init: &Value, task: &CodingAgentTask) -> Vec<CodingAgentUnconnectedServer> {
+    init.get("mcp_servers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|server| text(server, "status") == Some("failed"))
+        .filter_map(|server| text(server, "name"))
+        .filter(|name| !task.mcp_servers.iter().any(|own| own.name() == *name))
+        .map(|name| CodingAgentUnconnectedServer {
+            name: name.to_string(),
+            host: name
+                .starts_with("claude.ai ")
+                .then(|| CONNECTOR_HOST.to_string()),
+        })
+        .collect()
 }
 
 /// The fields of the warning an opening `init` line earns when it reports a
