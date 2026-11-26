@@ -1,0 +1,3656 @@
+[
+  {
+    "name": "recorded tool call",
+    "fixture": "tool-call-stream.sse",
+    "options": {
+      "tools": [
+        {
+          "type": "function",
+          "name": "add",
+          "description": "add two numbers",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ]
+          }
+        }
+      ],
+      "providerOptions": {
+        "openai": {
+          "store": false
+        }
+      }
+    },
+    "parts": [
+      {
+        "type": "stream-start",
+        "warnings": []
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "response-metadata",
+        "id": "resp_example",
+        "timestamp": "2026-11-23T13:36:44.000Z",
+        "modelId": "gpt-6.2-sol"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-start",
+        "id": "msg_example",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_example",
+            "phase": "commentary"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "adding"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-end",
+        "id": "msg_example",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_example",
+            "phase": "commentary"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-start",
+        "id": "call_bb90c213b91440f5bcec2577f2e22c59",
+        "toolName": "add"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_bb90c213b91440f5bcec2577f2e22c59",
+        "delta": "{\""
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_bb90c213b91440f5bcec2577f2e22c59",
+        "delta": "a"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_bb90c213b91440f5bcec2577f2e22c59",
+        "delta": "\":"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_bb90c213b91440f5bcec2577f2e22c59",
+        "delta": "2"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_bb90c213b91440f5bcec2577f2e22c59",
+        "delta": ",\""
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_bb90c213b91440f5bcec2577f2e22c59",
+        "delta": "b"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_bb90c213b91440f5bcec2577f2e22c59",
+        "delta": "\":"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_bb90c213b91440f5bcec2577f2e22c59",
+        "delta": "3"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_bb90c213b91440f5bcec2577f2e22c59",
+        "delta": "}"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-end",
+        "id": "call_bb90c213b91440f5bcec2577f2e22c59"
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "call_bb90c213b91440f5bcec2577f2e22c59",
+        "toolName": "add",
+        "input": "{\"a\":2,\"b\":3}",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "fc_example"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "finish",
+        "finishReason": {
+          "unified": "tool-calls"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 62,
+            "noCache": 62,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 29,
+            "text": 29,
+            "reasoning": 0
+          },
+          "raw": {
+            "input_tokens": 62,
+            "input_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "cache_write_tokens_details": {
+                "ttl_30m_tokens": 0,
+                "ttl_12h_tokens": 0
+              }
+            },
+            "output_tokens": 29,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 91,
+            "attribution": {
+              "items": {
+                "fc_example": {
+                  "input_tokens": 0,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 23
+                },
+                "msg_example": {
+                  "input_tokens": 2,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 6,
+                  "content": [
+                    {
+                      "input_tokens": 2,
+                      "cached_tokens": 0,
+                      "cache_write_tokens": 0,
+                      "output_tokens": 6
+                    }
+                  ]
+                }
+              },
+              "request_fields": {
+                "tools": {
+                  "input_tokens": 37,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 0
+                }
+              }
+            }
+          }
+        },
+        "providerMetadata": {
+          "openai": {
+            "responseId": "resp_example",
+            "serviceTier": "default",
+            "reasoningContext": "all_turns"
+          }
+        }
+      }
+    ],
+    "request": {
+      "body": {
+        "model": "gpt-6.2-sol",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "add",
+            "description": "add two numbers",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "a": {
+                  "type": "number"
+                },
+                "b": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "a",
+                "b"
+              ]
+            },
+            "strict": false
+          }
+        ]
+      }
+    },
+    "responseHeaders": {
+      "content-type": "text/event-stream",
+      "x-request-id": "req_1"
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "store": false,
+      "include": [
+        "reasoning.encrypted_content"
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "name": "add",
+          "description": "add two numbers",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ]
+          },
+          "strict": false
+        }
+      ],
+      "stream": true
+    }
+  },
+  {
+    "name": "recorded reasoning and tool call",
+    "fixture": "reasoning-tool-call-stream.sse",
+    "options": {
+      "tools": [
+        {
+          "type": "function",
+          "name": "add",
+          "description": "add two numbers",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ]
+          }
+        }
+      ],
+      "providerOptions": {
+        "openai": {
+          "store": false
+        }
+      }
+    },
+    "parts": [
+      {
+        "type": "stream-start",
+        "warnings": []
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "response-metadata",
+        "id": "resp_example",
+        "timestamp": "2026-11-23T14:15:38.000Z",
+        "modelId": "gpt-6.2-sol"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-start",
+        "id": "rs_example:0",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_example",
+            "reasoningEncryptedContent": "encrypted-reasoning-example"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-end",
+        "id": "rs_example:0",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_example",
+            "reasoningEncryptedContent": "encrypted-reasoning-example"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-start",
+        "id": "call_example",
+        "toolName": "add"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_example",
+        "delta": "{\""
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_example",
+        "delta": "a"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_example",
+        "delta": "\":"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_example",
+        "delta": "391"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_example",
+        "delta": ",\""
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_example",
+        "delta": "b"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_example",
+        "delta": "\":"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_example",
+        "delta": "399"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_example",
+        "delta": "}"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-end",
+        "id": "call_example"
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "call_example",
+        "toolName": "add",
+        "input": "{\"a\":391,\"b\":399}",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "fc_example"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "finish",
+        "finishReason": {
+          "unified": "tool-calls"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 76,
+            "noCache": 76,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 31,
+            "text": 23,
+            "reasoning": 8
+          },
+          "raw": {
+            "input_tokens": 76,
+            "input_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "cache_write_tokens_details": {
+                "ttl_30m_tokens": 0,
+                "ttl_12h_tokens": 0
+              }
+            },
+            "output_tokens": 31,
+            "output_tokens_details": {
+              "reasoning_tokens": 8
+            },
+            "total_tokens": 107,
+            "attribution": {
+              "items": {
+                "fc_example": {
+                  "input_tokens": 0,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 23
+                },
+                "msg_example": {
+                  "input_tokens": 37,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 0,
+                  "content": [
+                    {
+                      "input_tokens": 37,
+                      "cached_tokens": 0,
+                      "cache_write_tokens": 0,
+                      "output_tokens": 0
+                    }
+                  ]
+                },
+                "rs_example": {
+                  "input_tokens": 2,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 8
+                }
+              },
+              "request_fields": {
+                "tools": {
+                  "input_tokens": 37,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 0
+                }
+              }
+            }
+          }
+        },
+        "providerMetadata": {
+          "openai": {
+            "responseId": "resp_example",
+            "serviceTier": "default",
+            "reasoningContext": "all_turns"
+          }
+        }
+      }
+    ],
+    "request": {
+      "body": {
+        "model": "gpt-6.2-sol",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "add",
+            "description": "add two numbers",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "a": {
+                  "type": "number"
+                },
+                "b": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "a",
+                "b"
+              ]
+            },
+            "strict": false
+          }
+        ]
+      }
+    },
+    "responseHeaders": {
+      "content-type": "text/event-stream",
+      "x-request-id": "req_1"
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "store": false,
+      "include": [
+        "reasoning.encrypted_content"
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "name": "add",
+          "description": "add two numbers",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ]
+          },
+          "strict": false
+        }
+      ],
+      "stream": true
+    }
+  },
+  {
+    "name": "recorded answer",
+    "fixture": "reasoning-answer-stream.sse",
+    "options": {
+      "tools": [
+        {
+          "type": "function",
+          "name": "add",
+          "description": "add two numbers",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ]
+          }
+        }
+      ],
+      "providerOptions": {
+        "openai": {
+          "store": false
+        }
+      }
+    },
+    "parts": [
+      {
+        "type": "stream-start",
+        "warnings": []
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "response-metadata",
+        "id": "resp_example",
+        "timestamp": "2026-11-23T14:15:42.000Z",
+        "modelId": "gpt-6.2-sol"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-start",
+        "id": "msg_example",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_example",
+            "phase": "final_answer"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "-"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " \\("
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "17"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " \\"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "times"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " "
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "23"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " ="
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " "
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "340"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " +"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " "
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "51"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " ="
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " "
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "391"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "\\"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": ")\n"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "-"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " \\("
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "19"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " \\"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "times"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " "
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "21"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " ="
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " "
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "380"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " +"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " "
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "19"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " ="
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " "
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "399"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "\\"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": ")\n\n"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "So"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " **"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "\\("
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "19"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " \\"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "times"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " "
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "21"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "\\"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": ")"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " is"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " larger"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " by"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " "
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "8"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "**"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "."
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " The"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " add"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " tool"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " returned"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " **"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "790"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "**"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " for"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " the"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": " sum"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_example",
+        "delta": "."
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-end",
+        "id": "msg_example",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_example",
+            "phase": "final_answer"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "finish",
+        "finishReason": {
+          "unified": "stop"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 118,
+            "noCache": 118,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 68,
+            "text": 68,
+            "reasoning": 0
+          },
+          "raw": {
+            "input_tokens": 118,
+            "input_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "cache_write_tokens_details": {
+                "ttl_30m_tokens": 0,
+                "ttl_12h_tokens": 0
+              }
+            },
+            "output_tokens": 68,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 186,
+            "attribution": {
+              "items": {
+                "fc_example": {
+                  "input_tokens": 23,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 0
+                },
+                "msg_example": {
+                  "input_tokens": 2,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 68,
+                  "content": [
+                    {
+                      "input_tokens": 2,
+                      "cached_tokens": 0,
+                      "cache_write_tokens": 0,
+                      "output_tokens": 68
+                    }
+                  ]
+                },
+                "rs_example": {
+                  "input_tokens": 10,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 0
+                }
+              },
+              "request_fields": {
+                "tools": {
+                  "input_tokens": 37,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 0
+                }
+              }
+            }
+          }
+        },
+        "providerMetadata": {
+          "openai": {
+            "responseId": "resp_example",
+            "serviceTier": "default",
+            "reasoningContext": "all_turns"
+          }
+        }
+      }
+    ],
+    "request": {
+      "body": {
+        "model": "gpt-6.2-sol",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "add",
+            "description": "add two numbers",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "a": {
+                  "type": "number"
+                },
+                "b": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "a",
+                "b"
+              ]
+            },
+            "strict": false
+          }
+        ]
+      }
+    },
+    "responseHeaders": {
+      "content-type": "text/event-stream",
+      "x-request-id": "req_1"
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "store": false,
+      "include": [
+        "reasoning.encrypted_content"
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "name": "add",
+          "description": "add two numbers",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ]
+          },
+          "strict": false
+        }
+      ],
+      "stream": true
+    }
+  },
+  {
+    "name": "reasoning summaries without store",
+    "body": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\",\"output\":[],\"extra\":1}}\n\nevent: response.in_progress\ndata: {\"type\":\"response.in_progress\",\"sequence_number\":1,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\"}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[],\"encrypted_content\":\"enc-start\"}}\n\nevent: response.reasoning_summary_part.added\ndata: {\"type\":\"response.reasoning_summary_part.added\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0}\n\nevent: response.reasoning_summary_text.delta\ndata: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0,\"delta\":\"First \"}\n\nevent: response.reasoning_summary_text.delta\ndata: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0,\"delta\":\"thought.\"}\n\nevent: response.reasoning_summary_part.done\ndata: {\"type\":\"response.reasoning_summary_part.done\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0}\n\nevent: response.reasoning_summary_part.added\ndata: {\"type\":\"response.reasoning_summary_part.added\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":1}\n\nevent: response.reasoning_summary_text.delta\ndata: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":1,\"delta\":\"Second.\"}\n\nevent: response.reasoning_summary_part.done\ndata: {\"type\":\"response.reasoning_summary_part.done\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":1}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[],\"encrypted_content\":\"enc-final\"}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"status\":\"in_progress\",\"content\":[],\"phase\":\"final_answer\"}}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":1,\"delta\":\"Done.\"}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[]}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":90,\"response\":{\"id\":\"resp_1\",\"usage\":{\"input_tokens\":10,\"input_tokens_details\":{\"cached_tokens\":4},\"output_tokens\":6,\"output_tokens_details\":{\"reasoning_tokens\":2},\"total_tokens\":16},\"service_tier\":\"default\",\"reasoning\":{\"context\":\"all_turns\"}}}\n\n",
+    "options": {
+      "providerOptions": {
+        "openai": {
+          "store": false
+        }
+      }
+    },
+    "parts": [
+      {
+        "type": "stream-start",
+        "warnings": []
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "response-metadata",
+        "id": "resp_1",
+        "timestamp": "2026-11-23T13:36:44.000Z",
+        "modelId": "gpt-test"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-start",
+        "id": "rs_1:0",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_1",
+            "reasoningEncryptedContent": "enc-start"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-delta",
+        "id": "rs_1:0",
+        "delta": "First ",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-delta",
+        "id": "rs_1:0",
+        "delta": "thought.",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-end",
+        "id": "rs_1:0",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_1"
+          }
+        }
+      },
+      {
+        "type": "reasoning-start",
+        "id": "rs_1:1",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_1",
+            "reasoningEncryptedContent": "enc-start"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-delta",
+        "id": "rs_1:1",
+        "delta": "Second.",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-end",
+        "id": "rs_1:1",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_1",
+            "reasoningEncryptedContent": "enc-final"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-start",
+        "id": "msg_1",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_1",
+            "phase": "final_answer"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_1",
+        "delta": "Done."
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-end",
+        "id": "msg_1",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_1",
+            "phase": "final_answer"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "finish",
+        "finishReason": {
+          "unified": "stop"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 6,
+            "cacheRead": 4
+          },
+          "outputTokens": {
+            "total": 6,
+            "text": 4,
+            "reasoning": 2
+          },
+          "raw": {
+            "input_tokens": 10,
+            "input_tokens_details": {
+              "cached_tokens": 4
+            },
+            "output_tokens": 6,
+            "output_tokens_details": {
+              "reasoning_tokens": 2
+            },
+            "total_tokens": 16
+          }
+        },
+        "providerMetadata": {
+          "openai": {
+            "responseId": "resp_1",
+            "serviceTier": "default",
+            "reasoningContext": "all_turns"
+          }
+        }
+      }
+    ],
+    "request": {
+      "body": {
+        "model": "gpt-6.2-sol",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "include": [
+          "reasoning.encrypted_content"
+        ]
+      }
+    },
+    "responseHeaders": {
+      "content-type": "text/event-stream",
+      "x-request-id": "req_1"
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "store": false,
+      "include": [
+        "reasoning.encrypted_content"
+      ],
+      "stream": true
+    }
+  },
+  {
+    "name": "reasoning summaries with store",
+    "body": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\",\"output\":[],\"extra\":1}}\n\nevent: response.in_progress\ndata: {\"type\":\"response.in_progress\",\"sequence_number\":1,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\"}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[],\"encrypted_content\":\"enc-start\"}}\n\nevent: response.reasoning_summary_part.added\ndata: {\"type\":\"response.reasoning_summary_part.added\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0}\n\nevent: response.reasoning_summary_text.delta\ndata: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0,\"delta\":\"First \"}\n\nevent: response.reasoning_summary_text.delta\ndata: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0,\"delta\":\"thought.\"}\n\nevent: response.reasoning_summary_part.done\ndata: {\"type\":\"response.reasoning_summary_part.done\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0}\n\nevent: response.reasoning_summary_part.added\ndata: {\"type\":\"response.reasoning_summary_part.added\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":1}\n\nevent: response.reasoning_summary_text.delta\ndata: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":1,\"delta\":\"Second.\"}\n\nevent: response.reasoning_summary_part.done\ndata: {\"type\":\"response.reasoning_summary_part.done\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":1}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[],\"encrypted_content\":\"enc-final\"}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"status\":\"in_progress\",\"content\":[],\"phase\":\"final_answer\"}}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":1,\"delta\":\"Done.\"}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[]}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":90,\"response\":{\"id\":\"resp_1\",\"usage\":{\"input_tokens\":10,\"input_tokens_details\":{\"cached_tokens\":4},\"output_tokens\":6,\"output_tokens_details\":{\"reasoning_tokens\":2},\"total_tokens\":16},\"service_tier\":\"default\",\"reasoning\":{\"context\":\"all_turns\"}}}\n\n",
+    "options": {
+      "providerOptions": {
+        "openai": {
+          "store": true
+        }
+      }
+    },
+    "parts": [
+      {
+        "type": "stream-start",
+        "warnings": []
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "response-metadata",
+        "id": "resp_1",
+        "timestamp": "2026-11-23T13:36:44.000Z",
+        "modelId": "gpt-test"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-start",
+        "id": "rs_1:0",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_1",
+            "reasoningEncryptedContent": "enc-start"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-delta",
+        "id": "rs_1:0",
+        "delta": "First ",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-delta",
+        "id": "rs_1:0",
+        "delta": "thought.",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-end",
+        "id": "rs_1:0",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-start",
+        "id": "rs_1:1",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_1",
+            "reasoningEncryptedContent": "enc-start"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-delta",
+        "id": "rs_1:1",
+        "delta": "Second.",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "reasoning-end",
+        "id": "rs_1:1",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "rs_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-start",
+        "id": "msg_1",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_1",
+            "phase": "final_answer"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_1",
+        "delta": "Done."
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-end",
+        "id": "msg_1",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_1",
+            "phase": "final_answer"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "finish",
+        "finishReason": {
+          "unified": "stop"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 6,
+            "cacheRead": 4
+          },
+          "outputTokens": {
+            "total": 6,
+            "text": 4,
+            "reasoning": 2
+          },
+          "raw": {
+            "input_tokens": 10,
+            "input_tokens_details": {
+              "cached_tokens": 4
+            },
+            "output_tokens": 6,
+            "output_tokens_details": {
+              "reasoning_tokens": 2
+            },
+            "total_tokens": 16
+          }
+        },
+        "providerMetadata": {
+          "openai": {
+            "responseId": "resp_1",
+            "serviceTier": "default",
+            "reasoningContext": "all_turns"
+          }
+        }
+      }
+    ],
+    "request": {
+      "body": {
+        "model": "gpt-6.2-sol",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "store": true
+      }
+    },
+    "responseHeaders": {
+      "content-type": "text/event-stream",
+      "x-request-id": "req_1"
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "store": true,
+      "stream": true
+    }
+  },
+  {
+    "name": "annotations, logprobs and incomplete",
+    "body": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\",\"output\":[],\"extra\":1}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"status\":\"in_progress\",\"content\":[],\"phase\":\"commentary\"}}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"See \",\"logprobs\":[{\"token\":\"See\",\"logprob\":-0.1,\"top_logprobs\":[{\"token\":\"See\",\"logprob\":-0.1,\"extra\":1}],\"bytes\":[1]}]}\n\nevent: response.output_text.annotation.added\ndata: {\"type\":\"response.output_text.annotation.added\",\"item_id\":\"msg_1\",\"output_index\":0,\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":3,\"url\":\"https://example.com\",\"title\":\"Example\",\"extra\":1}}\n\nevent: response.output_text.annotation.added\ndata: {\"type\":\"response.output_text.annotation.added\",\"item_id\":\"msg_1\",\"output_index\":0,\"annotation\":{\"type\":\"file_path\",\"file_id\":\"file_1\",\"index\":2}}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"this.\",\"logprobs\":null}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"status\":\"incomplete\",\"content\":[]}}\n\nevent: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"sequence_number\":9,\"response\":{\"id\":\"resp_1\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":10,\"input_tokens_details\":{\"cached_tokens\":4},\"output_tokens\":6,\"output_tokens_details\":{\"reasoning_tokens\":2},\"total_tokens\":16}}}\n\n",
+    "options": {
+      "providerOptions": {
+        "openai": {
+          "logprobs": true
+        }
+      }
+    },
+    "parts": [
+      {
+        "type": "stream-start",
+        "warnings": [
+          {
+            "type": "unsupported",
+            "feature": "logprobs",
+            "details": "logprobs is not supported for reasoning models"
+          }
+        ]
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "response-metadata",
+        "id": "resp_1",
+        "timestamp": "2026-11-23T13:36:44.000Z",
+        "modelId": "gpt-test"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-start",
+        "id": "msg_1",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_1",
+            "phase": "commentary"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_1",
+        "delta": "See "
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "source",
+        "sourceType": "document",
+        "id": "4X0YakUtIXmELf4U",
+        "mediaType": "application/octet-stream",
+        "title": "file_1",
+        "filename": "file_1",
+        "providerMetadata": {
+          "openai": {
+            "type": "file_path",
+            "fileId": "file_1",
+            "index": 2
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_1",
+        "delta": "this."
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-end",
+        "id": "msg_1",
+        "citations": [
+          {
+            "source": {
+              "type": "source",
+              "sourceType": "url",
+              "id": "https://example.com",
+              "url": "https://example.com",
+              "title": "Example"
+            },
+            "startIndex": 0,
+            "endIndex": 3
+          }
+        ],
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_1",
+            "phase": "commentary",
+            "annotations": [
+              {
+                "type": "url_citation",
+                "start_index": 0,
+                "end_index": 3,
+                "url": "https://example.com",
+                "title": "Example"
+              },
+              {
+                "type": "file_path",
+                "file_id": "file_1",
+                "index": 2
+              }
+            ]
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "source",
+        "sourceType": "url",
+        "id": "4XFW69hLRkmNxiSR",
+        "url": "https://example.com",
+        "title": "Example"
+      },
+      {
+        "type": "finish",
+        "finishReason": {
+          "unified": "length",
+          "raw": "max_output_tokens"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 6,
+            "cacheRead": 4
+          },
+          "outputTokens": {
+            "total": 6,
+            "text": 4,
+            "reasoning": 2
+          },
+          "raw": {
+            "input_tokens": 10,
+            "input_tokens_details": {
+              "cached_tokens": 4
+            },
+            "output_tokens": 6,
+            "output_tokens_details": {
+              "reasoning_tokens": 2
+            },
+            "total_tokens": 16
+          }
+        },
+        "providerMetadata": {
+          "openai": {
+            "responseId": "resp_1",
+            "logprobs": [
+              [
+                {
+                  "token": "See",
+                  "logprob": -0.1,
+                  "top_logprobs": [
+                    {
+                      "token": "See",
+                      "logprob": -0.1
+                    }
+                  ]
+                }
+              ]
+            ]
+          }
+        }
+      }
+    ],
+    "request": {
+      "body": {
+        "model": "gpt-6.2-sol",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "responseHeaders": {
+      "content-type": "text/event-stream",
+      "x-request-id": "req_1"
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "stream": true
+    }
+  },
+  {
+    "name": "parallel wrapper",
+    "body": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\",\"output\":[],\"extra\":1}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"parallel\",\"arguments\":\"\"}}\n\nevent: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"output_index\":0,\"delta\":\"{\\\"tool_uses\\\":[\"}\n\nevent: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"output_index\":0,\"delta\":\"{\\\"recipient_name\\\":\\\"functions.add\\\",\\\"parameters\\\":{\\\"a\\\":1,\\\"b\\\":2}}]}\"}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"parallel\",\"arguments\":\"{\\\"tool_uses\\\":[{\\\"recipient_name\\\":\\\"functions.add\\\",\\\"parameters\\\":{\\\"a\\\":1,\\\"b\\\":2}}]}\",\"status\":\"completed\"}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"add\",\"arguments\":\"\",\"namespace\":\"math\"}}\n\nevent: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_2\",\"output_index\":1,\"delta\":\"{}\"}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"add\",\"arguments\":\"{}\",\"status\":\"completed\",\"namespace\":\"math\",\"async\":true,\"caller\":{\"type\":\"program\",\"caller_id\":\"prog_1\"}}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":90,\"response\":{\"id\":\"resp_1\",\"usage\":{\"input_tokens\":10,\"input_tokens_details\":{\"cached_tokens\":4},\"output_tokens\":6,\"output_tokens_details\":{\"reasoning_tokens\":2},\"total_tokens\":16},\"service_tier\":\"default\",\"reasoning\":{\"context\":\"all_turns\"}}}\n\n",
+    "options": {
+      "tools": [
+        {
+          "type": "function",
+          "name": "add",
+          "description": "add two numbers",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ]
+          }
+        }
+      ]
+    },
+    "parts": [
+      {
+        "type": "stream-start",
+        "warnings": []
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "response-metadata",
+        "id": "resp_1",
+        "timestamp": "2026-11-23T13:36:44.000Z",
+        "modelId": "gpt-test"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-start",
+        "id": "call_1_0",
+        "toolName": "add"
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_1_0",
+        "delta": "{\"a\":1,\"b\":2}"
+      },
+      {
+        "type": "tool-input-end",
+        "id": "call_1_0"
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "call_1_0",
+        "toolName": "add",
+        "input": "{\"a\":1,\"b\":2}",
+        "providerMetadata": {
+          "openai": {
+            "parallelToolCall": {
+              "itemId": "fc_1",
+              "toolCallId": "call_1",
+              "toolName": "parallel",
+              "input": "{\"tool_uses\":[{\"recipient_name\":\"functions.add\",\"parameters\":{\"a\":1,\"b\":2}}]}",
+              "index": 0,
+              "count": 1
+            }
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-start",
+        "id": "call_2",
+        "toolName": "add"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-delta",
+        "id": "call_2",
+        "delta": "{}"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-end",
+        "id": "call_2",
+        "providerMetadata": {
+          "openai": {
+            "namespace": "math"
+          }
+        }
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "call_2",
+        "toolName": "add",
+        "input": "{}",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "fc_2",
+            "async": true,
+            "namespace": "math",
+            "caller": {
+              "type": "program",
+              "callerId": "prog_1"
+            }
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "finish",
+        "finishReason": {
+          "unified": "tool-calls"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 6,
+            "cacheRead": 4
+          },
+          "outputTokens": {
+            "total": 6,
+            "text": 4,
+            "reasoning": 2
+          },
+          "raw": {
+            "input_tokens": 10,
+            "input_tokens_details": {
+              "cached_tokens": 4
+            },
+            "output_tokens": 6,
+            "output_tokens_details": {
+              "reasoning_tokens": 2
+            },
+            "total_tokens": 16
+          }
+        },
+        "providerMetadata": {
+          "openai": {
+            "responseId": "resp_1",
+            "serviceTier": "default",
+            "reasoningContext": "all_turns"
+          }
+        }
+      }
+    ],
+    "request": {
+      "body": {
+        "model": "gpt-6.2-sol",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "add",
+            "description": "add two numbers",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "a": {
+                  "type": "number"
+                },
+                "b": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "a",
+                "b"
+              ]
+            },
+            "strict": false
+          }
+        ]
+      }
+    },
+    "responseHeaders": {
+      "content-type": "text/event-stream",
+      "x-request-id": "req_1"
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "name": "add",
+          "description": "add two numbers",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ]
+          },
+          "strict": false
+        }
+      ],
+      "stream": true
+    }
+  },
+  {
+    "name": "client tool search",
+    "body": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\",\"output\":[],\"extra\":1}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"tool_search_call\",\"id\":\"ts_1\",\"execution\":\"client\",\"call_id\":\"call_ts\",\"status\":\"in_progress\",\"arguments\":null}}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"tool_search_call\",\"id\":\"ts_1\",\"execution\":\"client\",\"call_id\":\"call_ts\",\"status\":\"completed\",\"arguments\":{\"names\":[\"add\"]}}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"tool_search_call\",\"id\":\"ts_2\",\"execution\":\"client\",\"call_id\":null,\"status\":\"in_progress\",\"arguments\":null}}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"type\":\"tool_search_call\",\"id\":\"ts_2\",\"execution\":\"client\",\"call_id\":null,\"status\":\"completed\",\"arguments\":{\"query\":\"math\"}}}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":4,\"item\":{\"type\":\"tool_search_call\",\"id\":\"ts_3\",\"execution\":\"client\",\"call_id\":\"call_ts3\",\"status\":\"completed\",\"arguments\":null}}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":2,\"item\":{\"type\":\"tool_search_output\",\"id\":\"tso_1\",\"execution\":\"client\",\"call_id\":null,\"status\":\"completed\",\"tools\":[{\"type\":\"function\",\"name\":\"add\"}]}}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":3,\"item\":{\"type\":\"compaction\",\"id\":\"cmp_1\",\"encrypted_content\":\"enc-compaction\"}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":90,\"response\":{\"id\":\"resp_1\",\"usage\":{\"input_tokens\":10,\"input_tokens_details\":{\"cached_tokens\":4},\"output_tokens\":6,\"output_tokens_details\":{\"reasoning_tokens\":2},\"total_tokens\":16},\"service_tier\":\"default\",\"reasoning\":{\"context\":\"all_turns\"}}}\n\n",
+    "options": {
+      "tools": [
+        {
+          "type": "function",
+          "name": "add",
+          "description": "add two numbers",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ]
+          }
+        },
+        {
+          "type": "provider",
+          "name": "load_tools",
+          "id": "openai.tool_search",
+          "args": {
+            "execution": "client",
+            "description": "Load deferred tools.",
+            "parameters": {
+              "type": "object"
+            }
+          }
+        }
+      ]
+    },
+    "parts": [
+      {
+        "type": "stream-start",
+        "warnings": []
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "response-metadata",
+        "id": "resp_1",
+        "timestamp": "2026-11-23T13:36:44.000Z",
+        "modelId": "gpt-test"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-start",
+        "id": "call_ts",
+        "toolName": "load_tools"
+      },
+      {
+        "type": "tool-input-end",
+        "id": "call_ts"
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "call_ts",
+        "toolName": "load_tools",
+        "input": "{\"arguments\":{\"names\":[\"add\"]},\"call_id\":\"call_ts\"}",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "ts_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-input-start",
+        "id": "ts_2",
+        "toolName": "load_tools"
+      },
+      {
+        "type": "tool-input-end",
+        "id": "ts_2"
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "ts_2",
+        "toolName": "load_tools",
+        "input": "{\"arguments\":{\"query\":\"math\"},\"call_id\":\"ts_2\"}",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "ts_2"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "tool-result",
+        "toolCallId": "tso_1",
+        "toolName": "load_tools",
+        "result": {
+          "tools": [
+            {
+              "type": "function",
+              "name": "add"
+            }
+          ]
+        },
+        "providerMetadata": {
+          "openai": {
+            "itemId": "tso_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "custom",
+        "kind": "openai.compaction",
+        "providerMetadata": {
+          "openai": {
+            "type": "compaction",
+            "itemId": "cmp_1",
+            "encryptedContent": "enc-compaction"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "finish",
+        "finishReason": {
+          "unified": "stop"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 6,
+            "cacheRead": 4
+          },
+          "outputTokens": {
+            "total": 6,
+            "text": 4,
+            "reasoning": 2
+          },
+          "raw": {
+            "input_tokens": 10,
+            "input_tokens_details": {
+              "cached_tokens": 4
+            },
+            "output_tokens": 6,
+            "output_tokens_details": {
+              "reasoning_tokens": 2
+            },
+            "total_tokens": 16
+          }
+        },
+        "providerMetadata": {
+          "openai": {
+            "responseId": "resp_1",
+            "serviceTier": "default",
+            "reasoningContext": "all_turns"
+          }
+        }
+      }
+    ],
+    "request": {
+      "body": {
+        "model": "gpt-6.2-sol",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "add",
+            "description": "add two numbers",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "a": {
+                  "type": "number"
+                },
+                "b": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "a",
+                "b"
+              ]
+            },
+            "strict": false
+          },
+          {
+            "type": "tool_search",
+            "execution": "client",
+            "description": "Load deferred tools.",
+            "parameters": {
+              "type": "object"
+            }
+          }
+        ]
+      }
+    },
+    "responseHeaders": {
+      "content-type": "text/event-stream",
+      "x-request-id": "req_1"
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "name": "add",
+          "description": "add two numbers",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ]
+          },
+          "strict": false
+        },
+        {
+          "type": "tool_search",
+          "execution": "client",
+          "description": "Load deferred tools.",
+          "parameters": {
+            "type": "object"
+          }
+        }
+      ],
+      "stream": true
+    }
+  },
+  {
+    "name": "error after output",
+    "body": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\",\"output\":[],\"extra\":1}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"status\":\"in_progress\",\"content\":[]}}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"partial\"}\n\nevent: error\ndata: {\"type\":\"error\",\"sequence_number\":5,\"code\":\"server_error\",\"message\":\"The server had an error.\",\"param\":null}\n\n",
+    "options": {},
+    "parts": [
+      {
+        "type": "stream-start",
+        "warnings": []
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "response-metadata",
+        "id": "resp_1",
+        "timestamp": "2026-11-23T13:36:44.000Z",
+        "modelId": "gpt-test"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-start",
+        "id": "msg_1",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_1",
+        "delta": "partial"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "error",
+        "error": {
+          "message": "The server had an error.",
+          "type": "error",
+          "code": "server_error",
+          "statusCode": 500,
+          "isRetryable": true,
+          "data": {
+            "type": "error",
+            "sequence_number": 5,
+            "code": "server_error",
+            "message": "The server had an error.",
+            "param": null
+          }
+        }
+      },
+      {
+        "type": "finish",
+        "finishReason": {
+          "unified": "error",
+          "raw": "error"
+        },
+        "usage": {
+          "inputTokens": {},
+          "outputTokens": {}
+        },
+        "providerMetadata": {
+          "openai": {
+            "responseId": "resp_1"
+          }
+        }
+      }
+    ],
+    "request": {
+      "body": {
+        "model": "gpt-6.2-sol",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "responseHeaders": {
+      "content-type": "text/event-stream",
+      "x-request-id": "req_1"
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "stream": true
+    }
+  },
+  {
+    "name": "nested error after output",
+    "body": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\",\"output\":[],\"extra\":1}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"status\":\"in_progress\",\"content\":[]}}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"partial\"}\n\nevent: error\ndata: {\"type\":\"error\",\"sequence_number\":5,\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"message\":\"Too long.\",\"param\":null}}\n\n",
+    "options": {},
+    "parts": [
+      {
+        "type": "stream-start",
+        "warnings": []
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "response-metadata",
+        "id": "resp_1",
+        "timestamp": "2026-11-23T13:36:44.000Z",
+        "modelId": "gpt-test"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-start",
+        "id": "msg_1",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_1",
+        "delta": "partial"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "error",
+        "error": {
+          "message": "Too long.",
+          "type": "invalid_request_error",
+          "code": "context_length_exceeded",
+          "statusCode": 400,
+          "isRetryable": false,
+          "data": {
+            "type": "error",
+            "sequence_number": 5,
+            "error": {
+              "type": "invalid_request_error",
+              "code": "context_length_exceeded",
+              "message": "Too long.",
+              "param": null
+            }
+          }
+        }
+      },
+      {
+        "type": "finish",
+        "finishReason": {
+          "unified": "error",
+          "raw": "error"
+        },
+        "usage": {
+          "inputTokens": {},
+          "outputTokens": {}
+        },
+        "providerMetadata": {
+          "openai": {
+            "responseId": "resp_1"
+          }
+        }
+      }
+    ],
+    "request": {
+      "body": {
+        "model": "gpt-6.2-sol",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "responseHeaders": {
+      "content-type": "text/event-stream",
+      "x-request-id": "req_1"
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "stream": true
+    }
+  },
+  {
+    "name": "failed after output",
+    "body": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\",\"output\":[],\"extra\":1}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"status\":\"in_progress\",\"content\":[]}}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"partial\"}\n\nevent: response.failed\ndata: {\"type\":\"response.failed\",\"sequence_number\":6,\"response\":{\"error\":{\"code\":\"rate_limit_exceeded\",\"message\":\"Slow down.\"},\"usage\":{\"input_tokens\":10,\"input_tokens_details\":{\"cached_tokens\":4},\"output_tokens\":6,\"output_tokens_details\":{\"reasoning_tokens\":2},\"total_tokens\":16},\"service_tier\":\"flex\"}}\n\n",
+    "options": {},
+    "parts": [
+      {
+        "type": "stream-start",
+        "warnings": []
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "response-metadata",
+        "id": "resp_1",
+        "timestamp": "2026-11-23T13:36:44.000Z",
+        "modelId": "gpt-test"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-start",
+        "id": "msg_1",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_1",
+        "delta": "partial"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "error",
+        "error": {
+          "message": "Slow down.",
+          "type": "response.failed",
+          "code": "rate_limit_exceeded",
+          "statusCode": 429,
+          "isRetryable": true,
+          "data": {
+            "type": "response.failed",
+            "sequence_number": 6,
+            "response": {
+              "error": {
+                "code": "rate_limit_exceeded",
+                "message": "Slow down."
+              },
+              "service_tier": "flex"
+            }
+          }
+        }
+      },
+      {
+        "type": "finish",
+        "finishReason": {
+          "unified": "error",
+          "raw": "error"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 6,
+            "cacheRead": 4
+          },
+          "outputTokens": {
+            "total": 6,
+            "text": 4,
+            "reasoning": 2
+          },
+          "raw": {
+            "input_tokens": 10,
+            "input_tokens_details": {
+              "cached_tokens": 4
+            },
+            "output_tokens": 6,
+            "output_tokens_details": {
+              "reasoning_tokens": 2
+            },
+            "total_tokens": 16
+          }
+        },
+        "providerMetadata": {
+          "openai": {
+            "responseId": "resp_1"
+          }
+        }
+      }
+    ],
+    "request": {
+      "body": {
+        "model": "gpt-6.2-sol",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "responseHeaders": {
+      "content-type": "text/event-stream",
+      "x-request-id": "req_1"
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "stream": true
+    }
+  },
+  {
+    "name": "error before output",
+    "body": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\",\"output\":[],\"extra\":1}}\n\nevent: response.in_progress\ndata: {\"type\":\"response.in_progress\",\"sequence_number\":1,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\"}}\n\nevent: error\ndata: {\"type\":\"error\",\"sequence_number\":2,\"code\":\"insufficient_quota\",\"message\":\"No quota.\",\"param\":null}\n\n",
+    "options": {},
+    "thrown": {
+      "name": "AI_APICallError",
+      "message": "No quota.",
+      "statusCode": 429,
+      "isRetryable": false,
+      "url": "https://api.example.com/v1/responses",
+      "responseBody": "{\"type\":\"error\",\"sequence_number\":2,\"code\":\"insufficient_quota\",\"message\":\"No quota.\",\"param\":null}",
+      "data": {
+        "type": "error",
+        "sequence_number": 2,
+        "code": "insufficient_quota",
+        "message": "No quota.",
+        "param": null
+      }
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "stream": true
+    }
+  },
+  {
+    "name": "failed before output",
+    "body": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\",\"output\":[],\"extra\":1}}\n\nevent: response.failed\ndata: {\"type\":\"response.failed\",\"sequence_number\":1,\"response\":{\"error\":{\"code\":\"503\",\"message\":\"Unavailable.\"}}}\n\n",
+    "options": {},
+    "thrown": {
+      "name": "AI_APICallError",
+      "message": "Unavailable.",
+      "statusCode": 503,
+      "isRetryable": true,
+      "url": "https://api.example.com/v1/responses",
+      "responseBody": "{\"type\":\"response.failed\",\"sequence_number\":1,\"response\":{\"error\":{\"code\":\"503\",\"message\":\"Unavailable.\"}}}",
+      "data": {
+        "type": "response.failed",
+        "sequence_number": 1,
+        "response": {
+          "error": {
+            "code": "503",
+            "message": "Unavailable."
+          }
+        }
+      }
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "stream": true
+    }
+  },
+  {
+    "name": "truncated",
+    "body": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\",\"output\":[],\"extra\":1}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"status\":\"in_progress\",\"content\":[]}}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"partial\"}\n\n",
+    "options": {},
+    "parts": [
+      {
+        "type": "stream-start",
+        "warnings": []
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "response-metadata",
+        "id": "resp_1",
+        "timestamp": "2026-11-23T13:36:44.000Z",
+        "modelId": "gpt-test"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-start",
+        "id": "msg_1",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_1",
+        "delta": "partial"
+      },
+      {
+        "type": "finish",
+        "finishReason": {
+          "unified": "other"
+        },
+        "usage": {
+          "inputTokens": {},
+          "outputTokens": {}
+        },
+        "providerMetadata": {
+          "openai": {
+            "responseId": "resp_1"
+          }
+        }
+      }
+    ],
+    "request": {
+      "body": {
+        "model": "gpt-6.2-sol",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "responseHeaders": {
+      "content-type": "text/event-stream",
+      "x-request-id": "req_1"
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "stream": true
+    }
+  },
+  {
+    "name": "malformed and unknown chunks",
+    "body": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"created_at\":1795441004,\"model\":\"gpt-test\",\"output\":[],\"extra\":1}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"status\":\"in_progress\",\"content\":[]}}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"a\"}\n\nevent: response.content_part.added\ndata: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_1\"}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\"}\n\ndata: {not json\n\ndata: [DONE]\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"unknown_item\",\"id\":\"x\"}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":90,\"response\":{\"id\":\"resp_1\",\"usage\":{\"input_tokens\":10,\"input_tokens_details\":{\"cached_tokens\":4},\"output_tokens\":6,\"output_tokens_details\":{\"reasoning_tokens\":2},\"total_tokens\":16},\"service_tier\":\"default\",\"reasoning\":{\"context\":\"all_turns\"}}}\n\n",
+    "options": {},
+    "parts": [
+      {
+        "type": "stream-start",
+        "warnings": []
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "response-metadata",
+        "id": "resp_1",
+        "timestamp": "2026-11-23T13:36:44.000Z",
+        "modelId": "gpt-test"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-start",
+        "id": "msg_1",
+        "providerMetadata": {
+          "openai": {
+            "itemId": "msg_1"
+          }
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "text-delta",
+        "id": "msg_1",
+        "delta": "a"
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "error",
+        "error": {
+          "name": "AI_TypeValidationError",
+          "message": "Type validation failed: Value: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\"}.\nError message: [\n  {\n    \"code\": \"invalid_union\",\n    \"errors\": [\n      [\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"delta\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.completed\",\n            \"response.incomplete\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid option: expected one of \\\"response.completed\\\"|\\\"response.incomplete\\\"\"\n        },\n        {\n          \"expected\": \"object\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"response\"\n          ],\n          \"message\": \"Invalid input: expected object, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.failed\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.failed\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"sequence_number\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        },\n        {\n          \"expected\": \"object\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"response\"\n          ],\n          \"message\": \"Invalid input: expected object, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.created\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.created\\\"\"\n        },\n        {\n          \"expected\": \"object\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"response\"\n          ],\n          \"message\": \"Invalid input: expected object, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.in_progress\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.in_progress\\\"\"\n        },\n        {\n          \"expected\": \"object\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"response\"\n          ],\n          \"message\": \"Invalid input: expected object, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.output_item.added\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.output_item.added\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"output_index\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        },\n        {\n          \"code\": \"invalid_type\",\n          \"expected\": \"object\",\n          \"path\": [\n            \"item\"\n          ],\n          \"message\": \"Invalid input: expected object, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.output_item.done\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.output_item.done\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"output_index\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        },\n        {\n          \"code\": \"invalid_type\",\n          \"expected\": \"object\",\n          \"path\": [\n            \"item\"\n          ],\n          \"message\": \"Invalid input: expected object, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.function_call_arguments.delta\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.function_call_arguments.delta\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"output_index\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"delta\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.function_call_arguments.done\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.function_call_arguments.done\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"output_index\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"arguments\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.custom_tool_call_input.delta\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.custom_tool_call_input.delta\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"output_index\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"delta\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.image_generation_call.partial_image\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.image_generation_call.partial_image\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"output_index\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"partial_image_b64\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.code_interpreter_call_code.delta\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.code_interpreter_call_code.delta\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"output_index\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"delta\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.code_interpreter_call_code.done\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.code_interpreter_call_code.done\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"output_index\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"code\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.output_text.annotation.added\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.output_text.annotation.added\\\"\"\n        },\n        {\n          \"code\": \"invalid_type\",\n          \"expected\": \"object\",\n          \"path\": [\n            \"annotation\"\n          ],\n          \"message\": \"Invalid input: expected object, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.reasoning_summary_part.added\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.reasoning_summary_part.added\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"summary_index\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.reasoning_summary_text.delta\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.reasoning_summary_text.delta\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"summary_index\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"delta\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.reasoning_summary_part.done\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.reasoning_summary_part.done\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"summary_index\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.apply_patch_call_operation_diff.delta\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.apply_patch_call_operation_diff.delta\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"output_index\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"delta\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"response.apply_patch_call_operation_diff.done\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"response.apply_patch_call_operation_diff.done\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"output_index\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"diff\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"error\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"error\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"sequence_number\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        },\n        {\n          \"expected\": \"object\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"error\"\n          ],\n          \"message\": \"Invalid input: expected object, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"error\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"error\\\"\"\n        },\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"sequence_number\"\n          ],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"message\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"custom\",\n          \"path\": [],\n          \"message\": \"Known response chunk failed schema validation\"\n        }\n      ]\n    ],\n    \"path\": [],\n    \"message\": \"Invalid input\"\n  }\n]"
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "error",
+        "error": {
+          "name": "AI_JSONParseError",
+          "message": "JSON parsing failed: Text: {not json.\nError message: SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+        }
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "finish",
+        "finishReason": {
+          "unified": "error"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 6,
+            "cacheRead": 4
+          },
+          "outputTokens": {
+            "total": 6,
+            "text": 4,
+            "reasoning": 2
+          },
+          "raw": {
+            "input_tokens": 10,
+            "input_tokens_details": {
+              "cached_tokens": 4
+            },
+            "output_tokens": 6,
+            "output_tokens_details": {
+              "reasoning_tokens": 2
+            },
+            "total_tokens": 16
+          }
+        },
+        "providerMetadata": {
+          "openai": {
+            "responseId": "resp_1",
+            "serviceTier": "default",
+            "reasoningContext": "all_turns"
+          }
+        }
+      }
+    ],
+    "request": {
+      "body": {
+        "model": "gpt-6.2-sol",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "responseHeaders": {
+      "content-type": "text/event-stream",
+      "x-request-id": "req_1"
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "stream": true
+    }
+  },
+  {
+    "name": "chat completions chunk",
+    "body": "data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+    "options": {},
+    "parts": [
+      {
+        "type": "stream-start",
+        "warnings": []
+      },
+      {
+        "type": "raw",
+        "isEventData": true
+      },
+      {
+        "type": "error",
+        "error": {
+          "name": "AI_APICallError",
+          "message": "Received a Chat Completions stream while using the OpenAI Responses API. The default OpenAI provider model uses the Responses API. If your custom baseURL targets a Chat Completions-compatible endpoint, use openai.chat('model-id') or createOpenAI(...).chat('model-id') instead. You can also use @ai-sdk/openai-compatible for OpenAI-compatible providers.",
+          "isRetryable": false,
+          "url": "https://api.example.com/v1/responses",
+          "responseBody": "{\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}",
+          "data": {
+            "id": "c",
+            "object": "chat.completion.chunk",
+            "choices": [
+              {
+                "delta": {
+                  "content": "hi"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "type": "finish",
+        "finishReason": {
+          "unified": "error"
+        },
+        "usage": {
+          "inputTokens": {},
+          "outputTokens": {}
+        },
+        "providerMetadata": {
+          "openai": {
+            "responseId": null
+          }
+        }
+      }
+    ],
+    "request": {
+      "body": {
+        "model": "gpt-6.2-sol",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "responseHeaders": {
+      "content-type": "text/event-stream",
+      "x-request-id": "req_1"
+    },
+    "sent": {
+      "model": "gpt-6.2-sol",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "stream": true
+    }
+  }
+]

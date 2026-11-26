@@ -1049,7 +1049,7 @@ impl Config {
             &bedrock_embedding_model_id,
         );
         // OpenAI model IDs. OPENAI_EMBEDDING_MODEL_ID='' disables embeddings.
-        let openai_model_id = e.or_default("OPENAI_MODEL_ID", "gpt-5.6-sol");
+        let openai_model_id = e.or_default("OPENAI_MODEL_ID", "gpt-6.2-sol");
         let openai_classification_model_id =
             e.or_default("OPENAI_CLASSIFICATION_MODEL_ID", "gpt-5.6-luna");
         let openai_embedding_model_id =
@@ -1057,7 +1057,7 @@ impl Config {
         // OpenRouter model IDs are `vendor/model`. Embeddings default to off: the
         // vendors it routes differ in native dimensionality and the index is
         // fixed at 1024.
-        let openrouter_model_id = e.or_default("OPENROUTER_MODEL_ID", "openai/gpt-5.6-sol");
+        let openrouter_model_id = e.or_default("OPENROUTER_MODEL_ID", "openai/gpt-6.2-sol");
         let openrouter_classification_model_id =
             e.or_default("OPENROUTER_CLASSIFICATION_MODEL_ID", "openai/gpt-5.6-luna");
         let openrouter_embedding_model_id = e.get_or("OPENROUTER_EMBEDDING_MODEL_ID", "");

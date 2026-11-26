@@ -16,6 +16,7 @@ pub mod json_schema;
 pub mod responses;
 pub mod responses_input;
 pub mod responses_options;
+mod responses_stream;
 pub mod responses_tools;
 pub mod tools;
 

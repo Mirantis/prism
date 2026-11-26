@@ -1,7 +1,7 @@
-//! The OpenAI-shaped provider both `openai` and `openrouter` are built from.
+//! The OpenAI-shaped provider `openai`, `chatgpt` and `openrouter` are built from.
 //!
-//! Two vendors reach the OpenAI SDK: the official API, and OpenRouter, whose own
-//! API is OpenAI-compatible. What differs between them — the endpoint, the
+//! Two vendors reach the OpenAI SDK: the official API, which `chatgpt` reaches on a
+//! subscription token, and OpenRouter, whose own API is OpenAI-compatible. What differs between them — the endpoint, the
 //! credential, the model-id convention, the startup log line — stays in their own
 //! factories; everything here is a property of the *SDK surface*:
 //! `create_openai()(modelId)` dispatches to the Responses API, prompt caching is
@@ -32,7 +32,10 @@ use serde_json::json;
 
 use crate::ai::providers::openai::api::FetchFunction;
 use crate::ai::providers::openai::{OpenAIProviderSettings, create_openai};
-use crate::ai::{LanguageModel, with_llm_cache};
+use crate::ai::{
+    LanguageModel, LanguageModelMiddleware, WrapLanguageModelOptions, with_llm_cache,
+    wrap_language_model,
+};
 use crate::lib::llm_providers::llm_provider::{
     CacheTtl, ClassificationSamplingParams, LlmProvider, NO_CACHE_POINT, provider_options,
 };
@@ -45,6 +48,9 @@ pub struct OpenAiCompatibleOptions {
     pub base_url: Option<String>,
     /// The `fetch` requests go through, for a bearer token that changes per request.
     pub fetch: Option<FetchFunction>,
+    /// For an endpoint that accepts only some request shapes, such as a
+    /// subscription's. The first one is outermost.
+    pub middleware: Vec<Arc<dyn LanguageModelMiddleware>>,
 }
 
 pub fn create_open_ai_compatible_provider(options: OpenAiCompatibleOptions) -> LlmProvider {
@@ -54,11 +60,21 @@ pub fn create_open_ai_compatible_provider(options: OpenAiCompatibleOptions) -> L
         fetch: options.fetch,
         ..Default::default()
     }));
+    let middleware = options.middleware;
 
     let mut provider = LlmProvider::new(
         Arc::new(
             move |model_id: &str| -> anyhow::Result<Arc<dyn LanguageModel>> {
-                Ok(with_llm_cache(openai.language_model(model_id)))
+                let model = middleware.iter().rev().fold(
+                    openai.language_model(model_id),
+                    |model, middleware| {
+                        wrap_language_model(WrapLanguageModelOptions {
+                            model,
+                            middleware: middleware.clone(),
+                        })
+                    },
+                );
+                Ok(with_llm_cache(model))
             },
         ),
         // No breakpoints: OpenAI caches long prompts automatically, so there is

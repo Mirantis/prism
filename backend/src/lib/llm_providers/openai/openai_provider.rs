@@ -71,6 +71,7 @@ fn open_ai_options(config: &Config, base_url: Option<&str>) -> OpenAiCompatibleO
         // None → the SDK's own default, https://api.openai.com/v1.
         base_url: base_url.map(str::to_string),
         fetch: None,
+        middleware: Vec::new(),
     }
 }
 

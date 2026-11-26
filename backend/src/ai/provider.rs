@@ -868,6 +868,90 @@ pub struct LanguageModelV4GenerateResult {
     pub warnings: Vec<Warning>,
 }
 
+/// One part of a model's stream (`LanguageModelV4StreamPart`).
+#[derive(Debug)]
+pub enum LanguageModelV4StreamPart {
+    StreamStart {
+        warnings: Vec<Warning>,
+    },
+    ResponseMetadata {
+        id: Option<String>,
+        timestamp: Option<DateTime<Utc>>,
+        model_id: Option<String>,
+    },
+    TextStart {
+        id: String,
+        provider_metadata: Option<ProviderMetadata>,
+    },
+    TextDelta {
+        id: String,
+        delta: String,
+    },
+    TextEnd {
+        id: String,
+        provider_metadata: Option<ProviderMetadata>,
+    },
+    ReasoningStart {
+        id: String,
+        provider_metadata: Option<ProviderMetadata>,
+    },
+    ReasoningDelta {
+        id: String,
+        delta: String,
+        provider_metadata: Option<ProviderMetadata>,
+    },
+    ReasoningEnd {
+        id: String,
+        provider_metadata: Option<ProviderMetadata>,
+    },
+    ToolInputStart {
+        id: String,
+        tool_name: String,
+        provider_executed: Option<bool>,
+        input_encoding: Option<String>,
+    },
+    ToolInputDelta {
+        id: String,
+        delta: String,
+    },
+    ToolInputEnd {
+        id: String,
+        provider_metadata: Option<ProviderMetadata>,
+    },
+    /// A part the stream delivers whole: a tool call or result, a source, or a
+    /// custom part.
+    Content(LanguageModelV4Content),
+    Finish {
+        finish_reason: LanguageModelV4FinishReason,
+        usage: LanguageModelV4Usage,
+        provider_metadata: Option<ProviderMetadata>,
+    },
+    /// An event as the provider sent it; `None` when it is not JSON.
+    Raw {
+        raw_value: Option<Value>,
+    },
+    Error {
+        error: LanguageModelV4StreamError,
+    },
+}
+
+/// The error of an `error` stream part.
+#[derive(Debug)]
+pub enum LanguageModelV4StreamError {
+    /// An error the provider raised.
+    Error(anyhow::Error),
+    /// A provider stream error (`createProviderStreamError`): a plain object with
+    /// `message`, `type`, `code`, `statusCode`, `isRetryable` and `data`.
+    Value(Value),
+}
+
+/// What a model's stream call returns.
+pub struct LanguageModelV4StreamResult {
+    pub stream: futures::stream::BoxStream<'static, LanguageModelV4StreamPart>,
+    pub request: Option<LanguageModelV4Request>,
+    pub response: Option<LanguageModelV4Response>,
+}
+
 /// The options of one embedding call.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

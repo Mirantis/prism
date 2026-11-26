@@ -4,9 +4,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use super::errors::UnsupportedFunctionalityError;
 use super::provider::{
     EmbeddingModelV4CallOptions, EmbeddingModelV4Result, LanguageModelV4CallOptions,
-    LanguageModelV4GenerateResult, SupportedUrls,
+    LanguageModelV4GenerateResult, LanguageModelV4StreamResult, SupportedUrls,
 };
 
 /// A language model (`LanguageModelV4`), held as `Arc<dyn LanguageModel>`.
@@ -29,6 +30,14 @@ pub trait LanguageModel: Send + Sync {
         &self,
         options: LanguageModelV4CallOptions,
     ) -> anyhow::Result<LanguageModelV4GenerateResult>;
+
+    /// One streamed call to the model, for a provider that implements it.
+    async fn do_stream(
+        &self,
+        _options: LanguageModelV4CallOptions,
+    ) -> anyhow::Result<LanguageModelV4StreamResult> {
+        Err(UnsupportedFunctionalityError::new("doStream").into())
+    }
 }
 
 /// An embedding model (`EmbeddingModelV4`), held as `Arc<dyn EmbeddingModel>`.

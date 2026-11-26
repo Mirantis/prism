@@ -8,13 +8,18 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use serde_json::json;
 
+use super::stream_only::StreamOnly;
 use crate::ai::providers::openai::api::{FetchFunction, FetchRequest, default_fetch};
+use crate::ai::{LanguageModelMiddleware, LanguageModelV4CallOptions};
 use crate::lib::llm_providers::deferred_tools::{
     OPENAI_DEFERRED_TOOLS, deferred_tools_when, supports_open_ai_deferred_tools,
 };
-use crate::lib::llm_providers::llm_provider::LlmProvider;
+use crate::lib::llm_providers::llm_provider::{
+    LlmProvider, merge_provider_options, provider_options,
+};
 use crate::lib::llm_providers::openai::openai_provider::{
     open_ai_cache_request, open_ai_cache_ttl_ms,
 };
@@ -52,16 +57,46 @@ fn chatgpt_fetch() -> FetchFunction {
     })
 }
 
+/// A ChatGPT subscription token is refused for stored responses, so every call
+/// sends `store: false`; the SDK then asks for the reasoning back encrypted.
+struct NoStore;
+
+#[async_trait]
+impl LanguageModelMiddleware for NoStore {
+    async fn transform_params(
+        &self,
+        mut params: LanguageModelV4CallOptions,
+    ) -> anyhow::Result<LanguageModelV4CallOptions> {
+        let no_store = provider_options(json!({ "openai": { "store": false } }));
+        params.provider_options = Some(merge_provider_options([
+            params.provider_options.as_ref(),
+            Some(&no_store),
+        ]));
+        Ok(params)
+    }
+}
+
 pub fn create_chatgpt_provider(base_url: &str) -> LlmProvider {
     log_info!(
         json!({ "routing": "direct" }),
         "Creating ChatGPT subscription provider"
     );
+    chatgpt_provider(base_url, chatgpt_fetch())
+}
+
+fn chatgpt_provider(base_url: &str, fetch: FetchFunction) -> LlmProvider {
     let mut provider = create_open_ai_compatible_provider(OpenAiCompatibleOptions {
         // `chatgpt_fetch` replaces this with the real bearer token on every request.
         api_key: Some("chatgpt-oauth".to_string()),
         base_url: Some(base_url.to_string()),
-        fetch: Some(chatgpt_fetch()),
+        fetch: Some(fetch),
+        // The endpoint also answers only streamed requests.
+        middleware: vec![
+            Arc::new(NoStore),
+            Arc::new(StreamOnly {
+                url: format!("{base_url}/responses"),
+            }),
+        ],
     });
     provider.deferred_tools = Some(deferred_tools_when(
         supports_open_ai_deferred_tools,
@@ -80,6 +115,10 @@ pub fn missing_chatgpt_settings() -> Vec<String> {
         vec!["ChatGPT sign-in".to_string()]
     }
 }
+
+#[cfg(test)]
+#[path = "chatgpt_request_tests.rs"]
+mod request_tests;
 
 #[cfg(test)]
 mod tests {
