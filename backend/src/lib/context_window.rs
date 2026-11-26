@@ -104,7 +104,7 @@ mod tests {
     // covering these, the indicator disappears for every default deployment.
     const BEDROCK_CHAT_DEFAULT: &str = "global.anthropic.claude-opus-5-5";
     const AZURE_CHAT_DEFAULT: &str = "claude-opus-5";
-    const OPENAI_CHAT_DEFAULT: &str = "gpt-5.6-sol";
+    const OPENAI_CHAT_DEFAULT: &str = "gpt-6.2-sol";
     const OPENAI_CLASSIFICATION_DEFAULT: &str = "gpt-5.6-luna";
 
     /// The lookups below read the bundled floor; an operator-set window replaces it.

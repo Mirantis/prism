@@ -34,8 +34,8 @@ use crate::ai::provider::{
     LanguageModelV4FinishReason, LanguageModelV4FunctionTool, LanguageModelV4GenerateResult,
     LanguageModelV4InputTokens, LanguageModelV4OutputTokens, LanguageModelV4Request,
     LanguageModelV4Response, LanguageModelV4ResponseFormat, LanguageModelV4Source,
-    LanguageModelV4Tool, LanguageModelV4Usage, ProviderMetadata, ReasoningEffort, SupportedUrls,
-    Warning,
+    LanguageModelV4StreamResult, LanguageModelV4Tool, LanguageModelV4Usage, ProviderMetadata,
+    ReasoningEffort, SupportedUrls, Warning,
 };
 
 /// How one provider reaches the OpenAI API (`OpenAIConfig`).
@@ -77,6 +77,8 @@ pub struct PreparedRequest {
     pub warnings: Vec<Warning>,
     pub tool_name_mapping: ToolNameMapping,
     pub provider_options_name: String,
+    /// The `store` provider option.
+    pub store: Option<bool>,
 }
 
 fn unsupported_with_message(functionality: &str, message: &str) -> anyhow::Error {
@@ -155,7 +157,7 @@ impl Args {
     }
 }
 
-fn string(value: impl Into<String>) -> Value {
+pub(super) fn string(value: impl Into<String>) -> Value {
     Value::String(value.into())
 }
 
@@ -688,6 +690,7 @@ pub fn prepare_request(
         warnings,
         tool_name_mapping,
         provider_options_name: provider_options_name.to_string(),
+        store,
     })
 }
 
@@ -717,6 +720,7 @@ impl LanguageModel for OpenAIResponsesLanguageModel {
             warnings,
             tool_name_mapping,
             provider_options_name,
+            ..
         } = prepare_request(&self.model_id, &self.config, &options)?;
         let url = (self.config.url)("/responses", &self.model_id)?;
 
@@ -830,15 +834,22 @@ impl LanguageModel for OpenAIResponsesLanguageModel {
             warnings,
         })
     }
+
+    async fn do_stream(
+        &self,
+        options: LanguageModelV4CallOptions,
+    ) -> anyhow::Result<LanguageModelV4StreamResult> {
+        super::responses_stream::do_stream(&self.model_id, &self.config, options).await
+    }
 }
 
 /// `new Date(created_at * 1000)`.
-fn timestamp_of(created_at: f64) -> Option<DateTime<Utc>> {
+pub(super) fn timestamp_of(created_at: f64) -> Option<DateTime<Utc>> {
     DateTime::from_timestamp_millis((created_at * 1000.0).trunc() as i64)
 }
 
 /// `mapOpenAIResponseFinishReason`.
-fn map_finish_reason(reason: Option<&str>, has_function_call: bool) -> FinishReason {
+pub(super) fn map_finish_reason(reason: Option<&str>, has_function_call: bool) -> FinishReason {
     match reason {
         None => {
             if has_function_call {
@@ -864,7 +875,7 @@ fn as_i64(value: Option<&Value>) -> Option<i64> {
 }
 
 /// `convertOpenAIResponsesUsage`.
-fn convert_usage(usage: Option<&Value>) -> LanguageModelV4Usage {
+pub(super) fn convert_usage(usage: Option<&Value>) -> LanguageModelV4Usage {
     let Some(Value::Object(usage)) = usage else {
         return LanguageModelV4Usage::default();
     };
@@ -907,12 +918,12 @@ struct ParsedResponse {
     incomplete_reason: Option<String>,
 }
 
-fn invalid(message: &str) -> anyhow::Error {
+pub(super) fn invalid(message: &str) -> anyhow::Error {
     anyhow::anyhow!("{message}")
 }
 
 /// `value` when the key is absent, null, or the given kind.
-fn optional<'a>(
+pub(super) fn optional<'a>(
     object: &'a Map<String, Value>,
     key: &str,
     nullable: bool,
@@ -926,7 +937,7 @@ fn optional<'a>(
     }
 }
 
-fn required<'a>(
+pub(super) fn required<'a>(
     object: &'a Map<String, Value>,
     key: &str,
     check: fn(&Value) -> bool,
@@ -937,27 +948,27 @@ fn required<'a>(
     }
 }
 
-fn is_string(value: &Value) -> bool {
+pub(super) fn is_string(value: &Value) -> bool {
     value.is_string()
 }
 
-fn is_number(value: &Value) -> bool {
+pub(super) fn is_number(value: &Value) -> bool {
     value.is_number()
 }
 
-fn is_object(value: &Value) -> bool {
+pub(super) fn is_object(value: &Value) -> bool {
     value.is_object()
 }
 
-fn is_array(value: &Value) -> bool {
+pub(super) fn is_array(value: &Value) -> bool {
     value.is_array()
 }
 
-fn is_bool(value: &Value) -> bool {
+pub(super) fn is_bool(value: &Value) -> bool {
     value.is_boolean()
 }
 
-fn is_string_or_null(value: &Value) -> bool {
+pub(super) fn is_string_or_null(value: &Value) -> bool {
     value.is_string() || value.is_null()
 }
 
@@ -1056,7 +1067,7 @@ impl ParsedResponse {
     }
 }
 
-fn check_usage(usage: &Map<String, Value>) -> anyhow::Result<()> {
+pub(super) fn check_usage(usage: &Map<String, Value>) -> anyhow::Result<()> {
     required(usage, "input_tokens", is_number)?;
     required(usage, "output_tokens", is_number)?;
     optional(usage, "total_tokens", false, is_number)?;
@@ -1069,6 +1080,12 @@ fn check_usage(usage: &Map<String, Value>) -> anyhow::Result<()> {
             "orchestration_input_cached_tokens",
         ] {
             optional(details, key, true, is_number)?;
+        }
+        if let Some(ttl) = optional(details, "cache_write_tokens_details", true, is_object)? {
+            let ttl = ttl.as_object().expect("an object");
+            for key in ["ttl_30m_tokens", "ttl_12h_tokens"] {
+                optional(ttl, key, true, is_number)?;
+            }
         }
     }
     if let Some(details) = optional(usage, "output_tokens_details", true, is_object)? {
@@ -1193,7 +1210,7 @@ fn check_output_item(item: &Value) -> anyhow::Result<()> {
 
 /// An annotation as zod parses it: the keys of its kind in schema order; `None`
 /// when it matches no kind.
-fn annotation_in_schema_order(annotation: &Value) -> Option<Value> {
+pub(super) fn annotation_in_schema_order(annotation: &Value) -> Option<Value> {
     let annotation = annotation.as_object()?;
     let kind = annotation.get("type")?.as_str()?;
     let keys: &[(&str, fn(&Value) -> bool)] = match kind {
@@ -1228,7 +1245,11 @@ fn annotation_in_schema_order(annotation: &Value) -> Option<Value> {
 }
 
 /// `mapOpenAIResponsesAnnotationSource`.
-fn annotation_source(annotation: &Value, name: &str, id: String) -> LanguageModelV4Source {
+pub(super) fn annotation_source(
+    annotation: &Value,
+    name: &str,
+    id: String,
+) -> LanguageModelV4Source {
     let kind = annotation["type"].as_str().unwrap_or_default();
     if kind == "url_citation" {
         return LanguageModelV4Source::Url {
@@ -1272,7 +1293,7 @@ fn annotation_source(annotation: &Value, name: &str, id: String) -> LanguageMode
 }
 
 /// `{ [name]: metadata }`.
-fn metadata_under(name: &str, metadata: Map<String, Value>) -> ProviderMetadata {
+pub(super) fn metadata_under(name: &str, metadata: Map<String, Value>) -> ProviderMetadata {
     let mut out = ProviderMetadata::new();
     out.insert(name.to_string(), Value::Object(metadata));
     out
@@ -1522,12 +1543,12 @@ fn map_output(
     }
 }
 
-const PARALLEL_TOOL_NAME: &str = "parallel";
+pub(super) const PARALLEL_TOOL_NAME: &str = "parallel";
 const RECIPIENT_NAME_PREFIX: &str = "functions.";
 
 /// `expandParallelToolCall`: the calls inside OpenAI's internal `parallel` wrapper,
 /// when every nested recipient is a declared function tool.
-fn expand_parallel_tool_call(
+pub(super) fn expand_parallel_tool_call(
     tool_call_id: &str,
     tool_name: &str,
     input: &str,

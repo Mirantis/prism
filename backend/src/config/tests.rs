@@ -802,7 +802,7 @@ fn disables_embeddings_on_openrouter_by_default() {
 fn selects_openai_case_insensitively_and_resolves_the_neutral_model_ids() {
     let cfg = load(&[("LLM_PROVIDER", "OpenAI")]);
     assert_eq!(cfg.llm_provider, LlmProviderName::Openai);
-    assert_eq!(cfg.chat_model_id, "gpt-5.6-sol");
+    assert_eq!(cfg.chat_model_id, "gpt-6.2-sol");
     assert_eq!(cfg.classification_model_id, "gpt-5.6-luna");
     assert_eq!(cfg.embedding_model_id, "text-embedding-3-small");
 }
@@ -811,7 +811,7 @@ fn selects_openai_case_insensitively_and_resolves_the_neutral_model_ids() {
 fn selects_chatgpt_with_the_openai_model_ids_and_no_embeddings_by_default() {
     let cfg = load(&[("LLM_PROVIDER", "ChatGPT")]);
     assert_eq!(cfg.llm_provider, LlmProviderName::Chatgpt);
-    assert_eq!(cfg.chat_model_id, "gpt-5.6-sol");
+    assert_eq!(cfg.chat_model_id, "gpt-6.2-sol");
     assert_eq!(cfg.classification_model_id, "gpt-5.6-luna");
     assert_eq!(cfg.embedding_provider, EmbeddingProviderName::None);
     assert_eq!(cfg.embedding_model_id, "");
