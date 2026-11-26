@@ -22,7 +22,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bytes::Bytes;
 use parking_lot::Mutex;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::io::StreamReader;

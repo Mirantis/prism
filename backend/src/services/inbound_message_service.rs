@@ -30,7 +30,7 @@ use serde_json::json;
 use tokio::sync::oneshot;
 
 use crate::config::CONFIG;
-use crate::db::models::{ConversationMessage, MessageRole, MessageTrigger, ThreadSource};
+use crate::db::models::{ConversationMessage, MessageRole, MessageTrigger};
 use crate::db::schema::conversation_messages::dsl as m;
 use crate::db::schema::conversation_threads::dsl as t;
 use crate::db::sql_types::DbDateTime;

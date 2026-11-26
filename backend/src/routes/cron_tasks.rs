@@ -16,7 +16,7 @@ use chrono::{DateTime, Utc};
 use diesel::prelude::*;
 use indexmap::IndexMap;
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::db::models::{CronTask, NewCronTask};
 use crate::db::schema::cron_tasks;

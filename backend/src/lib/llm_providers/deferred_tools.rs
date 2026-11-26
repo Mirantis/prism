@@ -18,7 +18,7 @@ use super::tool_changes::bare_model_id;
 use crate::ai::providers::openai::tools::{ToolSearchArgs, tool_search};
 use crate::ai::{
     ToModelOutputOptions, Tool, ToolExecuteFunction, ToolExecutionOptions, ToolResultOutput,
-    ToolType, execute_fn, to_model_output_fn, tool, zod_schema,
+    execute_fn, to_model_output_fn, tool, zod_schema,
 };
 
 pub const LOAD_TOOLS_NAME: &str = "load_tools";
@@ -351,7 +351,7 @@ pub static REALTIME_DEFERRED_TOOLS: LazyLock<DeferredToolProtocol> =
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::ToModelOutputOptions;
+    use crate::ai::{ToModelOutputOptions, ToolType};
     use crate::lib::llm_providers::llm_provider::DeferredToolDefinition;
 
     const ISSUE_TOOL: &str = "nexus__github__create_issue";

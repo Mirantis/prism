@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use crate::db::models::ConversationMessage;
 use crate::lib::agent_message_kind::agent_message_kind;
+use crate::log_info;
 use crate::protocol::chat_protocol::{AttachmentPayload, MessageEventPayload, StreamEvent};
 use crate::services::channel_adapter_interface::{
     ChannelAdapter, ChannelContext, ChannelDestination, ChannelName, DeliverableMessage,
@@ -20,7 +21,6 @@ use crate::services::event_stream_service::EVENT_STREAM_SERVICE;
 use crate::services::inbound_message_service::INBOUND_MESSAGE_SERVICE;
 use crate::services::web_chat_label::web_chat_label;
 use crate::types::ResumedReply;
-use crate::{log_error, log_info};
 
 /// The wire form of a stored message, for any role.
 ///

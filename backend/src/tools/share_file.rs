@@ -33,9 +33,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::ai::{Tool, ToolSet, execute_fn, on_input_available_fn, tool, zod_schema};
-use crate::lib::execution_environments::get_execution_environment::{
-    files_for, get_execution_environment,
-};
+use crate::lib::execution_environments::get_execution_environment::get_execution_environment;
 use crate::lib::execution_environments::workspace::resolve_workspace;
 use crate::lib::pending_file_writes::{PendingFileWrites, PendingWaitOutcome, WaitForOptions};
 use crate::lib::read_settled_file::read_settled_file;
