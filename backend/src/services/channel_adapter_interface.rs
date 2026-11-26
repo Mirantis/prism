@@ -349,6 +349,17 @@ pub trait ChannelAdapter: Send + Sync {
         None
     }
 
+    /// What keeps a generated UI from fitting one message of this channel, as
+    /// issues the agent can fix. Empty when the channel shows any UI the catalog
+    /// allows.
+    fn generated_ui_issues(
+        &self,
+        _root: &str,
+        _elements: &indexmap::IndexMap<String, crate::protocol::chat_protocol::GeneratedUiElement>,
+    ) -> Vec<String> {
+        Vec::new()
+    }
+
     /// The ids of the agent's linked shared channels, which a webhook or a
     /// scheduled task can choose to post to.
     async fn linked_channel_ids(&self, _agent_id: &str) -> Option<anyhow::Result<Vec<String>>> {

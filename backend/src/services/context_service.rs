@@ -11,6 +11,7 @@ use crate::prompts::context_builder::ConversationMessage as HistoryRow;
 use crate::services::agent_workspace_service::AGENT_WORKSPACE_SERVICE;
 use crate::services::attachment_service::ATTACHMENT_SERVICE;
 use crate::services::conversation_service::CONVERSATION_SERVICE;
+use crate::services::generated_ui::generated_ui_schema::is_generated_ui;
 use crate::support::js;
 use crate::types::AgentContext;
 
@@ -138,8 +139,10 @@ impl ContextService {
             ATTACHMENT_SERVICE.get_meta_by_message_ids(&ids).await?
         };
 
+        // A generated UI replays through the `show_ui` call that holds its spec.
         let windowed: Vec<ConversationMessage> = messages
             .into_iter()
+            .filter(|m| !is_generated_ui(m.blocks.as_ref()))
             .filter(|m| {
                 !js::trim(&m.content).is_empty()
                     || (m.role == MessageRole::Agent

@@ -817,6 +817,235 @@ pub struct QuestionCardBlock {
     pub answered_by: Option<Option<QuestionCardPerson>>,
 }
 
+/// A block on an AGENT message: components the agent chose to show. The message's
+/// content is the same UI as plain text. `docs/websocket-protocol.md` is the contract.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename = "generated_ui", rename_all = "camelCase")]
+pub struct GeneratedUiBlock {
+    pub version: u32,
+    pub id: String,
+    pub root: String,
+    pub elements: indexmap::IndexMap<String, GeneratedUiElement>,
+    /// Set by the first press of a Button.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressed: Option<GeneratedUiPress>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneratedUiPress {
+    pub element_id: String,
+    pub label: String,
+    /// Null when the press names no person.
+    pub by: Option<QuestionCardPerson>,
+}
+
+/// One component. `props` and `children` exist only on the types that have them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", deny_unknown_fields)]
+pub enum GeneratedUiElement {
+    Card {
+        #[serde(default)]
+        props: UiCardProps,
+        children: Vec<String>,
+    },
+    Heading {
+        props: UiTextProps,
+    },
+    Text {
+        props: UiTextProps,
+    },
+    Fields {
+        props: UiFieldsProps,
+    },
+    Table {
+        props: UiTableProps,
+    },
+    Chart {
+        props: UiChartProps,
+    },
+    Comparison {
+        props: UiComparisonProps,
+    },
+    Checklist {
+        props: UiChecklistProps,
+    },
+    Image {
+        props: UiImageProps,
+    },
+    Note {
+        props: UiTextProps,
+    },
+    Divider {},
+    Actions {
+        children: Vec<String>,
+    },
+    LinkButton {
+        props: UiLinkButtonProps,
+    },
+    Button {
+        props: UiButtonProps,
+    },
+}
+
+impl GeneratedUiElement {
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::Card { .. } => "Card",
+            Self::Heading { .. } => "Heading",
+            Self::Text { .. } => "Text",
+            Self::Fields { .. } => "Fields",
+            Self::Table { .. } => "Table",
+            Self::Chart { .. } => "Chart",
+            Self::Comparison { .. } => "Comparison",
+            Self::Checklist { .. } => "Checklist",
+            Self::Image { .. } => "Image",
+            Self::Note { .. } => "Note",
+            Self::Divider {} => "Divider",
+            Self::Actions { .. } => "Actions",
+            Self::LinkButton { .. } => "LinkButton",
+            Self::Button { .. } => "Button",
+        }
+    }
+
+    pub fn children(&self) -> &[String] {
+        match self {
+            Self::Card { children, .. } | Self::Actions { children } => children,
+            _ => &[],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiCardProps {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiTextProps {
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiField {
+    pub label: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiFieldsProps {
+    pub fields: Vec<UiField>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiTableProps {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UiChartKind {
+    Bar,
+    Line,
+    Area,
+    Pie,
+}
+
+impl UiChartKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bar => "bar",
+            Self::Line => "line",
+            Self::Area => "area",
+            Self::Pie => "pie",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiSeries {
+    pub name: String,
+    pub values: Vec<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UiChartProps {
+    pub kind: UiChartKind,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y_label: Option<String>,
+    pub categories: Vec<String>,
+    pub series: Vec<UiSeries>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiComparisonOption {
+    pub title: String,
+    pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiComparisonProps {
+    pub rows: Vec<String>,
+    pub options: Vec<UiComparisonOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiChecklistItem {
+    pub text: String,
+    pub done: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiChecklistProps {
+    pub items: Vec<UiChecklistItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiImageProps {
+    /// `attachment:<id>`, one of the message's own attachments.
+    pub attachment: String,
+    pub alt: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiLinkButtonProps {
+    pub label: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UiButtonStyle {
+    Primary,
+    Danger,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiButtonProps {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<UiButtonStyle>,
+}
+
 /// One message, for any role. A client upserts it by `id`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

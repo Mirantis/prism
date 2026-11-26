@@ -1925,6 +1925,49 @@ export const SCENARIOS: Scenario[] = [
     },
   },
 
+  // ---- Generated UI -----------------------------------------------------
+  {
+    id: 'generated-ui.comparison-uses-show-ui',
+    expect: 'A request to compare several options with the same attributes is answered with a show_ui table or comparison.',
+    grader: 'tool call',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'chat',
+        threadId: 'eval-thread',
+        history: [
+          {
+            user:
+              'Compare our three plans for example-product so I can scan them: Basic costs $5 a month with 1 seat ' +
+              'and email support, Team costs $20 with 10 seats and chat support, and Business costs $50 with 50 ' +
+              'seats and phone support.',
+          },
+        ],
+        maxSteps: 4,
+        stubs: { ui_reference: () => texts().uiReference, show_ui: () => texts().showUiResult },
+      });
+      const shown = trace.calls.filter((c) => c.tool === 'show_ui');
+      const types = shown.flatMap((call) =>
+        Object.values((call.input.elements ?? {}) as Record<string, { type?: string }>).map((e) => e.type),
+      );
+      const pass = types.includes('Table') || types.includes('Comparison');
+      return { pass, detail: describeTrace(trace) };
+    },
+  },
+  {
+    id: 'generated-ui.simple-answer-needs-no-ui',
+    expect: 'A simple question is answered in plain text, without show_ui.',
+    grader: 'tool call',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'chat',
+        threadId: 'eval-thread',
+        history: [{ user: 'What is 17 plus 25? Reply with the number.' }],
+        maxSteps: 2,
+      });
+      return { pass: !trace.calls.some((c) => c.tool === 'show_ui'), detail: describeTrace(trace) };
+    },
+  },
+
   // ---- Coding tasks ------------------------------------------------------
   ...LONG_CODING_REQUESTS.map(
     ({ id, request }): Scenario => ({

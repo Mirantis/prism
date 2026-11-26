@@ -46,6 +46,7 @@ use crate::lib::slack_web_client::{
     FileUpload, SlackWebClient, may_receive_slack_token, slack_platform_error_code,
 };
 use crate::lib::telemetry::track_event;
+use crate::protocol::chat_protocol::GeneratedUiElement;
 use crate::queues::slack_heartbeat_throttle_queue::get_slack_heartbeat_throttle_queue;
 use crate::services::agent_workspace_service::AGENT_WORKSPACE_SERVICE;
 use crate::services::attachment_service::{
@@ -62,6 +63,7 @@ use crate::services::conversation_engine_service::{
 };
 use crate::services::conversation_service::MessageInput;
 use crate::services::conversation_service::{CONVERSATION_SERVICE, LiveThread};
+use crate::services::generated_ui::generated_ui_schema::parse_block;
 use crate::services::heartbeat_service::HEARTBEAT_SERVICE;
 use crate::services::providers::slack_thread_provider::SlackThreadProvider;
 use crate::services::slack_heartbeat_trigger_service::SLACK_HEARTBEAT_TRIGGER_SERVICE;
@@ -92,6 +94,7 @@ use crate::utils::slack_formatter::{
     FeedbackRating, FormatSlackMessageOptions, FormattedSlackMessage, SlackBlock,
     build_feedback_ack_block, format_slack_message, slack_channel_label,
 };
+use crate::utils::slack_generated_ui::{generated_ui_issues, is_ui_action};
 use crate::{log_error, log_info, log_warn};
 
 // ============================================================================
@@ -851,6 +854,7 @@ impl SlackAdapterService {
                 &context.thread_id,
                 context.channel_thread_id.as_deref(),
                 row.tool_calls.as_ref(),
+                row.blocks.as_ref(),
                 Some(&row.id),
                 include_feedback,
                 attachments,
@@ -941,8 +945,10 @@ impl SlackAdapterService {
                             Outbound {
                                 content: &row.content,
                                 team_id: &connection.team_id,
+                                thread_id: &row.thread_id,
                                 triggered_by: Some(row.triggered_by.as_str()),
                                 tool_calls: row.tool_calls.as_ref(),
+                                blocks: row.blocks.as_ref(),
                                 feedback_message_id: include_feedback.then(|| row.id.clone()),
                             },
                             json!({
@@ -1023,6 +1029,7 @@ impl SlackAdapterService {
                     &row.thread_id,
                     None,
                     row.tool_calls.as_ref(),
+                    row.blocks.as_ref(),
                     Some(&row.id),
                     include_feedback,
                     attachments,
@@ -1050,7 +1057,7 @@ impl SlackAdapterService {
     /// channels are keyed by dmChannelId (not slackChannelId), so a channel
     /// without a mapping falls back to the single Slack connection, so
     /// thread-bound continuations to a DM still post. A post failure is logged,
-    /// not returned. `tool_calls` is the stored message's tool-call list.
+    /// not returned. `tool_calls` and `blocks` are the stored message's.
     #[allow(clippy::too_many_arguments)]
     pub async fn deliver_to_channel(
         &self,
@@ -1059,6 +1066,7 @@ impl SlackAdapterService {
         thread_id: &str,
         thread_ts: Option<&str>,
         tool_calls: Option<&serde_json::Value>,
+        blocks: Option<&serde_json::Value>,
         message_id: Option<&str>,
         include_feedback: bool,
         attachments: &[AttachmentMeta],
@@ -1106,8 +1114,10 @@ impl SlackAdapterService {
                     Outbound {
                         content,
                         team_id: &team_id,
+                        thread_id,
                         triggered_by,
                         tool_calls,
+                        blocks,
                         feedback_message_id: match (include_feedback, message_id) {
                             (true, Some(id)) => Some(id.to_string()),
                             _ => None,
@@ -1507,7 +1517,8 @@ impl SlackAdapterService {
     /// Each image is uploaded to no channel first, so a block can name it. When
     /// Slack refuses the message with them, the text is posted with each image's
     /// description, and the images go with the files uploaded after it. Answers
-    /// the posted message and the files it does not show.
+    /// the posted message and the files it does not show. A generated UI posts as
+    /// its own blocks.
     async fn post_showing_images(
         &self,
         client: &SlackWebClient,
@@ -1515,6 +1526,15 @@ impl SlackAdapterService {
         outbound: Outbound<'_>,
         message: serde_json::Value,
     ) -> anyhow::Result<(serde_json::Value, Vec<AttachmentMeta>)> {
+        if let Some(ui) = outbound
+            .blocks
+            .and_then(|blocks| blocks.get(0))
+            .and_then(parse_block)
+        {
+            return self
+                .post_generated_ui(client, attachments, ui, &outbound, message)
+                .await;
+        }
         let format = |images: HashMap<String, String>| {
             self.prepare_outbound_message(
                 outbound.content,
@@ -2131,8 +2151,8 @@ impl SlackAdapterService {
 
     /// One envelope from the socket, routed as Bolt routes it: an event is
     /// acknowledged first and goes to its handler unless the bot itself caused
-    /// it; a click on a feedback button goes to the feedback handler, which
-    /// acknowledges it. A handler's error is logged as the app's error.
+    /// it; a button press is acknowledged first and goes to the feedback or the
+    /// generated UI handler. A handler's error is logged as the app's error.
     async fn dispatch(
         &self,
         context: Arc<ConnectionContext>,
@@ -2220,24 +2240,44 @@ impl SlackAdapterService {
         }
 
         if body.get("type").and_then(Value::as_str) == Some("block_actions") {
-            let action_id = body
-                .pointer("/actions/0/action_id")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let rating = match action_id {
-                FEEDBACK_ACTION_UP => FeedbackRating::Up,
-                FEEDBACK_ACTION_DOWN => FeedbackRating::Down,
-                _ => return,
-            };
+            // Every press is acknowledged, a link button's and an unknown one's too.
             if let Err(error) = ack() {
                 log_error!("Slack app error for {}: {}", context.team_name, error);
                 return;
             }
-            if let Err(error) = self
-                .handle_feedback_action(body, Arc::new(listener_client), rating)
-                .await
-            {
-                log_error!("[SlackAdapter] Feedback action handler failed: {}", error);
+            let action_id = body
+                .pointer("/actions/0/action_id")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let handled = match action_id {
+                FEEDBACK_ACTION_UP => {
+                    self.handle_feedback_action(body, Arc::new(listener_client), FeedbackRating::Up)
+                        .await
+                }
+                FEEDBACK_ACTION_DOWN => {
+                    self.handle_feedback_action(
+                        body,
+                        Arc::new(listener_client),
+                        FeedbackRating::Down,
+                    )
+                    .await
+                }
+                _ if is_ui_action(action_id) => {
+                    self.handle_generated_ui_press(
+                        body,
+                        &context.team_id,
+                        Arc::new(listener_client),
+                        routed,
+                    )
+                    .await
+                }
+                _ => Ok(()),
+            };
+            if let Err(error) = handled {
+                log_error!(
+                    json!({ "err": err_json(&error), "actionId": action_id }),
+                    "[SlackAdapter] Action handler failed"
+                );
             }
         }
     }
@@ -4821,6 +4861,14 @@ impl ChannelAdapter for SlackAdapterService {
         SlackAdapterService::initialize(self).await
     }
 
+    fn generated_ui_issues(
+        &self,
+        root: &str,
+        elements: &IndexMap<String, GeneratedUiElement>,
+    ) -> Vec<String> {
+        generated_ui_issues(root, elements)
+    }
+
     async fn shutdown(&self) -> anyhow::Result<()> {
         SlackAdapterService::shutdown(self).await
     }
@@ -4830,8 +4878,10 @@ impl ChannelAdapter for SlackAdapterService {
 struct Outbound<'a> {
     content: &'a str,
     team_id: &'a str,
+    thread_id: &'a str,
     triggered_by: Option<&'a str>,
     tool_calls: Option<&'a serde_json::Value>,
+    blocks: Option<&'a serde_json::Value>,
     feedback_message_id: Option<String>,
 }
 
@@ -4896,6 +4946,8 @@ pub(crate) mod testing {
         AppGuard(team_id.to_string())
     }
 }
+
+mod generated_ui;
 
 #[cfg(test)]
 mod tests;

@@ -224,6 +224,7 @@ async fn store_message(id: &str, work: &ChatWork) -> bool {
         agent_message: message.agent_message.clone(),
         runtime_written: message.runtime_written,
         task_notification: message.task_notification.clone(),
+        generated_ui_press: message.generated_ui_press,
     };
     match CONVERSATION_ENGINE_SERVICE
         .accept_user_message(&input, &work.thread_id, Some(id))

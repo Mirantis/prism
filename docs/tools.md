@@ -36,6 +36,14 @@ as one card with answer options. Choose your answers and send them, skip any
 question, or type a reply instead. In Slack, Teams and the terminal UI the same
 questions arrive as text, and you reply in your own words or with `1a, 2b`.
 
+## Charts, tables and buttons
+
+**Show UI** — when a chart, a table, a comparison or a few buttons say more than
+prose, the agent shows them as a message of its own in the web chat and in Slack.
+Ask for one in your own words, such as "compare these plans in a table". The first
+press of a button sends its label as your reply, and the buttons then show who
+pressed. The terminal UI and Teams show the same content as text.
+
 ## Memory
 
 Manage long-term memory. See **[Memory](memory.md)** for the full picture.

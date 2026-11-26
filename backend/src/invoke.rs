@@ -7,8 +7,8 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock};
 use std::task::{Context as TaskContext, Poll};
 
 use futures::future::BoxFuture;
@@ -16,7 +16,6 @@ use futures::stream::BoxStream;
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
 use parking_lot::Mutex;
-use regex::Regex;
 use serde_json::{Value, json};
 
 use crate::ai::json::js_stringify;
@@ -94,7 +93,7 @@ use crate::support::{now_iso, now_ms};
 use crate::tools::share_file::SHARE_FILE_TOOL_NAME;
 use crate::types::{
     AgentContext, InvokeError, InvokeErrorType, InvokeMode, InvokeRequest, InvokeResponse,
-    InvokeStep, ToolCallRecord, UIBlock,
+    InvokeStep, ToolCallRecord,
 };
 use crate::utils::async_channel::AsyncChannel;
 use crate::{log_error, log_info, log_warn};
@@ -1027,7 +1026,6 @@ impl Turn {
 
         let step_tool_calls = step_tool_calls(step);
         let text = step.text();
-        let blocks = extract_blocks(&text);
         let tool_calls = step.tool_calls();
         let tool_results = step.tool_results();
         let attachment_ids = extract_attachment_ids(
@@ -1065,7 +1063,6 @@ impl Turn {
             text,
             tool_calls: step_tool_calls,
             usage,
-            blocks,
             attachment_ids: (!attachment_ids.is_empty()).then_some(attachment_ids),
             ..Default::default()
         });
@@ -1208,14 +1205,12 @@ impl Turn {
             .await?;
 
             let summary_text = summary_result.text();
-            let early_stopping_blocks = extract_blocks(&summary_text);
             let summary_usage = to_step_usage(model_id, Some(summary_result.usage()));
             early_stopping_text = Some(summary_text.clone());
             self.channel.push(InvokeStep {
                 text: summary_text,
                 tool_calls: Vec::new(),
                 usage: summary_usage,
-                blocks: early_stopping_blocks,
                 step_limit: true,
                 ..Default::default()
             });
@@ -1791,10 +1786,6 @@ pub async fn invoke(request: InvokeRequest) -> anyhow::Result<InvokeResponse> {
         .flat_map(|s| s.tool_calls.iter().cloned())
         .collect();
     let response = join_step_texts(&steps);
-    let all_blocks: Vec<UIBlock> = steps
-        .iter()
-        .flat_map(|s| s.blocks.iter().flatten().cloned())
-        .collect();
     let all_attachment_ids: Vec<String> = steps
         .iter()
         .flat_map(|s| s.attachment_ids.iter().flatten().cloned())
@@ -1815,7 +1806,6 @@ pub async fn invoke(request: InvokeRequest) -> anyhow::Result<InvokeResponse> {
     Ok(InvokeResponse {
         response,
         tool_calls: all_tool_calls,
-        blocks: (!all_blocks.is_empty()).then_some(all_blocks),
         attachment_ids: (!all_attachment_ids.is_empty()).then_some(all_attachment_ids),
         usage,
         steps,
@@ -1983,21 +1973,6 @@ pub fn extract_attachment_ids<'a>(
         }
     }
     ids
-}
-
-static JSON_FENCE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"```json\s*((?s:.)*?)\s*```").expect("valid regex"));
-
-/// Extract UI blocks from a response: the `blocks` array of the first fenced
-/// `json` block, when it has one.
-fn extract_blocks(response: &str) -> Option<Vec<UIBlock>> {
-    let captures = JSON_FENCE.captures(response)?;
-    let parsed: Value = serde_json::from_str(&captures[1]).ok()?;
-    let blocks = parsed.get("blocks")?;
-    if !blocks.is_array() {
-        return None;
-    }
-    serde_json::from_value(blocks.clone()).ok()
 }
 
 #[cfg(test)]

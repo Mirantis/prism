@@ -938,6 +938,77 @@
       "description": "Ask the user one or more questions as a card with answer options they can click. Use it when you need their decisions before you can go on, above all when there are several: put every question in one call, in the order they should answer them. Give each question 2 to 4 options, and name one as recommended when you have a view. The user can always leave a question blank or, unless allowOther is false, write their own answer. Do not write the questions in your reply as well. Put any lead-in in intro, and write no other text in this reply. For a single open question with no natural options, ask in plain text instead. Call it once, then end your turn and write nothing else. The answers arrive as the user's next message, one line per question; a blank question reads \"no answer\"."
     }
   ],
+  "generated-ui": [
+    {
+      "type": "function",
+      "name": "ui_reference",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "Read the components show_ui accepts: each type, its props, its children and its limits, with an example. Call it once before your first show_ui call."
+    },
+    {
+      "type": "function",
+      "name": "show_ui",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "root": {
+            "type": "string",
+            "description": "The id of the element drawn first."
+          },
+          "elements": {
+            "type": "object",
+            "description": "Each element by its id. Call ui_reference for the types, their props and their limits.",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "Card",
+                    "Heading",
+                    "Text",
+                    "Fields",
+                    "Table",
+                    "Chart",
+                    "Comparison",
+                    "Checklist",
+                    "Image",
+                    "Note",
+                    "Divider",
+                    "Actions",
+                    "LinkButton",
+                    "Button"
+                  ]
+                },
+                "props": {
+                  "type": "object"
+                },
+                "children": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          }
+        },
+        "required": [
+          "root",
+          "elements"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Show the user a UI built from fixed components: charts, tables, label and value fields, comparisons, checklists, images, notes and buttons. Use it when a component shows the answer better than prose: a comparison, numbers over time, a status summary, or a choice between a few options. Answer a simple question in plain text instead. Call ui_reference once before your first show_ui call to read the components, their props and their limits. Pass the elements as a flat map by id, and the id of the root element. The UI shows as its own message after the text you wrote before the call, so do not repeat its content in your reply. When the UI does not fit the rules, the call fails with the issues to fix; correct the spec and call again. The first press of a Button arrives as the user's next message, with the button's label as its text."
+    }
+  ],
   "agent-config": [
     {
       "type": "function",

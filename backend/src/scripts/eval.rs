@@ -60,6 +60,7 @@ use crate::services::agent_workspace_service::{
 use crate::services::channel_adapter_interface::{ChannelName, ChatPlatform, LinkedTarget};
 use crate::services::context_service::{AgentContextOptions, CONTEXT_SERVICE};
 use crate::services::delivery_target_service::{DeliveryTarget, PostingCeiling, ceiling_of};
+use crate::services::generated_ui::generated_ui_reference::UI_REFERENCE;
 use crate::services::heartbeat_service::{HEARTBEAT_PROMPT, HEARTBEAT_SERVICE};
 use crate::services::llm_call_service::{CountedUsage, LlmCallPurpose, counting_usage};
 use crate::services::thread_reply_classifier_service::{
@@ -74,6 +75,7 @@ use crate::tools::computer::{ALERT_THE_USER, get_computer_tools};
 use crate::tools::meeting::{MeetingToolsInput, get_meeting_tools};
 use crate::tools::shell::coding_agent::NOTIFIED_TASK_NEXT;
 use crate::tools::shell::monitor::MONITOR_NEXT;
+use crate::tools::show_ui::show_ui_result;
 use crate::types::{
     AgentContext, AgentMessageOrigin, HeartbeatTrigger, InvokeMode, InvokeRequest, PromptSource,
     TaskLastSend,
@@ -254,6 +256,8 @@ fn info() -> Value {
             "alertTheUser": ALERT_THE_USER,
             "defaultHeartbeatMd": get_default_workspace_files().heartbeat_md,
             "askQuestionsResult": ask_questions_result(),
+            "showUiResult": show_ui_result(),
+            "uiReference": UI_REFERENCE,
             "notifiedTaskNext": NOTIFIED_TASK_NEXT,
             "monitorNext": MONITOR_NEXT,
         },

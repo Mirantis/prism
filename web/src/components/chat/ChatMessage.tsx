@@ -1,6 +1,6 @@
 import { ChatComputerHelp } from '@/components/computer/chat-computer-help';
 import { ChatCodingAgentSignIn } from '@/components/coding-agents/chat-coding-agent-sign-in';
-import { codingAgentSignInBlocks, computerHelpBlocks, questionCardBlocks } from '@/types';
+import { codingAgentSignInBlocks, computerHelpBlocks, generatedUiBlocks, questionCardBlocks } from '@/types';
 import { memo } from 'react';
 import { CopyButton } from '@/components/shared/copy-button';
 import AgentAvatar from './agent-avatar';
@@ -8,6 +8,7 @@ import ParticipantAvatar from './participant-avatar';
 import ChatMarkdown from './ChatMarkdown';
 import ChatToolCalls from './ChatToolCalls';
 import { QuestionCard } from './question-card';
+import { GeneratedUi } from './generated-ui/generated-ui';
 import { MessageAttachmentChip } from './ChatAttachmentChip';
 import type { TranscriptMessage } from '@/lib/chat-socket/transcript';
 import type { Viewer } from '@/lib/chat-socket/protocol';
@@ -170,7 +171,8 @@ const ChatMessage = memo(function ChatMessage({
   const signIns = codingAgentSignInBlocks(message);
   // A request's card says what its text says, so the text is not shown beside it.
   const questionCards = questionCardBlocks(message);
-  const hasCard = help.length > 0 || signIns.length > 0 || questionCards.length > 0;
+  const generatedUis = generatedUiBlocks(message);
+  const hasCard = help.length > 0 || signIns.length > 0 || questionCards.length > 0 || generatedUis.length > 0;
   return (
     <div className={`group flex gap-3 ${ENTER}`} data-message-role="agent" data-message-id={message.id}>
       <AgentAvatar className="mt-0.5" />
@@ -194,6 +196,9 @@ const ChatMessage = memo(function ChatMessage({
         ))}
         {questionCards.map((block) => (
           <QuestionCard key={block.id} block={block} viewer={viewer} />
+        ))}
+        {generatedUis.map((block) => (
+          <GeneratedUi key={block.id} block={block} viewer={viewer} attachments={message.attachments} />
         ))}
         <AttachmentChips message={message} />
         {message.toolCalls && message.toolCalls.length > 0 && <ChatToolCalls toolCalls={message.toolCalls} />}

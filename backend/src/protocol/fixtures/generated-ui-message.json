@@ -1,0 +1,91 @@
+{
+  "description": "A generated UI message as a real runtime stored it after a press: the model chose the elements, and content is the text version.",
+  "content": "**Deploys this week**\n\n**Deploys per day**\nMon: 3\nTue: 5\nWed: 2\n\n| Service | Status after Wednesday's deploy |\n| --- | --- |\n| api | Green |\n| web | Red |\n\nRoll back Wednesday / Keep Wednesday",
+  "blocks": [
+    {
+      "type": "generated_ui",
+      "version": 1,
+      "id": "1934c2fa-ab1b-4a8a-b001-f38c172a4841",
+      "root": "deploys",
+      "elements": {
+        "deploys": {
+          "type": "Card",
+          "props": {
+            "title": "Deploys this week"
+          },
+          "children": [
+            "per-day",
+            "status",
+            "choose"
+          ]
+        },
+        "per-day": {
+          "type": "Chart",
+          "props": {
+            "kind": "bar",
+            "title": "Deploys per day",
+            "categories": [
+              "Mon",
+              "Tue",
+              "Wed"
+            ],
+            "series": [
+              {
+                "name": "Deploys",
+                "values": [
+                  3.0,
+                  5.0,
+                  2.0
+                ]
+              }
+            ]
+          }
+        },
+        "status": {
+          "type": "Table",
+          "props": {
+            "columns": [
+              "Service",
+              "Status after Wednesday's deploy"
+            ],
+            "rows": [
+              [
+                "api",
+                "Green"
+              ],
+              [
+                "web",
+                "Red"
+              ]
+            ]
+          }
+        },
+        "choose": {
+          "type": "Actions",
+          "children": [
+            "roll-back",
+            "keep"
+          ]
+        },
+        "roll-back": {
+          "type": "Button",
+          "props": {
+            "label": "Roll back Wednesday",
+            "style": "danger"
+          }
+        },
+        "keep": {
+          "type": "Button",
+          "props": {
+            "label": "Keep Wednesday"
+          }
+        }
+      },
+      "pressed": {
+        "elementId": "keep",
+        "label": "Keep Wednesday",
+        "by": null
+      }
+    }
+  ]
+}

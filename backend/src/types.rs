@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::lib::model_selection::ModelSelection;
@@ -241,14 +240,6 @@ impl fmt::Debug for InvokeRequest {
 // Response Types
 // ============================================================================
 
-/// A UI block: a `type` and any other fields.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct UIBlock {
-    pub r#type: String,
-    #[serde(flatten)]
-    pub fields: Map<String, Value>,
-}
-
 /// What a cut did to a tool result. Structured on purpose: the
 /// `[INCOMPLETE OUTPUT …]` notice inside `output` is written for the model, and a
 /// consumer that needs to know a result was cut should not have to parse prose
@@ -419,8 +410,6 @@ pub struct InvokeStep {
     /// a message row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<StepUsage>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub blocks: Option<Vec<UIBlock>>,
     /// Ids of MessageAttachment rows the agent shared during this step (via the
     /// share_file tool). The delivery layer links these to the published message
     /// and each channel adapter renders/uploads them.
@@ -441,8 +430,6 @@ pub struct InvokeStep {
 pub struct InvokeResponse {
     pub response: String,
     pub tool_calls: Vec<ToolCallRecord>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub blocks: Option<Vec<UIBlock>>,
     /// Aggregated across all steps: files the agent shared this invocation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment_ids: Option<Vec<String>>,
@@ -483,15 +470,5 @@ mod tests {
         )
         .unwrap();
         assert!(!legacy.rendered);
-    }
-
-    #[test]
-    fn writes_a_ui_block_with_its_type_first() {
-        let block: UIBlock = serde_json::from_str(r#"{"type":"card","title":"x"}"#).unwrap();
-        assert_eq!(block.r#type, "card");
-        assert_eq!(
-            serde_json::to_string(&block).unwrap(),
-            r#"{"type":"card","title":"x"}"#
-        );
     }
 }

@@ -51,6 +51,7 @@ use crate::tools::send_message::get_send_message_tools;
 use crate::tools::share_file::SHARE_FILE_TOOL_NAME;
 use crate::tools::share_file::get_share_file_tools;
 use crate::tools::shell::get_shell_tools;
+use crate::tools::show_ui::get_show_ui_tools;
 use crate::tools::skills::get_skill_tools;
 use crate::tools::web::web_fetch::get_web_fetch_tools;
 use crate::{log_info, log_warn};
@@ -204,7 +205,7 @@ pub async fn collect_tools(input: CollectToolsInput) -> anyhow::Result<Collected
         origin_channel_id,
         &sign_in_agents,
     ));
-    // A person is there to answer only in chat.
+    // A person is there to answer, and to see a UI, only in chat.
     if mode == "chat" {
         built_in_tools.extend(get_ask_questions_tools(
             &input.user_id,
@@ -212,6 +213,12 @@ pub async fn collect_tools(input: CollectToolsInput) -> anyhow::Result<Collected
             thread_id,
             origin_channel,
             origin_channel_id,
+        ));
+        built_in_tools.extend(get_show_ui_tools(
+            &input.user_id,
+            &input.agent_id,
+            thread_id,
+            origin_channel,
         ));
     }
     built_in_tools.extend(get_agent_config_tools()?);

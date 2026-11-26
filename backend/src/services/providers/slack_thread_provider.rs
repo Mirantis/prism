@@ -28,6 +28,7 @@ use crate::db::schema::conversation_threads::dsl as ct;
 use crate::db::schema::slack_mappings::dsl as m;
 use crate::lib::slack_source::get_slack_connection;
 use crate::services::attachment_service::ATTACHMENT_SERVICE;
+use crate::services::generated_ui::generated_ui_service::PRESS_TRIGGER_NAME;
 use crate::services::slack_adapter_service::{
     SLACK_ADAPTER_SERVICE, SlackFileContext, SlackFileFailure, SlackFileMeta, slack_file_source,
 };
@@ -119,6 +120,8 @@ struct AgentMessageMaps {
     tool_calls_by_ts: HashMap<String, serde_json::Value>,
     created_at_by_ts: HashMap<String, DateTime<Utc>>,
     trigger_by_ts: HashMap<String, StoredTrigger>,
+    /// A generated UI keeps its block, so the model view leaves it out as it does a stored one.
+    blocks_by_ts: HashMap<String, serde_json::Value>,
 }
 
 /// The Slack workspace details of a thread.
@@ -534,6 +537,9 @@ impl SlackThreadProvider {
     /// USER row. Filtering to AGENT would rebuild a Slack thread's history from Slack
     /// alone and drop every recall, so the same agent would answer differently
     /// depending on which surface the thread ran on.
+    ///
+    /// The press of a generated UI button is a stored message from the person who
+    /// pressed, never a Slack message, so it is read here too.
     async fn get_internal_step_messages(
         &self,
         thread_id: &str,
@@ -542,7 +548,11 @@ impl SlackThreadProvider {
         crate::db::read(move |conn| {
             Ok(cm::conversation_messages
                 .filter(cm::thread_id.eq(&thread_id))
-                .filter(cm::internal_step.eq(true))
+                .filter(
+                    cm::internal_step.eq(true).or(cm::role
+                        .eq(MessageRole::User)
+                        .and(cm::trigger_name.eq(PRESS_TRIGGER_NAME))),
+                )
                 .filter(cm::is_compacted.eq(false))
                 .order(cm::created_at.asc())
                 .select(ConversationMessage::as_select())
@@ -809,7 +819,9 @@ impl SlackThreadProvider {
                     tool_calls: is_our_agent
                         .then(|| maps.tool_calls_by_ts.get(&msg.ts).cloned())
                         .flatten(),
-                    blocks: None,
+                    blocks: is_our_agent
+                        .then(|| maps.blocks_by_ts.get(&msg.ts).cloned())
+                        .flatten(),
                     sender_external_id: user.map(str::to_string),
                     sender_name: if is_our_agent {
                         None
@@ -867,6 +879,9 @@ impl SlackThreadProvider {
                     trigger_name: row.trigger_name,
                 },
             );
+            if let Some(blocks) = row.blocks.filter(|blocks| !blocks.is_null()) {
+                maps.blocks_by_ts.insert(ts.clone(), blocks);
+            }
             if let Some(tool_calls) = row.tool_calls.filter(|calls| !calls.is_null()) {
                 maps.tool_calls_by_ts.insert(ts, tool_calls);
             }
@@ -1327,6 +1342,79 @@ mod tests {
         assert_eq!(messages[2].triggered_by, MessageTrigger::CronTask);
         assert_eq!(messages[2].sender_name, None);
         assert_eq!(client.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn merges_the_press_of_a_ui_and_keeps_the_ui_out_of_the_model_view() {
+        let _db = test_db();
+        set_slack_config_for_tests(Some(connection()));
+        slack_thread(true);
+        let block = json!({ "type": "generated_ui", "version": 1, "id": "ui-1", "root": "n",
+            "elements": { "n": { "type": "Note", "props": { "text": "Deploys" } } } });
+        let mut ui = NewConversationMessage::new(
+            "thread-1",
+            MessageRole::Agent,
+            "Deploys",
+            MessageTrigger::UserInput,
+        );
+        ui.external_message_id = Some("100.2".into());
+        ui.blocks = Some(json!([block]));
+        ui.created_at = crate::support::from_ms(100_200).into();
+        // The stored copy of the Slack message, which the read takes from Slack.
+        let mut copy = NewConversationMessage::new(
+            "thread-1",
+            MessageRole::User,
+            "<@U1:Ann>: hey",
+            MessageTrigger::UserInput,
+        );
+        copy.created_at = crate::support::from_ms(100_100).into();
+        let mut press = NewConversationMessage::new(
+            "thread-1",
+            MessageRole::User,
+            "<@U1:Ann>: Keep it",
+            MessageTrigger::UserInput,
+        );
+        press.trigger_name = Some(PRESS_TRIGGER_NAME.into());
+        press.created_at = crate::support::from_ms(100_300).into();
+        crate::db::run_sync(move |conn| {
+            diesel::insert_into(cm::conversation_messages)
+                .values(&vec![ui, copy, press])
+                .execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
+        let api = fake_slack_api(Arc::new(|method, _| match method {
+            "conversations.replies" => (
+                200,
+                json!({ "ok": true, "messages": [
+                    { "ts": "100.1", "user": "U1", "text": "hey" },
+                    { "ts": "100.2", "user": "UBOT", "text": "Deploys" },
+                ] }),
+            ),
+            "users.info" => (200, json!({ "ok": true, "user": { "real_name": "Ann" } })),
+            _ => (200, json!({ "ok": true })),
+        }))
+        .await;
+        let _app = install_app("T1", &api.url);
+        let messages = SlackThreadProvider::new()
+            .get_messages("thread-1", None)
+            .await;
+        __reset_slack_config_for_tests();
+        let messages = messages.unwrap();
+        assert_eq!(
+            messages
+                .iter()
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["<@U1:Ann>: hey", "Deploys", "<@U1:Ann>: Keep it"]
+        );
+        assert!(
+            crate::services::generated_ui::generated_ui_schema::is_generated_ui(
+                messages[1].blocks.as_ref()
+            )
+        );
+        assert_eq!(messages[2].role, MessageRole::User);
     }
 
     fn noted(content: &str, sender: Option<(&str, &str)>, failures: usize) -> String {

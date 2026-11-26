@@ -142,14 +142,49 @@ you. `payload` is in Slack's own shape. The agent reads these fields:
   `user`, `bot_id`, `text`, `ts`, `thread_ts`, and `files` with `id`, `name`,
   `mimetype`, `size`, `url_private` and `url_private_download`.
 - `member_joined_channel` and `member_left_channel`: `type`, `user`, `channel`.
-- `block_actions`: `user.id`, `channel.id`, `message.ts`, `message.text`,
-  `message.blocks`, and `actions` with `action_id`, `block_id` and `value`.
+- `block_actions`: `user.id`, `channel.id`, `message.ts`, `message.thread_ts`,
+  `message.text`, `message.blocks`, and `actions` with `action_id`, `block_id`
+  and `value`.
 
 Put a file's URLs on your proxy's origin. The agent sends its token only there,
 and does not fetch a file whose URL is on Slack's own hosts.
 
 Send only messages from people. The agent stores what it posts, so it needs no
 copy of its own messages.
+
+## Generated UI
+
+The agent can post a UI of its own: a message whose blocks are only these, in
+the order the agent chose. The proxy must pass them to Slack as they are.
+
+| Block | Fields the agent sets |
+|-------|------------------------|
+| `header` | `text` as `plain_text` |
+| `markdown` | `text` |
+| `section` | `fields`, 1 to 10 `mrkdwn` texts |
+| `table` | `column_settings` with `is_wrapped: true`, and `rows` of `raw_text` cells, the header row first |
+| `data_visualization` | `title`, and `chart`: `pie` with `segments`, or `bar`, `line` or `area` with `series` and `axis_config` |
+| `rich_text` | one `rich_text_list` of `bullet` style, each item an `emoji` and a `text` |
+| `image` | `slack_file` with `id`, and `alt_text` |
+| `context` | `elements` of `plain_text`, or one `mrkdwn` after a press |
+| `divider` | none |
+| `actions` | `block_id`, and `elements` of `button` with `text` and either `action_id` and an optional `style`, or `url` |
+
+A button that starts the agent's turn has `action_id` `generated_ui:<elementId>`,
+in an `actions` block whose `block_id` is `generated_ui:<uiId>:<elementId>`. A
+button with a `url` has no `action_id` of the agent's, and its press changes
+nothing. Send a press as an `action` envelope. The agent then calls
+`chat.update` with the message's blocks, where the pressed buttons are replaced
+by a line that names the label and mentions the person. A later press of the
+same UI changes nothing.
+
+For an `image` block the agent first uploads the file with
+`files.getUploadURLExternal` and `files.completeUploadExternal` with no
+`channel_id`, then names the file in the block.
+
+When `chat.postMessage` answers `invalid_blocks`, `msg_blocks_too_long` or
+`invalid_arguments`, the agent posts the same UI again as `text` alone, in one
+or more messages, with the images as files after it.
 
 ## The Slack API proxy
 
@@ -172,7 +207,7 @@ down.
 | `conversations.members` | `channel`, `limit`, `cursor` | `members`, `response_metadata.next_cursor` |
 | `users.info` | `user` | `user.real_name`, `user.name` |
 | `files.getUploadURLExternal` | `filename`, `length` | `upload_url`, `file_id` |
-| `files.completeUploadExternal` | `files`, `channel_id`, `thread_ts` | |
+| `files.completeUploadExternal` | `files`, and `channel_id` and `thread_ts` unless the file is for an `image` block | |
 
 The agent then posts the file's bytes to `upload_url` with the same
 `Authorization` header.

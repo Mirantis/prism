@@ -209,6 +209,7 @@ fn engine_input(message: &InboundMessage, agent_id: String) -> UserMessageInput 
         agent_message: sender.agent_message,
         runtime_written: message.runtime_written,
         task_notification: sender.task_notification,
+        generated_ui_press: false,
     }
 }
 
