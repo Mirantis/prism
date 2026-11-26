@@ -66,6 +66,10 @@ to clear.
   Codex runs every task with `sandbox_mode="danger-full-access"`
   and `approval_policy="never"`, since its sandbox cannot start in an unprivileged
   container; a Codex plan task is read-only by `PLAN_ONLY_INSTRUCTION` alone.
+  Antigravity CLI (`agy`) runs an edit task with `--dangerously-skip-permissions`,
+  since headless `accept-edits` denies every shell command when stdin is closed
+  and `--mode auto` is unavailable on accounts without it; an `agy` plan task
+  runs in `--mode plan` with `PLAN_ONLY_INSTRUCTION`.
   A refusal the CLI reports reaches the task result as `refusals`, and a task that
   otherwise finished reports `stopReason: "refused"`. `TOOL_RISK_GATE_MODE` checks
   the `coding_agent` call alone; an operator refuses more with deny rules in Claude

@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use futures::StreamExt;
 use parking_lot::Mutex;
 use serde_json::json;
 
@@ -12,7 +13,9 @@ use crate::lib::coding_agents::coding_agent::{Effort, ModelTier};
 use crate::lib::coding_agents::testing::{
     FakeChild, FakeEnvironment, FakeFiles, env_of, fake_paths,
 };
-use crate::lib::execution_environments::execution_environment::{RunOptions, StdinMode};
+use crate::lib::execution_environments::execution_environment::{
+    ProcessMark, RunOptions, StdinMode,
+};
 
 fn task() -> CodingAgentTask {
     CodingAgentTask {
@@ -125,7 +128,14 @@ async fn parses_stream_json_session_deltas_usage_and_result() {
                 "step_index": 1,
                 "state": "ACTIVE",
                 "step_type": "agent_response",
-                "text_delta": "hel"
+                "text_delta": "hel",
+                "usage": {
+                    "input_tokens": 16093,
+                    "output_tokens": 35,
+                    "thinking_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "total_tokens": 16128
+                }
             }
         })
         .to_string(),
@@ -134,10 +144,17 @@ async fn parses_stream_json_session_deltas_usage_and_result() {
         &json!({
             "event": "step_update",
             "step_update": {
-                "step_index": 1,
+                "step_index": 3,
                 "state": "DONE",
                 "step_type": "agent_response",
-                "text_delta": "lo\n"
+                "text_delta": "lo\n",
+                "usage": {
+                    "input_tokens": 2173,
+                    "output_tokens": 1,
+                    "thinking_tokens": 0,
+                    "cache_read_tokens": 14042,
+                    "total_tokens": 2174
+                }
             }
         })
         .to_string(),
@@ -261,23 +278,41 @@ async fn reports_denied_actions_and_error_results() {
 }
 
 #[tokio::test]
-async fn checks_credentials_and_binary_for_availability() {
+async fn checks_state_and_models_probe_for_availability() {
     let home = tempfile::tempdir().unwrap();
-    let config_dir = home.path().join(".gemini/config");
-    std::fs::create_dir_all(&config_dir).unwrap();
-    std::fs::write(config_dir.join("config.json"), "{}").unwrap();
+    let state_dir = home.path().join(".gemini/antigravity-cli");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    std::fs::write(
+        state_dir.join("jetski_state.pbtxt"),
+        "post_onboarding: true\n",
+    )
+    .unwrap();
     let home_str = home.path().to_string_lossy().into_owned();
 
-    let version_ok = || FakeEnvironment {
+    let models_ok = || FakeEnvironment {
         files: FakeFiles::local(),
         ..FakeEnvironment::with_run_program(|_, _, _| {
             let child = FakeChild::new();
-            child.emit_line("1.5.18");
+            child.emit_line(
+                "\r⠋ Fetching available models...\rgemini-4-neon-high  Gemini 4 Neon (High)",
+            );
             child.finish(Some(0));
             child.process()
         })
     };
-    let version_missing = || FakeEnvironment {
+    let models_signed_out = || FakeEnvironment {
+        files: FakeFiles::local(),
+        ..FakeEnvironment::with_run_program(|_, _, _| {
+            let child = FakeChild::new();
+            child.emit_line("Fetching available models...");
+            child.emit_line(
+                "Error: Please sign in to view available models. Launch the CLI without arguments to sign in.",
+            );
+            child.finish(Some(0));
+            child.process()
+        })
+    };
+    let binary_missing = || FakeEnvironment {
         files: FakeFiles::local(),
         ..FakeEnvironment::with_run_program(|_, _, _| {
             let child = FakeChild::new();
@@ -286,28 +321,10 @@ async fn checks_credentials_and_binary_for_availability() {
         })
     };
 
-    let agent = create_agy_agent(Some(version_ok().arc()));
+    let agent = create_agy_agent(Some(models_ok().arc()));
     assert!(
         agent
             .is_available(&env_of(&[("HOME", &home_str)]))
-            .await
-            .unwrap()
-    );
-    assert!(
-        agent
-            .is_available(&env_of(&[("GEMINI_API_KEY", "test-key")]))
-            .await
-            .unwrap()
-    );
-    assert!(
-        agent
-            .is_available(&env_of(&[("GOOGLE_API_KEY", "test-key")]))
-            .await
-            .unwrap()
-    );
-    assert!(
-        agent
-            .is_available(&env_of(&[("AGY_ADC_AUTH", "true")]))
             .await
             .unwrap()
     );
@@ -318,16 +335,18 @@ async fn checks_credentials_and_binary_for_availability() {
             .unwrap()
     );
 
-    let missing_bin = create_agy_agent(Some(version_missing().arc()));
+    let signed_out = create_agy_agent(Some(models_signed_out().arc()));
     assert!(
-        !missing_bin
+        !signed_out
             .is_available(&env_of(&[("HOME", &home_str)]))
             .await
             .unwrap()
     );
+
+    let missing_bin = create_agy_agent(Some(binary_missing().arc()));
     assert!(
         !missing_bin
-            .is_available(&env_of(&[("GEMINI_API_KEY", "test-key")]))
+            .is_available(&env_of(&[("HOME", &home_str)]))
             .await
             .unwrap()
     );
@@ -345,7 +364,7 @@ async fn prepares_home_without_creating_files_in_users_home() {
     let mut paths = fake_paths("/workspace");
     paths.skills_dir = skills.to_string_lossy().into_owned();
     let environment = FakeEnvironment {
-        paths,
+        paths: paths.clone(),
         base_env: env_of(&[("HOME", &home_str)]),
         files: FakeFiles::local(),
         ..Default::default()
@@ -361,6 +380,19 @@ async fn prepares_home_without_creating_files_in_users_home() {
     );
     assert!(!prepared.skills_linked);
     assert!(!home.join(".gemini").exists());
+
+    let no_home = FakeEnvironment {
+        paths,
+        base_env: ProcessEnv::new(),
+        files: FakeFiles::local(),
+        ..Default::default()
+    };
+    let prepared_no_home = create_agy_agent(Some(no_home.arc()))
+        .prepare_home()
+        .await
+        .unwrap();
+    assert_eq!(prepared_no_home.config_dir, "");
+    assert!(!prepared_no_home.skills_linked);
 }
 
 #[tokio::test]

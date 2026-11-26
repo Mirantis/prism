@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
-use futures::StreamExt;
 use indexmap::IndexMap;
 use serde_json::Value;
 
@@ -17,17 +16,15 @@ use crate::config::{CONFIG, CodexTierModel, CodingAgentName, TierSet};
 use crate::lib::coding_agents::bedrock_credentials::bedrock_region;
 use crate::lib::coding_agents::cli_run::{CliRunSpec, ParseLine, run_cli};
 use crate::lib::coding_agents::coding_agent::{
-    CodingAgent, CodingAgentEvent, CodingAgentEvents, CodingAgentHome, CodingAgentMode,
-    CodingAgentRun, CodingAgentStopReason, CodingAgentTask, CodingAgentUsage,
-    PLAN_ONLY_INSTRUCTION,
+    CodingAgent, CodingAgentEvent, CodingAgentHome, CodingAgentMode, CodingAgentRun,
+    CodingAgentStopReason, CodingAgentTask, CodingAgentUsage, PLAN_ONLY_INSTRUCTION,
 };
 use crate::lib::coding_agents::deferred_run::{aborted, deferred_run};
 use crate::lib::coding_agents::shared_skills_home::prepare_shared_skills_home;
 use crate::lib::coding_agents::subscription::not_signed_in_message;
 use crate::lib::coding_agents::subscription_switch::uses_subscription;
-use crate::lib::execution_environments::execution_environment::{
-    ExecutionEnvironment, ProcessEnv, ProcessMark,
-};
+use crate::lib::coding_agents::tracked_run::track_run;
+use crate::lib::execution_environments::execution_environment::{ExecutionEnvironment, ProcessEnv};
 use crate::lib::execution_environments::get_execution_environment::{
     get_execution_environment, get_execution_environment_for,
 };
@@ -189,112 +186,7 @@ impl CodingAgent for CodexAgent {
             }
             launch(env)
         };
-        let stopped = Arc::new(AtomicBool::new(false));
-        let events = run.take_events().map(|events| {
-            finished_after(
-                events,
-                Finish {
-                    owner,
-                    props,
-                    started_at,
-                    stopped: stopped.clone(),
-                    status: "error",
-                    done: false,
-                },
-            )
-        });
-        Arc::new(TrackedRun {
-            run,
-            stopped,
-            events: parking_lot::Mutex::new(events),
-        })
-    }
-}
-
-/// `codex task finished`, emitted once when a run's events end or are dropped.
-struct Finish {
-    owner: String,
-    props: IndexMap<String, String>,
-    started_at: i64,
-    stopped: Arc<AtomicBool>,
-    status: &'static str,
-    done: bool,
-}
-
-impl Finish {
-    fn emit(&mut self) {
-        if self.done {
-            return;
-        }
-        self.done = true;
-        let mut props = self.props.clone();
-        let status = if self.stopped.load(Ordering::SeqCst) {
-            "stopped"
-        } else {
-            self.status
-        };
-        props.insert("status".to_string(), status.to_string());
-        props.insert(
-            "elapsed_ms".to_string(),
-            (crate::support::now_ms() - self.started_at).to_string(),
-        );
-        track_event("codex task finished", Some(&self.owner), Some(props));
-    }
-}
-
-impl Drop for Finish {
-    fn drop(&mut self) {
-        self.emit();
-    }
-}
-
-fn finished_after(events: CodingAgentEvents, finish: Finish) -> CodingAgentEvents {
-    futures::stream::unfold((Some(events), finish), |(events, mut finish)| async move {
-        let mut events = events?;
-        match events.next().await {
-            Some(event) => {
-                if let CodingAgentEvent::Result { stop_reason, .. } = &event {
-                    finish.status = stop_reason.as_str();
-                }
-                Some((event, (Some(events), finish)))
-            }
-            None => {
-                finish.emit();
-                None
-            }
-        }
-    })
-    .boxed()
-}
-
-/// The CLI's run, its stop remembered for the finished event.
-struct TrackedRun {
-    run: Arc<dyn CodingAgentRun>,
-    stopped: Arc<AtomicBool>,
-    events: parking_lot::Mutex<Option<CodingAgentEvents>>,
-}
-
-#[async_trait]
-impl CodingAgentRun for TrackedRun {
-    fn take_events(&self) -> Option<CodingAgentEvents> {
-        self.events.lock().take()
-    }
-
-    fn exited(&self) -> bool {
-        self.run.exited()
-    }
-
-    fn mark(&self) -> Option<ProcessMark> {
-        self.run.mark()
-    }
-
-    async fn started(&self) {
-        self.run.started().await
-    }
-
-    fn stop(&self) {
-        self.stopped.store(true, Ordering::SeqCst);
-        self.run.stop();
+        track_run(run, "codex task finished", owner, props, started_at)
     }
 }
 

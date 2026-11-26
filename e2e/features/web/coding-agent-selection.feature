@@ -23,6 +23,18 @@ Feature: Coding agent delegation
       | claude-code |
       | codex       |
 
+  @agy
+  Scenario: Plan and resume a coding task using Antigravity CLI
+    Given I am logged in
+    And I have a personal agent
+    And Antigravity CLI is available for testing
+    And a coding task file contains "before"
+    When I ask "agy" to plan a change
+    Then the coding task file contains "before"
+    When I ask "agy" to implement its plan
+    Then the coding task file contains "after"
+    And the coding task completed through delegation using "agy"
+
   @codex-login
   Scenario: Run a coding task with a saved Codex login
     Given I am logged in

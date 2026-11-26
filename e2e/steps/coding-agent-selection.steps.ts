@@ -1,4 +1,6 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createBdd } from 'playwright-bdd';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
@@ -49,32 +51,50 @@ Given('a coding task file contains {string}', async ({ request }, content: strin
   fs.writeFileSync(file, content);
 });
 
-When('I ask the coding agent to plan a change', async ({ page }) => {
+async function askAgentToPlan(page: Page, agent?: string) {
   test.setTimeout(480_000);
   const home = new HomePage(page);
   await home.navigate();
+  const select = agent ? ` with agent="${agent}",` : ' with';
   await home.typeMessage(
-    `Use coding_agent with model="small" and effort="low" in plan mode to read ${filename} and plan changing its contents to exactly after. ` +
+    `Use coding_agent${select} model="small" and effort="low" in plan mode to read ${filename} and plan changing its contents to exactly after. ` +
     'Poll coding_agent_status until completed and retain its sessionId. Report the plan and sessionId.',
   );
   await home.sendMessage();
   await home.waitForStreamComplete(180_000);
   await waitForIdleAgent(page.request);
+}
+
+When('I ask the coding agent to plan a change', async ({ page }) => {
+  await askAgentToPlan(page);
+});
+
+When('I ask {string} to plan a change', async ({ page }, agent: string) => {
+  await askAgentToPlan(page, agent);
 });
 
 Then('the coding task file contains {string}', async ({}, content: string) => {
   expect(fs.readFileSync(file, 'utf8').trim()).toBe(content);
 });
 
-When('I ask the coding agent to implement its plan', async ({ page }) => {
+async function askAgentToImplement(page: Page, agent?: string) {
   const home = new HomePage(page);
+  const select = agent ? `agent="${agent}", ` : '';
   await home.typeMessage(
-    'Resume that coding_agent sessionId with model="medium" and effort="high" in edit mode to implement the plan. ' +
+    `Resume that coding_agent sessionId with ${select}model="medium" and effort="high" in edit mode to implement the plan. ` +
     'Poll coding_agent_status until completed. Report the result.',
   );
   await home.sendMessage();
   await home.waitForStreamComplete(180_000);
   await waitForIdleAgent(page.request);
+}
+
+When('I ask the coding agent to implement its plan', async ({ page }) => {
+  await askAgentToImplement(page);
+});
+
+When('I ask {string} to implement its plan', async ({ page }, agent: string) => {
+  await askAgentToImplement(page, agent);
 });
 
 async function codingCalls(): Promise<ToolCallRecord[]> {
@@ -87,7 +107,7 @@ async function codingCalls(): Promise<ToolCallRecord[]> {
     ? row.toolCalls as unknown as ToolCallRecord[] : []);
 }
 
-Then('the coding task completed through delegation', async ({ page }) => {
+async function assertDelegatedPlanAndEdit(page: Page, expectedAgent?: string) {
   const calls = await codingCalls();
   const starts = calls.filter(call => call.tool === 'coding_agent');
   expect(starts).toHaveLength(2);
@@ -105,11 +125,41 @@ Then('the coding task completed through delegation', async ({ page }) => {
   const planSession = polled ?? notified;
   expect(planSession).toBeTruthy();
   expect(JSON.parse(starts[1].input).sessionId).toBe(planSession);
-  if (process.env.CODING_AGENT) {
+  const selectedAgent = expectedAgent ?? process.env.CODING_AGENT;
+  if (selectedAgent) {
     expect(starts.map(call => JSON.parse(call.output).agent))
-      .toEqual([process.env.CODING_AGENT, process.env.CODING_AGENT]);
+      .toEqual([selectedAgent, selectedAgent]);
   }
   expect(await new HomePage(page).getAgentMessages().count()).toBeGreaterThanOrEqual(2);
+}
+
+Then('the coding task completed through delegation', async ({ page }) => {
+  await assertDelegatedPlanAndEdit(page);
+});
+
+Then('the coding task completed through delegation using {string}', async ({ page }, agent: string) => {
+  await assertDelegatedPlanAndEdit(page, agent);
+});
+
+Given('Antigravity CLI is available for testing', async () => {
+  const needs = 'Antigravity CLI coverage needs agy on PATH and signed in locally.';
+  const home = process.env.HOME || os.homedir();
+  const hasState = Boolean(home && fs.existsSync(path.join(home, '.gemini', 'antigravity-cli', 'jetski_state.pbtxt')));
+  let signedIn = false;
+  if (hasState) {
+    try {
+      const output = execFileSync('agy', ['models'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000 });
+      signedIn = !output.includes('Please sign in')
+        && !output.includes('Authentication required')
+        && output.split('\n').some(raw => {
+          const line = raw.split('\r').pop()?.trim() ?? '';
+          return Boolean(line) && !line.startsWith('Fetching available models') && !line.startsWith('Error:');
+        });
+    } catch {
+      signedIn = false;
+    }
+  }
+  test.skip(!signedIn, needs);
 });
 
 Given('both coding agents have test credentials', async ({ request }) => {

@@ -2,10 +2,8 @@
 //! stream-json` read back as the neutral events of `CodingAgent`.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
-use futures::StreamExt;
 use indexmap::IndexMap;
 use serde_json::Value;
 
@@ -13,13 +11,15 @@ use crate::config::{CONFIG, CodingAgentName, TierSet};
 use crate::lib::coding_agents::cli_probe::probe_cli;
 use crate::lib::coding_agents::cli_run::{CliRunSpec, ParseLine, run_cli};
 use crate::lib::coding_agents::coding_agent::{
-    CodingAgent, CodingAgentEvent, CodingAgentEvents, CodingAgentHome, CodingAgentMode,
-    CodingAgentRefusal, CodingAgentRun, CodingAgentStopReason, CodingAgentTask, CodingAgentUsage,
+    CodingAgent, CodingAgentEvent, CodingAgentHome, CodingAgentMode, CodingAgentRefusal,
+    CodingAgentRun, CodingAgentStopReason, CodingAgentTask, CodingAgentUsage,
     PLAN_ONLY_INSTRUCTION,
 };
+use crate::lib::coding_agents::shared_skills_home::points_at;
+use crate::lib::coding_agents::tracked_run::track_run;
 use crate::lib::execution_environments::docker::volumes::CONTAINER_PATHS;
 use crate::lib::execution_environments::execution_environment::{
-    ExecutionEnvironment, ExecutionEnvironmentName, ProcessEnv, ProcessMark,
+    ExecutionEnvironment, ExecutionEnvironmentName, ProcessEnv,
 };
 use crate::lib::execution_environments::get_execution_environment::{
     get_execution_environment, get_execution_environment_for,
@@ -66,17 +66,15 @@ impl CodingAgent for AgyAgent {
         let env = self.target();
         let base_env = env.base_env();
         let home = home_dir_in(&*env, &base_env);
-        let config_dir = match &home {
-            Some(home) => format!("{home}/.gemini/antigravity-cli"),
-            None => ".gemini/antigravity-cli".to_string(),
-        };
+        let config_dir = home
+            .as_deref()
+            .map(|home| format!("{home}/.gemini/antigravity-cli"))
+            .unwrap_or_default();
         let skills_linked = match &home {
             Some(home) => {
                 let link = format!("{home}/.agents/skills");
                 let skills_dir = env.paths().skills_dir;
-                let files = env.files();
-                let (from, to) = tokio::join!(files.realpath(&link), files.realpath(&skills_dir));
-                matches!((from, to), (Ok(from), Ok(to)) if from == to)
+                points_at(&*env, &link, &skills_dir).await
             }
             None => false,
         };
@@ -86,16 +84,19 @@ impl CodingAgent for AgyAgent {
         })
     }
 
-    /// Available when credentials exist in the execution environment and `agy --version` exits 0.
+    /// Available when `~/.gemini/antigravity-cli/jetski_state.pbtxt` exists and
+    /// `agy models` returns available models in the execution environment.
     async fn is_available(&self, env: &ProcessEnv) -> anyhow::Result<bool> {
         let target = self.target();
-        if !has_agy_credentials(&*target, env).await {
+        if !has_agy_home(&*target, env).await {
             return Ok(false);
         }
-        let args = vec!["--version".to_string()];
+        let args = vec!["models".to_string()];
         Ok(probe_cli(&*target, COMMAND, &args, env.clone(), None)
             .await
-            .is_ok_and(|run| run.exit_code == Some(0)))
+            .is_ok_and(|run| {
+                run.exit_code == Some(0) && models_output_signed_in(&run.stdout, &run.stderr)
+            }))
     }
 
     fn run(&self, task: CodingAgentTask) -> Arc<dyn CodingAgentRun> {
@@ -126,25 +127,7 @@ impl CodingAgent for AgyAgent {
             Some(run_in),
         );
 
-        let stopped = Arc::new(AtomicBool::new(false));
-        let events = run.take_events().map(|events| {
-            finished_after(
-                events,
-                Finish {
-                    owner,
-                    props,
-                    started_at,
-                    stopped: stopped.clone(),
-                    status: "error",
-                    done: false,
-                },
-            )
-        });
-        Arc::new(TrackedRun {
-            run,
-            stopped,
-            events: parking_lot::Mutex::new(events),
-        })
+        track_run(run, "agy task finished", owner, props, started_at)
     }
 }
 
@@ -159,26 +142,34 @@ fn home_dir_in(environment: &dyn ExecutionEnvironment, env: &ProcessEnv) -> Opti
     None
 }
 
-/// Whether `agy` has an API key, ADC enabled, or a saved login config in `environment`.
-pub async fn has_agy_credentials(environment: &dyn ExecutionEnvironment, env: &ProcessEnv) -> bool {
-    let set = |key: &str| env.get(key).is_some_and(|v| !v.is_empty());
-    if set("GEMINI_API_KEY") || set("GOOGLE_API_KEY") {
-        return true;
-    }
-    if env
-        .get("AGY_ADC_AUTH")
-        .is_some_and(|v| crate::support::js::trim(v).eq_ignore_ascii_case("true"))
-    {
-        return true;
-    }
+/// Fast check before spawning `agy`: the CLI creates `jetski_state.pbtxt` under
+/// `~/.gemini/antigravity-cli` once onboarded, so its absence skips the probe.
+async fn has_agy_home(environment: &dyn ExecutionEnvironment, env: &ProcessEnv) -> bool {
     let Some(home) = home_dir_in(environment, env) else {
         return false;
     };
     environment
         .files()
-        .stat(&format!("{home}/.gemini/config/config.json"))
+        .stat(&format!(
+            "{home}/.gemini/antigravity-cli/jetski_state.pbtxt"
+        ))
         .await
         .is_ok()
+}
+
+/// `agy models` prints model lines when signed in, and `Error: Please sign in
+/// to view available models.` (still exiting 0) when nobody is signed in.
+pub(crate) fn models_output_signed_in(stdout: &str, stderr: &str) -> bool {
+    let combined = format!("{stdout}\n{stderr}");
+    if combined.contains("Please sign in") || combined.contains("Authentication required") {
+        return false;
+    }
+    stdout.lines().any(|raw| {
+        let line = raw.rsplit('\r').next().unwrap_or(raw).trim();
+        !line.is_empty()
+            && !line.starts_with("Fetching available models")
+            && !line.starts_with("Error:")
+    })
 }
 
 /// `-p <prompt> --output-format stream-json`, `--mode plan` for plan tasks or
@@ -295,6 +286,8 @@ fn create_parser(initial_model: String) -> ParseLine {
                 let payload = event.get("result").unwrap_or(&event);
                 let mut events = Vec::new();
                 if let Some(usage) = payload.get("usage") {
+                    // `agy` reports uncached `input_tokens` separately from `cache_read_tokens`
+                    // (`total_tokens = input_tokens + output_tokens`), so do not subtract cache reads.
                     let input_tokens = count(usage, "input_tokens");
                     let cache_read_tokens = count(usage, "cache_read_tokens");
                     let output_tokens = count(usage, "output_tokens");
@@ -364,93 +357,6 @@ fn denied_actions_of(payload: &Value) -> Option<Vec<CodingAgentRefusal>> {
         })
         .collect();
     (!refusals.is_empty()).then_some(refusals)
-}
-
-/// `agy task finished`, emitted once when a run's events end or are dropped.
-struct Finish {
-    owner: String,
-    props: IndexMap<String, String>,
-    started_at: i64,
-    stopped: Arc<AtomicBool>,
-    status: &'static str,
-    done: bool,
-}
-
-impl Finish {
-    fn emit(&mut self) {
-        if self.done {
-            return;
-        }
-        self.done = true;
-        let mut props = self.props.clone();
-        let status = if self.stopped.load(Ordering::SeqCst) {
-            "stopped"
-        } else {
-            self.status
-        };
-        props.insert("status".to_string(), status.to_string());
-        props.insert(
-            "elapsed_ms".to_string(),
-            (crate::support::now_ms() - self.started_at).to_string(),
-        );
-        track_event("agy task finished", Some(&self.owner), Some(props));
-    }
-}
-
-impl Drop for Finish {
-    fn drop(&mut self) {
-        self.emit();
-    }
-}
-
-fn finished_after(events: CodingAgentEvents, finish: Finish) -> CodingAgentEvents {
-    futures::stream::unfold((Some(events), finish), |(events, mut finish)| async move {
-        let mut events = events?;
-        match events.next().await {
-            Some(event) => {
-                if let CodingAgentEvent::Result { stop_reason, .. } = &event {
-                    finish.status = stop_reason.as_str();
-                }
-                Some((event, (Some(events), finish)))
-            }
-            None => {
-                finish.emit();
-                None
-            }
-        }
-    })
-    .boxed()
-}
-
-/// The CLI's run, its stop remembered for the finished event.
-struct TrackedRun {
-    run: Arc<dyn CodingAgentRun>,
-    stopped: Arc<AtomicBool>,
-    events: parking_lot::Mutex<Option<CodingAgentEvents>>,
-}
-
-#[async_trait]
-impl CodingAgentRun for TrackedRun {
-    fn take_events(&self) -> Option<CodingAgentEvents> {
-        self.events.lock().take()
-    }
-
-    fn exited(&self) -> bool {
-        self.run.exited()
-    }
-
-    fn mark(&self) -> Option<ProcessMark> {
-        self.run.mark()
-    }
-
-    async fn started(&self) {
-        self.run.started().await
-    }
-
-    fn stop(&self) {
-        self.stopped.store(true, Ordering::SeqCst);
-        self.run.stop();
-    }
 }
 
 #[cfg(test)]

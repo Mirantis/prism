@@ -52,7 +52,11 @@ pub async fn prepare_shared_skills_home(
 }
 
 /// Whether the link really resolves to the skills dir, rather than merely existing.
-async fn points_at(environment: &dyn ExecutionEnvironment, link: &str, target: &str) -> bool {
+pub(crate) async fn points_at(
+    environment: &dyn ExecutionEnvironment,
+    link: &str,
+    target: &str,
+) -> bool {
     let files = environment.files();
     let (from, to) = tokio::join!(files.realpath(link), files.realpath(target));
     match (from, to) {
