@@ -212,6 +212,17 @@ pub struct CodingAgentRefusal {
     pub target: String,
 }
 
+/// An MCP server the agent could not connect when its run started.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingAgentUnconnectedServer {
+    /// The server's name, as the agent lists it.
+    pub name: String,
+    /// The host the agent connects the server through, when the adapter knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+}
+
 /// The tokens one model spent on a task, as the agent reported them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -242,6 +253,11 @@ pub enum CodingAgentEvent {
     Session {
         #[serde(rename = "sessionId")]
         session_id: String,
+    },
+    /// The MCP servers that failed to connect when the run started, other than
+    /// the runtime's own. Reported before the result; a later report replaces it.
+    Unconnected {
+        servers: Vec<CodingAgentUnconnectedServer>,
     },
     /// The outcome. `message` is the agent's own closing text: its answer, or what
     /// went wrong. `refusals` lists the actions the agent's permission checks refused.

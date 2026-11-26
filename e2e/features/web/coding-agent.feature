@@ -56,6 +56,18 @@ Feature: Coding sub-agent
     And no reply is an error
     And the stored tool calls include "coding_agent" and "coding_agent_status"
 
+  # @slow: two model turns plus a real Claude Code run on Bedrock. The server
+  # fails as Claude Code starts, before any tool runs.
+  @slow
+  Scenario: The coding task names an MCP server that failed to connect
+    Given the workspace's .mcp.json has a server "broken-probe" that exits at once
+    When I navigate to the agent chat page
+    And I type "Use the coding_agent tool exactly once, with maxTurns 2, giving it this prompt: Reply with exactly OK. Then call coding_agent_status with waitMs 30000 until completed is true. Call no other tool. Reply with one line only: DONE." in the chat input
+    And I send the message
+    Then the agent reply contains "DONE"
+    And no reply is an error
+    And the coding task reports it ran without the MCP server "broken-probe"
+
   # @slow: a real Claude Code run on Bedrock that takes at least 30 seconds, and
   # the two model turns around it. The task's end, not a timer, starts the second.
   # The shell computes the marker's number, so only the task's output holds it.

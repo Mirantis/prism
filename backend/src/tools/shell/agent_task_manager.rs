@@ -38,7 +38,8 @@ use crate::config::{CONFIG, CodingAgentName};
 use crate::lib::agent_mcp_servers::agent_mcp_servers;
 use crate::lib::coding_agents::coding_agent::{
     CodingAgent, CodingAgentEvent, CodingAgentMode, CodingAgentRefusal, CodingAgentRun,
-    CodingAgentStopReason, CodingAgentTask, CodingAgentUsage, Effort, ModelTier,
+    CodingAgentStopReason, CodingAgentTask, CodingAgentUnconnectedServer, CodingAgentUsage, Effort,
+    ModelTier,
 };
 use crate::lib::execution_environments::execution_environment::ProcessMark;
 use crate::lib::execution_environments::get_execution_environment::get_execution_environment_for;
@@ -159,6 +160,8 @@ pub struct AgentTaskStatus {
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refusals: Option<Vec<CodingAgentRefusal>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unconnected_mcp_servers: Option<Vec<CodingAgentUnconnectedServer>>,
 }
 
 /// What `coding_agent` returns.
@@ -181,6 +184,8 @@ pub struct FinishedTask {
     pub stop_reason: Option<TaskStopReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refusals: Option<Vec<CodingAgentRefusal>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unconnected_mcp_servers: Option<Vec<CodingAgentUnconnectedServer>>,
 }
 
 /// A task, as `pending_work` holds it until the agent has read how it ended.
@@ -213,6 +218,7 @@ pub struct TaskState {
     pub stop_reason: Option<TaskStopReason>,
     pub session_id: Option<String>,
     pub refusals: Option<Vec<CodingAgentRefusal>>,
+    pub unconnected_mcp_servers: Option<Vec<CodingAgentUnconnectedServer>>,
 }
 
 /// One task the manager knows of.
@@ -467,6 +473,7 @@ impl AgentTaskManager {
                     stop_reason: finished.stop_reason,
                     session_id: work.session_id,
                     refusals: finished.refusals,
+                    unconnected_mcp_servers: finished.unconnected_mcp_servers,
                 }),
                 waiters: Mutex::new(Vec::new()),
                 reading: AtomicBool::new(false),
@@ -541,6 +548,7 @@ impl AgentTaskManager {
             stop_reason: None,
             session_id: params.session_id.clone().filter(|id| !id.is_empty()),
             refusals: None,
+            unconnected_mcp_servers: None,
         };
         let (prompt_len, max_turns, mode, mcp_servers) = (
             len16(&task.prompt),
@@ -801,6 +809,7 @@ impl AgentTaskManager {
                     turns: state.turns,
                     stop_reason: state.stop_reason,
                     refusals: state.refusals,
+                    unconnected_mcp_servers: state.unconnected_mcp_servers,
                 }),
             };
             PENDING_WORK_SERVICE.settle(PendingWorkKind::CodingTask, task_id, work_value(&work));
@@ -890,7 +899,8 @@ impl AgentTaskManager {
 
     /// Read the run's events into the entry's state until the stream ends, then
     /// finalize the result (emitting `coding task refused` when the agent's checks
-    /// refused actions).
+    /// refused actions, and `coding task mcp unconnected` when MCP servers failed
+    /// to connect).
     async fn drive(
         &self,
         task_id: &str,
@@ -899,6 +909,7 @@ impl AgentTaskManager {
         run: &dyn CodingAgentRun,
     ) {
         let mut texts: Vec<String> = Vec::new();
+        let mut unconnected: Vec<CodingAgentUnconnectedServer> = Vec::new();
         let mut outcome: Option<(
             CodingAgentStopReason,
             i64,
@@ -923,6 +934,12 @@ impl AgentTaskManager {
                         // complete, so an in-flight poll is unaffected.
                         entry.state.lock().session_id = Some(session_id);
                         self.record(task_id, entry);
+                    }
+                    CodingAgentEvent::Unconnected { servers } => {
+                        // Kept on arrival, so a status after stop_task finalizes the
+                        // state itself still lists them.
+                        entry.state.lock().unconnected_mcp_servers = Some(servers.clone());
+                        unconnected = servers;
                     }
                     CodingAgentEvent::Result {
                         stop_reason,
@@ -990,11 +1007,33 @@ impl AgentTaskManager {
             kept_refusals = Some(refusals);
         }
 
+        let mut kept_unconnected = None;
+        if !unconnected.is_empty() {
+            result.push_str(&format!(
+                "\n\n{}",
+                describe_unconnected(agent.display_name(), &unconnected)
+            ));
+            let mut props = IndexMap::new();
+            props.insert("task.id".to_string(), task_id.to_string());
+            props.insert("task.agent".to_string(), agent.id().as_str().to_string());
+            props.insert(
+                "task.unconnected_mcp_servers".to_string(),
+                unconnected.len().to_string(),
+            );
+            track_event(
+                "coding task mcp unconnected",
+                Some(&CONFIG.owner_user_id()),
+                Some(props),
+            );
+            kept_unconnected = Some(unconnected);
+        }
+
         {
             let mut state = entry.state.lock();
             if kept_refusals.is_some() {
                 state.refusals = kept_refusals;
             }
+            state.unconnected_mcp_servers = kept_unconnected;
             state.completed = true;
             state.reporting = true;
             state.result = Some(result);
@@ -1114,6 +1153,25 @@ pub fn describe_refusals(display_name: &str, refusals: &[CodingAgentRefusal]) ->
     )
 }
 
+/// The MCP servers a run started without, each with the host it connects
+/// through when the adapter knows it.
+pub fn describe_unconnected(
+    display_name: &str,
+    servers: &[CodingAgentUnconnectedServer],
+) -> String {
+    let lines: Vec<String> = servers
+        .iter()
+        .map(|server| match &server.host {
+            Some(host) => format!("- {} (connects through {host})", server.name),
+            None => format!("- {}", server.name),
+        })
+        .collect();
+    format!(
+        "[unconnected]: {display_name} could not connect these MCP servers, so the task ran without their tools:\n{}\nThe sandbox's network policy may block a server's host. A person can allow a host in the platform.",
+        lines.join("\n")
+    )
+}
+
 /// Append text, keeping the newest `MAX_BUFFER_SIZE` UTF-16 units behind a
 /// truncation marker once the buffer grows past it.
 pub fn append_buffer(state: &mut TaskState, text: &str) {
@@ -1149,6 +1207,11 @@ pub fn drain_task(state: &mut TaskState) -> AgentTaskStatus {
         },
         refusals: if completed {
             state.refusals.clone()
+        } else {
+            None
+        },
+        unconnected_mcp_servers: if completed {
+            state.unconnected_mcp_servers.clone()
         } else {
             None
         },

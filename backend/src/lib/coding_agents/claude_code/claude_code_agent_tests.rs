@@ -1034,6 +1034,64 @@ fn parse(line: Value) -> Vec<CodingAgentEvent> {
     parse_line(&line.to_string(), &base_task(), &deployment(), false).unwrap()
 }
 
+#[test]
+fn reports_the_servers_an_init_line_lists_as_failed_apart_from_the_runtimes_own() {
+    // The statuses Claude Code 2.1.332 reports, with mcp-proxy.anthropic.com refused.
+    let task = CodingAgentTask {
+        mcp_servers: servers(),
+        ..base_task()
+    };
+    let events = parse_line(
+        &json!({
+            "type": "system", "subtype": "init",
+            "mcp_servers": [
+                { "name": "nexus", "status": "failed" },
+                { "name": "claude.ai Atlassian", "status": "failed" },
+                { "name": "claude.ai Slack", "status": "connected" },
+                { "name": "claude.ai Gmail", "status": "needs-auth" },
+                { "name": "claude.ai Google Drive", "status": "pending" },
+                { "name": "repo-server", "status": "failed" },
+            ],
+        })
+        .to_string(),
+        &task,
+        &deployment(),
+        true,
+    )
+    .unwrap();
+    assert_eq!(
+        events,
+        [CodingAgentEvent::Unconnected {
+            servers: vec![
+                CodingAgentUnconnectedServer {
+                    name: "claude.ai Atlassian".into(),
+                    host: Some("mcp-proxy.anthropic.com".into()),
+                },
+                CodingAgentUnconnectedServer {
+                    name: "repo-server".into(),
+                    host: None,
+                },
+            ],
+        }]
+    );
+}
+
+#[test]
+fn reports_no_server_when_every_one_connected_or_waits_for_a_sign_in() {
+    let events = parse(json!({
+        "type": "system", "subtype": "init",
+        "mcp_servers": [
+            { "name": "claude.ai Slack", "status": "connected" },
+            { "name": "claude.ai Gmail", "status": "needs-auth" },
+        ],
+    }));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, CodingAgentEvent::Unconnected { .. }))
+    );
+}
+
 fn usage_events(events: Vec<CodingAgentEvent>) -> Vec<CodingAgentEvent> {
     events
         .into_iter()

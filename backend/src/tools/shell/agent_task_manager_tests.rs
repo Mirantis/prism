@@ -950,6 +950,109 @@ async fn reports_a_finished_result_after_its_agent_became_unavailable() {
     assert_eq!(status.agent, CodingAgentName::Codex);
 }
 
+fn unconnected(name: &str, host: Option<&str>) -> CodingAgentUnconnectedServer {
+    CodingAgentUnconnectedServer {
+        name: name.to_string(),
+        host: host.map(str::to_string),
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn lists_the_mcp_servers_a_run_started_without_after_its_result() {
+    let h = harness();
+    let started = h.manager.start_task(sample()).await.unwrap();
+    let run = h.run();
+    let servers = vec![
+        unconnected("claude.ai Atlassian", Some("mcp-proxy.anthropic.com")),
+        unconnected("repo-server", None),
+    ];
+    run.emit(CodingAgentEvent::Unconnected {
+        servers: servers.clone(),
+    });
+    run.finish(CodingAgentStopReason::EndTurn, 2, "done", None);
+
+    let (_, status) = poll_until_complete(&h.manager, &started.task_id).await;
+    assert_eq!(status.stop_reason, Some(TaskStopReason::EndTurn));
+    assert_eq!(status.unconnected_mcp_servers, Some(servers));
+    assert_eq!(
+        status.result.as_deref(),
+        Some(
+            "done\n\n[unconnected]: Fake Agent could not connect these MCP servers, so the task ran without their tools:\n- claude.ai Atlassian (connects through mcp-proxy.anthropic.com)\n- repo-server\nThe sandbox's network policy may block a server's host. A person can allow a host in the platform."
+        )
+    );
+}
+
+#[test]
+fn names_a_server_without_a_host_by_name_alone() {
+    assert_eq!(
+        describe_unconnected("Fake Agent", &[unconnected("repo-server", None)]),
+        "[unconnected]: Fake Agent could not connect these MCP servers, so the task ran without their tools:\n- repo-server\nThe sandbox's network policy may block a server's host. A person can allow a host in the platform."
+    );
+}
+
+#[test]
+fn reports_the_unconnected_mcp_servers_of_a_completed_task_by_their_wire_name() {
+    let mut state = TaskState {
+        agent: CodingAgentName::ClaudeCode,
+        output_buffer: String::new(),
+        completed: true,
+        reporting: false,
+        result: None,
+        turns: None,
+        stop_reason: None,
+        session_id: None,
+        refusals: None,
+        unconnected_mcp_servers: Some(vec![unconnected("repo-server", None)]),
+    };
+    assert_eq!(
+        serde_json::to_value(drain_task(&mut state)).unwrap()["unconnectedMcpServers"],
+        json!([{ "name": "repo-server" }])
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn keeps_the_last_list_when_the_run_reports_its_servers_twice() {
+    let h = harness();
+    let started = h.manager.start_task(sample()).await.unwrap();
+    let run = h.run();
+    for _ in 0..2 {
+        run.emit(CodingAgentEvent::Unconnected {
+            servers: vec![unconnected("repo-server", None)],
+        });
+    }
+    run.finish(CodingAgentStopReason::EndTurn, 1, "done", None);
+
+    let (_, status) = poll_until_complete(&h.manager, &started.task_id).await;
+    assert_eq!(
+        status.unconnected_mcp_servers,
+        Some(vec![unconnected("repo-server", None)])
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn keeps_the_unconnected_mcp_servers_of_a_finished_task_for_its_reader() {
+    let h = harness();
+    let started = h.manager.start_task(sample()).await.unwrap();
+    let run = h.run();
+    run.emit(CodingAgentEvent::Unconnected {
+        servers: vec![unconnected(
+            "claude.ai Atlassian",
+            Some("mcp-proxy.anthropic.com"),
+        )],
+    });
+    run.finish(CodingAgentStopReason::EndTurn, 2, "done", None);
+    settle().await;
+
+    let payload = row(&started.task_id).await.unwrap();
+    assert_eq!(
+        payload["finished"]["unconnectedMcpServers"],
+        json!([{ "name": "claude.ai Atlassian", "host": "mcp-proxy.anthropic.com" }])
+    );
+}
+
 #[tokio::test]
 #[serial_test::serial]
 async fn keeps_the_refusals_of_a_finished_task_for_its_reader() {
@@ -1009,6 +1112,7 @@ fn reports_a_drained_status_with_the_wire_names() {
         stop_reason: Some(TaskStopReason::Refused),
         session_id: Some("s".to_string()),
         refusals: None,
+        unconnected_mcp_servers: None,
     };
     assert_eq!(
         serde_json::to_string(&drain_task(&mut state)).unwrap(),
