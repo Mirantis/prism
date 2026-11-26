@@ -4,7 +4,7 @@ Prism Agent is a self-sufficient LLM invocation service that owns the full agent
 execution lifecycle.
 Builds agent context locally (agent data and conversation history from
 its own database), connects to MCP servers for tools, runs heartbeat and cron
-scheduling in-process, manages Slack connections via Bolt SDK with Socket Mode,
+scheduling in-process, manages its Slack connection over Socket Mode,
 runs the conversation engine and message delivery locally, and delivers results
 directly to users via local channel adapters (WebSocket, Slack).
 
@@ -40,7 +40,7 @@ to clear.
   config value and a new vendor is one folder plus one entry in the selector.
 - **Channels stay generic.** A delivery surface is a `ChannelAdapter`
   (`services/channel_adapter_interface.rs`) registered with
-  `messageDeliveryService`. Behavior that every channel needs belongs in a
+  `message_delivery_service`. Behavior that every channel needs belongs in a
   service; the WebSocket gateway and the Slack adapter subscribe to it and own
   none of it.
 - **Shared code names no channel.** Only a channel's own modules name it: its
@@ -51,7 +51,7 @@ to clear.
   member or a registry the channel joins in `index.rs`, and a channel passes its
   data in generic fields. Channel names stay typed: `ChannelName` and
   `CHAT_PLATFORMS` in `services/channel_adapter_interface.rs` are the one list,
-  and a value read from storage goes through `isChatPlatform`. The code that
+  and a value read from storage goes through `is_chat_platform`. The code that
   wires the channels (`index.rs`, `server.rs`) and reads their environment
   variables names each one, and a column or API field keeps the name the schema
   or its clients give it.
@@ -86,11 +86,11 @@ to clear.
 - **An environment is chosen per deployment, and per path.** `detect()` prefers
   `docker` when an engine answers, stays `local` when the runtime is itself in a
   container, and takes `EXECUTION_ENVIRONMENT` over both. Selection is async, so
-  it is a memoized boot probe (`ensureExecutionEnvironmentDetected`) awaited by
-  `index.rs` and by `collectTools`, while `getExecutionEnvironment()` stays
+  it is a memoized boot probe (`ensure_execution_environment_detected`) awaited by
+  `index.rs` and by `collect_tools`, while `get_execution_environment()` stays
   synchronous and answers `local` until it settles — that is what leaves the
   existing call sites unchanged and settles the tools block before the first
-  turn. A call site holding a cwd asks `getExecutionEnvironmentFor(cwd)`
+  turn. A call site holding a cwd asks `get_execution_environment_for(cwd)`
   instead, because an environment serves only part of the filesystem and a
   thread rooted outside it runs on the host.
 - **Docker keeps the agent's storage in named volumes.** Every durable path is
@@ -136,7 +136,7 @@ to clear.
   outputs and each coding agent's home; `lib/data_dir.rs` keeps what is the
   runtime's alone. A plugin's MCP server therefore starts in the environment too
   (`exec_stdio_transport.rs`), and its `mcp.json` is read there. A call that has
-  a path reads and writes through `filesFor(path)`, never the deployment's
+  a path reads and writes through `files_for(path)`, never the deployment's
   environment directly, so a thread rooted in a host repository sees the same
   files as its shell; a saved tool output goes beside that shell too.
 - **Computers stay generic.** The computer tools, viewers and help requests act
@@ -144,10 +144,10 @@ to clear.
   (`AgentComputer`) or a remote one that links in over `/api/computer-link`
   (`remote/remote_computer.rs`, protocol in `docs/computer-link-protocol.md`).
   Each computer is a `ComputerSession` with its own `ComputerAccess`, and
-  `computerService` is the set of them; an invocation owns one computer at a
+  `computer_service` is the set of them; an invocation owns one computer at a
   time. A remote computer's client does what has to happen on that machine, and
   the runtime keeps the picture size, coordinates, OCR, arbitration, help and
-  secure windows. Only `usesRemoteComputers(mode)` runs (chat, goal) see
+  secure windows. Only `uses_remote_computers(mode)` runs (chat, goal) see
   remote computers; with none registered, the tools block and prompt are the
   same as a runtime without them.
 - **Prove an option is needed before you add it.** A flag, a setting or an env
@@ -155,8 +155,8 @@ to clear.
   no better default can cover the case. Each one is a fork in the code and a
   line in the docs from then on.
 - **A service is named for what it owns, not for the screen that reads it.**
-  Two questions one page asks side by side are two services: `llmUsageService`
-  and `toolCallHistoryService`. A route module may group by URL.
+  Two questions one page asks side by side are two services: `llm_usage_service`
+  and `tool_call_history_service`. A route module may group by URL.
 - **One canonical path.** A refactor replaces the old path and deletes it. Keep
   a second path only when the user asks for it, or when the old one is an
   explicit contract with the outside: a public HTTP endpoint, a documented
@@ -176,7 +176,7 @@ to clear.
   deploy, an update, a crash or `SIGKILL` can stop the process at any line.
   Keep the work the agent accepts in a `pending_work` row from before it starts
   until it ends, with what its owner needs to accept the work again
-  (`pendingWorkService`). A scheduled run keeps a row too. At boot, give each
+  (`pending_work_service`). A scheduled run keeps a row too. At boot, give each
   row back to the service that owns its kind, and let that service close the
   work the attempt bound gives up. Move a schedule's due time only when a run
   completes or is given up. On shutdown,
@@ -314,7 +314,7 @@ live in `e2e/`:
   `defineSteps`. Run via `npm run test:e2e:tui --workspace=prism-agent-e2e`.
 
 Both suites answer a chat or classification call from the e2e LLM cache
-(`e2e/support/llm-cache.ts`) when an earlier green run made the same call, and
+(`e2e/llm-cache/`) when an earlier green run made the same call, and
 send every other model call to Bedrock. `AGENTIC_EVALS_CACHE_MODE=off` sends
 every call to Bedrock.
 
@@ -380,16 +380,15 @@ the feature is observable in production. Rules:
 
 ### LLM tracing (Langfuse)
 
-The AI SDK writes no spans itself — it calls whatever telemetry integration is
-registered, so `initLangfuse()` registers one (`@ai-sdk/otel`'s
-`LegacyOpenTelemetry`, whose span shape `LangfuseSpanProcessor` reads). With an
-integration registered a call is traced **with its prompt recorded unless it
-says otherwise**, so a *gate* whose whole prompt is somebody else's words opts
-out in writing: `isEnabled: false` for the thread reply classifier,
-`langfuseTelemetry(…, { recordContent: false })` for the meeting gate. The chat
-path traces its content deliberately and is not covered by that. Per-call
-identifiers ride `runtimeContext` plus `includeRuntimeContext`, never a
-telemetry field. `lib/langfuse/tests.rs` pins each case.
+The model-call layer writes no spans itself. It calls whatever telemetry
+integration is registered, and `init_langfuse()` (`lib/langfuse.rs`) registers one
+when the Langfuse keys are set. It writes the AI SDK's legacy span shape, which
+Langfuse reads. With an integration registered a call is traced **with its prompt
+recorded unless it says otherwise**, so a gate whose prompt is somebody else's words
+opts out in writing: `is_enabled: Some(false)` for the thread reply classifier,
+`record_content: Some(false)` for the tool risk gate and model routing. The chat
+path traces its content deliberately. Per-call identifiers go in `runtime_context`,
+never in a telemetry field. `lib/langfuse/tests.rs` pins each case.
 
 ## Documentation
 
@@ -555,7 +554,7 @@ vendor. These rules hold across vendors:
 - `config.rs` resolves each vendor's endpoint once: the explicit `*_BASE_URL`,
   else the gateway mount, else the vendor's own host. A factory receives that
   endpoint and chooses nothing.
-- The keyless path follows an origin comparison (`isGatewayEndpoint`), not the
+- The keyless path follows an origin comparison (`is_gateway_endpoint`), not the
   presence of `NEXUS_API_URL`. An endpoint on the gateway host sends a decoy
   key, since the gateway injects the real one. An endpoint anywhere else needs a
   local key.
@@ -576,27 +575,26 @@ vendor. These rules hold across vendors:
 - Voice Realtime selects its endpoint and credential together, and a connection
   error never triggers provider failover.
 
-## SEA binaries — Node 22 pin
+## The `prism` binary — Node 22 pin
 
-The `prism` / `prism-server` SEA build (workflows: `create-binary.yml`,
-called from `release-production.yml`) is pinned to **Node 22**. Don't bump
-it to 23+ without refactoring the bundle loader.
+The runtime, `prism-server`, is the Rust binary built from `backend/`. The
+terminal UI, `prism`, is a Node Single Executable Application (SEA) built by
+`scripts/build-sea.mjs` (workflow `create-binary.yml`, called from
+`release-production.yml`), and that build is pinned to **Node 22**. Do not bump
+it to 23 or later without changing the bundle loader.
 
-Why: `scripts/build-sea.mjs` generates a CJS stub that extracts the ESM
-bundle (which contains top-level await from ink + yoga + the AI/AWS SDKs,
-hence can't be CJS) to a temp file and dynamic-imports it. From Node 23+
-this throws `ERR_UNKNOWN_BUILTIN_MODULE` — the documented behaviour per
-the [Node SEA docs](https://nodejs.org/api/single-executable-applications.html):
+The reason: ink and yoga use top-level await, so the bundle is ESM, and the SEA's
+CommonJS stub extracts it to a temp file and imports it with `import()`. From Node
+23 on, that throws `ERR_UNKNOWN_BUILTIN_MODULE`, as the
+[Node SEA docs](https://nodejs.org/api/single-executable-applications.html) state:
 
 > Attempting to use `import()` to load modules from the file system will
 > throw an error.
 
-Node 22 falls through to the regular ESM loader for file URLs and
-happens to work; Node 23+ enforces the ban. `module.createRequire()`
-isn't a workaround for us because `require()` of an ESM bundle with
-top-level await fails `ERR_REQUIRE_ASYNC_MODULE`. Lifting the pin needs
-rewriting external imports as `createRequire(execPath)` calls (likely an
-esbuild plugin) and switching the SEA config to `mainFormat: "module"`.
+`module.createRequire()` does not help, because `require()` of an ESM bundle with
+top-level await fails with `ERR_REQUIRE_ASYNC_MODULE`. To lift the pin, rewrite
+the external imports as `createRequire(execPath)` calls (likely an esbuild plugin)
+and set the SEA config to `mainFormat: "module"`.
 
 ## Local development
 
@@ -676,14 +674,13 @@ Vite-proxy-shaped that would mask a real bug.
 ## Principles
 
 - **Self-sufficient** - Builds its own context locally: reads agent data and conversation history directly from its own embedded SQLite database.
-- **Owns conversation engine** - Runs `ConversationEngineService` locally: manages chat flow, thread management, and iterates `invokeStream()` directly (no HTTP, no queue) so each step is delivered as it arrives.
-- **Owns message delivery** - Runs `MessageDeliveryService` locally: stores messages via `conversationService` and delivers via local adapters. User-initiated messages deliver only to the originating channel; autonomous messages (heartbeat/cron) broadcast to all connected channels.
-- **Owns channel adapters** - WebSocket and Slack adapters run locally, registered with `messageDeliveryService` in `index.rs`.
+- **Owns conversation engine** - Runs `ConversationEngineService` locally: manages chat flow, thread management, and iterates `invoke_stream()` directly (no HTTP, no queue) so each step is delivered as it arrives.
+- **Owns message delivery** - Runs `MessageDeliveryService` locally: stores messages via `conversation_service` and delivers via local adapters. User-initiated messages deliver only to the originating channel; autonomous messages (heartbeat/cron) broadcast to all connected channels.
+- **Owns channel adapters** - WebSocket and Slack adapters run locally, registered with `message_delivery_service` in `index.rs`.
 - **Owns scheduling** - Heartbeat timers and cron jobs run in-process (not in the backend).
-- **Owns Slack connections** - Runs Bolt apps with Socket Mode, receives and routes messages, handles verification codes, calls Slack APIs directly. The one connection is synthesized from `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` env vars (validated via `auth.test` on boot; see `lib/slack_config.rs`). Bot token in env may be a platform credential sentinel that the MITM proxy rewrites on the wire; a `SlackWebClient` subclass (`lib/slack_web_client.rs`) strips the body `token` field so auth flows only via the `Authorization` header.
+- **Owns Slack connections** - Runs a Socket Mode client (`services/slack_socket_mode.rs`), receives and routes messages, handles verification codes, calls Slack APIs directly. The one connection is synthesized from `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` env vars (validated via `auth.test` on boot; see `lib/slack_config.rs`). Bot token in env may be a platform credential sentinel that the MITM proxy rewrites on the wire, so `lib/slack_web_client.rs` sends it only in the `Authorization` header.
 - **Owns agent data** - Agent CRUD, ownership validation, platform token management, and subagent relationships via `agentWorkspaceService` (direct database access). `CreateAgentInput` requires a pre-generated `id` field -- the backend generates the UUID and passes it when creating the `AgentWorkspace`. Note: `orgId` and `teamId` are NOT in `AgentWorkspace` -- they live exclusively in the backend-only `Agent` table.
 - **Direct database access** - Reads and writes its embedded SQLite database itself (Diesel, `backend/src/db/`) for agent data (CRUD, ownership, subagents), conversation data (threads, messages, active thread resolution), agent field updates (heartbeat timestamp, heartbeat status), cron task state (list, update run timestamps, delete one-shot tasks), the pending Slack messages a heartbeat trigger answers, and Slack mapping CRUD. Vector search over `memory_entries.embedding` uses the `sqlite-vec` extension (see `lib/sqlite_bootstrap.rs`).
-- **No direct imports from backend** - Communicates via HTTP and MCP only.
 - **SOLID** - Each service (heartbeat, cron, invoke, conversation engine, message delivery) has a single responsibility.
 
 ## Architecture
@@ -713,9 +710,9 @@ locally.
 
 ### Tools
 
-1. **Built-ins** — direct AI SDK tools in `backend/src/tools/` (memory, agent config, cron,
+1. **Built-ins** — tools in `backend/src/tools/` (memory, agent config, cron,
    goals, shell, the coding sub-agent, share-file, web pages, skills, meetings), assembled by
-   `lib/tool_collection.rs#collectTools` and filtered per invocation mode. There is
+   `lib/tool_collection.rs#collect_tools` and filtered per invocation mode. There is
    **no internal MCP server** — these are in-process closures, not an HTTP surface.
 2. **Mirantis Agent Platform MCP** — kubectl, GitHub, AWS tools (external, via `NEXUS_MCP_URL`).
 3. **Plugin MCP** — whatever an installed Agent Plugin declares in its `mcp.json`;
@@ -730,7 +727,7 @@ behind the prompt cache's back), and **64** characters — Bedrock Converse's
 `toolSpec.name` limit binds tighter than Anthropic's 128, and this runtime
 defaults to Bedrock. An over-long name is truncated and given a digest suffix,
 keeping names that share a prefix distinct and each one stable across restarts.
-It runs as the **last** step of `collectTools()`, the only assembly point every
+It runs as the **last** step of `collect_tools()`, the only assembly point every
 request goes through — chat, compaction, and the voice-meeting bridge, which
 re-declares the same keys to the Realtime API under the same limit — because a
 name an MCP server advertises is not ours to choose and one a provider rejects
@@ -738,7 +735,7 @@ fails the *whole* request (Mirantis Agent Platform pre-namespaces a proxied conn
 `<uuid>__<connector>__<tool>`, and a 36-char UUID blows the budget on its own).
 Renaming the map key is the whole fix, since an MCP tool's `execute` closes over
 the name the *server* gave it and the call still goes out under that name.
-`parseToolCalls` in `prompts/context_builder.rs` runs stored names through the
+`parse_tool_calls` in `prompts/context_builder.rs` runs stored names through the
 same deterministic, idempotent function, so replayed history agrees with the
 tools block.
 
@@ -763,7 +760,7 @@ and refuses every call, because under `none` the SDK sends no tools block.
 
 On a model whose provider declares `deferredTools`,
 `lib/tool_search/plan.rs` sends the MCP and plugin tools (`deferrable` from
-`collectTools`) with `defer_loading` when their definitions exceed
+`collect_tools`) with `defer_loading` when their definitions exceed
 `TOOL_SEARCH_THRESHOLD_PERCENT` of the window, estimated at two characters per
 token. A built-in is never deferred. The model sees a bounded `# Tool Catalog`
 at the end of the stable system part, and loads a tool with `load_tools` (names
@@ -772,7 +769,7 @@ the vendor's load: `tool_reference` parts on Anthropic, a client
 `tool_search_output` on OpenAI. The provider then serves the full definition and
 the model calls the real tool by its real name, so the risk gate and every other
 wrapper run as for an eager tool. A load stays in history, and
-`buildConversationHistory` replays it in the vendor's form (`replayToolCall`),
+`buildConversationHistory` replays it in the vendor's form (`replay_tool_call`),
 so a loaded tool stays loaded and the prefix stays the same; a load replayed
 after the tool left the set names only the tools still declared. The deferral
 flag is part of the ledger's signature, so a change in it is a changed
@@ -783,8 +780,8 @@ A provider declares it for every Claude or GPT model whose id names no version
 known to refuse (`lib/llm_providers/deferred_tools.rs`): Claude before 4, and GPT
 before 5.6, where gpt-5.5 and gpt-5.4 fail to replay a load. A new release defers
 with no code change. When the API refuses a turn's first request with a 400 and
-the request deferred tools, `invokeStream` sends it again with every tool in full.
-When that request is answered, it records the model (`recordDeferralRefusal`),
+the request deferred tools, `invoke_stream` sends it again with every tool in full.
+When that request is answered, it records the model (`record_deferral_refusal`),
 and every later request to it sends every tool in full until the process
 restarts; loads replay as text.
 
@@ -794,35 +791,35 @@ The tree under `backend/src/` and each file's header comment describe the module
 `docs/` describes the features. These owners and seams hold across the tree:
 
 - In the runtime, `lib/model_call.rs` is the only module that calls
-  `generateText` / `generateObject`, and it records each call's usage.
-- `llmCallService` prices every recorded call and takes its request and thread
+  `generate_text` / `generate_object`, and it records each call's usage.
+- `llm_call_service` prices every recorded call and takes its request and thread
   from `lib/spend_context.rs`. The chat engine sets that context per turn and
   `invoke()` per run, so no call site passes a request id.
-- `selectTurnModel` (`lib/model_routing.rs`) is the one owner of which model a
+- `select_turn_model` (`lib/model_routing.rs`) is the one owner of which model a
   turn runs on. A failed or unknown label runs large. Without a medium tier,
   unsure means large; with one, unsure means medium.
-- `deliveryTargetService.ceiling` is the one owner of where a heartbeat, unbound
+- `delivery_target_service.ceiling` is the one owner of where a heartbeat, unbound
   scheduled-task or webhook run may post.
-- `cronSchedulerService.updateTask` is the one task edit.
-- `resolveWorkspace` (`lib/execution_environments/workspace.rs`) is the single
+- `cron_scheduler_service.update_task` is the one task edit.
+- `resolve_workspace` (`lib/execution_environments/workspace.rs`) is the single
   owner of the per-thread-versus-default workspace fallback.
 - `get_coding_agent.rs` keeps one adapter instance per agent, so the adapter
-  that prepared the home runs every task. It is a `Record`, so a configured name
-  without an adapter fails to compile.
+  that prepared the home runs every task. It matches on `CodingAgentName` exhaustively,
+  so a configured name without an adapter fails to compile.
 - `lib/coding_agents/subscription.rs` and `terminal.rs` import nothing that
-  reads the configuration, so `coding-agent-exec` loads them without starting
+  reads the configuration, so `scripts/coding_agent_exec.rs` uses them without starting
   the runtime.
 - `bedrock_model_id.rs` imports nothing, so `config.rs` can use it.
 - A Converse family gets a prompt-cache breakpoint only from
   `CONVERSE_PROMPT_CACHE_FAMILIES`, because a `cachePoint` block on a model
   without support fails every turn.
 - Everything platform-specific in a meeting sits behind `MeetingProvider`, and
-  Google code stays in `providers/google-meet/`, so a new platform is one
+  Google code stays in `services/meeting/providers/google_meet/`, so a new platform is one
   folder. The addressed-audio gate fails closed. No meeting data goes into a
   conversation thread.
 - `voice_session_lock.rs` allows one voice session at a time across voice chat
   and meetings; dictation does not take it.
-- `computerService` owns `ComputerSummary` (the REST list and the chat
+- `computer_service` owns `ComputerSummary` (the REST list and the chat
   `computer` event).
 - Removing a computer retires its access gate: runs on it fail at their next
   step, and their turns are not cancelled.
@@ -852,19 +849,19 @@ The tree under `backend/src/` and each file's header comment describe the module
 ## Startup Sequence
 
 1. Create HTTP server and initialize WebSocket gateway on `/api/ws`
-2. Register channel adapters with `messageDeliveryService` (WebSocket adapter, Slack adapter)
+2. Register channel adapters with `message_delivery_service` (WebSocket adapter, Slack adapter)
 3. Assert `AGENT_ID` is set (or auto-bootstrap one on first boot).
 4. Load the one agent identified by `AGENT_ID`. In single-thread mode, choose its one conversation (create one if it has none) and store its id in `runtime_state`; in multi-thread mode, clear that id.
-5. Read the work a restart interrupted: `pendingWorkService.interrupted()`.
+5. Read the work a restart interrupted: `pending_work_service.interrupted()`.
 6. Initialize the channel adapters — `lib/slack_config.rs` synthesizes one Slack connection from env (`SLACK_BOT_TOKEN`) via `auth.test`.
-7. Continue the interrupted work: `pendingWorkService.resumeAll()` gives each owner its `pending_work` rows.
+7. Continue the interrupted work: `pending_work_service.resume_all()` gives each owner its `pending_work` rows.
 8. Start the heartbeat timer (a check already due runs about a minute later), then answer the trigger messages still pending
-9. Fetch all active cron tasks directly from the database via `cronSchedulerService.listActiveCronTasks()`
+9. Fetch all active cron tasks directly from the database via `cron_scheduler_service.list_active_cron_tasks()`
 10. Schedule all cron jobs (a task whose stored next run is due runs once at once)
 11. Restore the active goals
 12. Open the webhook receiver, then start listening on port 3003
 
-On shutdown, `pendingWorkService.shutdown()` runs first: the work in flight stops and stays pending. The Slack adapter is then gracefully shut down (disconnects all Socket Mode connections), and the last `pending_work` writes land before the exit.
+On shutdown, `pending_work_service.shutdown()` runs first: the work in flight stops and stays pending. The Slack adapter is then gracefully shut down (disconnects all Socket Mode connections), and the last `pending_work` writes land before the exit.
 
 ## Environment Variables
 
@@ -881,13 +878,13 @@ registration's client secret. `GOOGLE_BOT_PASSWORD` is always the real value.
 
 There are three entry points for chat, all handled locally by the agent-runtime:
 
-1. **WebSocket**: Client -> Mirantis Agent Platform ingress -> WS gateway -> `inboundMessageService.accept()` (stores the message, confirms it) -> `conversationEngineService.chat()` (local, no HTTP)
-2. **Slack**: Bolt Socket Mode message -> `conversationEngineService.chat()` (local, no HTTP)
-3. **Agent messages**: delivery service -> `POST /agents/agent-messages` (`routes/agent_messages.rs`, the service's API token id as the ingress names it, 403 when the ingress names a person) -> `inboundMessageService.accept()` into the web conversation that holds its `conversationId` -> `conversationEngineService.chat()`
+1. **WebSocket**: Client -> Mirantis Agent Platform ingress -> WS gateway -> `inbound_message_service.accept()` (stores the message, confirms it) -> `conversation_engine_service.chat()` (local, no HTTP)
+2. **Slack**: Socket Mode event (`services/slack_socket_mode.rs`) -> `conversation_engine_service.chat()` (local, no HTTP)
+3. **Agent messages**: delivery service -> `POST /agents/agent-messages` (`routes/agent_messages.rs`, the service's API token id as the ingress names it, 403 when the ingress names a person) -> `inbound_message_service.accept()` into the web conversation that holds its `conversationId` -> `conversation_engine_service.chat()`
 
-In every case, `conversationEngineService.chat()` manages the thread, **iterates `invokeStream()` directly** (no queue, no HTTP), and `messageDeliveryService.publish()`'es each text-bearing step the moment its `onStepFinish` fires. Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack), so users see intermediate text from multi-step responses in real time instead of one big block at the end.
+In every case, `conversation_engine_service.chat()` manages the thread, **iterates `invoke_stream()` directly** (no queue, no HTTP), and `message_delivery_service.publish()`'es each text-bearing step the moment its `onStepFinish` fires. Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack), so users see intermediate text from multi-step responses in real time instead of one big block at the end.
 
-The engine keeps a **one-step buffer**: it can't know a step is the last text step until the next step (or stream end) arrives, so the last publish is the one that carries the accumulated UI `blocks` and the `shouldShowFeedback` decision. Earlier steps publish with `includeFeedback: false` and no blocks.
+The engine keeps a **one-step buffer**: it can't know a step is the last text step until the next step (or stream end) arrives, so the last publish is the one that carries the accumulated UI `blocks` and the `should_show_feedback` decision. Earlier steps publish with `include_feedback: false` and no blocks.
 
 The management `POST /agents/chat` endpoint remains available for internal/debug use.
 
@@ -898,10 +895,10 @@ A message from another agent of the project is a USER row with
 sender waits for an answer, `notice`), and the sending agent in
 `senderExternalId`, `senderName` and `externalMessageId`. The chat socket sends
 the kind as `agentMessageKind`, which the clients label a notice by. The origin travels as
-`ChatInput.agentMessage` and `PendingMessage.agentMessage`, so a pending-work
+`ChatInput.agent_message` and `PendingMessage.agent_message`, so a pending-work
 row, a steered message and a coalesced follow-up keep it. It is never in
 `ChatInput.metadata`, which `POST /agents/chat` takes from the request body:
-only `inboundMessageService` sets it, for the agent-message route.
+only `inbound_message_service` sets it, for the agent-message route.
 
 - **The model reads it inside a tag**, never as the person's words:
   `prompts/agent_message_prompt.rs` renders `<agent-message from=… agent-id=…
@@ -913,7 +910,7 @@ only `inboundMessageService` sets it, for the agent-message route.
   person's messages alone, a hidden step before it stays hidden as before a
   person's message, and single-thread mode keeps the conversation the person
   wrote in last. A turn on other agents' messages alone sets
-  `InvokeRequest.promptFromAgent`, and the tool risk gate then sends the prompt
+  `PromptSource::Agent`, and the tool risk gate then sends the prompt
   as `requestFromAnotherAgent`, which its rules say authorizes nothing, instead
   of `initialUserPrompt`. Its reply is an ordinary chat reply (`USER_INPUT`) in
   the web conversation.
@@ -923,21 +920,21 @@ only `inboundMessageService` sets it, for the agent-message route.
   `evals/colleague-scenarios.ts` measures what the agent does with such tools.
 - **Who may post** is the delivery service alone, as the ingress names it: a
   person the ingress names gets 403, and otherwise `x-forwarded-token-id` must
-  equal `AGENT_MESSAGES_TOKEN_ID` (`config.agentMessagesTokenId`, compared in
+  equal `AGENT_MESSAGES_TOKEN_ID` (`config.agent_messages_token_id`, compared in
   constant time), or the request gets 401. The
   ingress drops a caller's own copy of the header, so it is trustworthy only
   for requests through the ingress.
 - **Its own port.** `POST /agents/agent-messages` is served by
-  `createAgentMessagesApp` (`server.rs`) on `AGENT_MESSAGES_PORT` (default
+  `create_agent_messages_app` (`server.rs`) on `AGENT_MESSAGES_PORT` (default
   3005, on `PRISM_HOST`), with a 1 MB JSON body limit and nothing else: no
-  origin guard, no CORS, no other route. `createApp` does not mount it, so the
-  main port answers 404. `createAgentMessagesServer` gives no server when
+  origin guard, no CORS, no other route. `create_app` does not mount it, so the
+  main port answers 404. `create_agent_messages_server` gives no server when
   `AGENT_MESSAGES_TOKEN_ID` is unset, so the port is not opened at all.
   Otherwise `index.rs` opens it after the API and closes it with the webhook
   receiver on shutdown; a port that cannot be opened is logged and the runtime
   keeps running.
 - **`GET /agents/state`** (`routes/agent_state.rs`) answers `working` or `idle`
-  from `isAgentIdle`.
+  from `is_agent_idle`.
 
 ### Task notifications
 
@@ -960,7 +957,7 @@ restart resumes it there as a task notification too.
 - **Read once.** A task stopped with `coding_agent_stop`, or whose result a poll
   handed out or is waiting to, reports nothing. Other runs still poll.
 - **Monitors.** In a chat turn the `monitor` tool runs a command
-  (`tools/shell/monitor-manager.ts`) whose stdout lines become notifications
+  (`tools/shell/monitor_manager.rs`) whose stdout lines become notifications
   through the same service: lines within 200 ms of the first are one, at most
   12 a minute, then the command is stopped (SIGKILL if SIGTERM does not end it
   within 2 s). Its exit, its deadline (5 minutes by default, 30 at most) and
@@ -976,13 +973,13 @@ There is **one live turn per thread**. `chat()` decides offer-vs-own before it
 stores the message (synchronously, so two messages in the same tick can't both
 conclude they own the turn):
 
-`threadTurnService.claimOrOffer(threadId, text, attachmentIds)` is that decision,
+`threadTurnService.claim_or_offer(threadId, text, attachmentIds)` is that decision,
 in one synchronous act:
 
 1. **Offer** — it returns `null` when a turn already **claims** the thread. The
    message is stored (it is real history) and `chat()` returns
    `{ steered: true }` without calling the LLM. The claiming turn drains it in
-   `invokeStream`'s `prepareStep` and appends it as a user message, so the model
+   `invoke_stream`'s `prepareStep` and appends it as a user message, so the model
    sees it on its next step and can change course.
 2. **Own** — otherwise it returns a `ThreadClaim`, taken **before** this call
    stores anything or waits for the mutex, and the turn runs inside
@@ -992,16 +989,16 @@ in one synchronous act:
    user message.
 3. **Coalesce** — messages that land after the turn's last step boundary are
    answered by **one** follow-up turn (not one per message) with
-   `appendPrompt: true`, since their text sits earlier in history than the
+   `append_prompt: true`, since their text sits earlier in history than the
    previous turn's replies. A canceled turn runs no follow-up, and from the
    abort on it takes no hand-overs (`claim.close()`), so a message sent after
    the stop starts a turn of its own. The stopped turn can still store its last
-   reply after that message's row, so the new turn passes `promptMessageId` and
-   `invokeStream` appends the prompt when history ends on an agent row stored
+   reply after that message's row, so the new turn passes `prompt_message_id` and
+   `invoke_stream` appends the prompt when history ends on an agent row stored
    after it.
 
-A hand-over whose row is in the history a turn read (`onHistoryRead`, called
-with the row ids after `getAgentContext`) is answered from history and never
+A hand-over whose row is in the history a turn read (`on_history_read`, called
+with the row ids after `get_agent_context`) is answered from history and never
 injected by steering, even when it is offered after the read. Slack-sourced
 threads read history from Slack, whose ids do not match the stored rows, so a
 message stored before the read still reaches the model twice there.
@@ -1044,9 +1041,9 @@ has to know. Two guarantees come with it:
   the engine logs it, because the model has already seen it.
 
 Transports never touch the thread-turn service. The Slack adapter just calls
-`chat()`. The chat socket's `inboundMessageService` stores a message first, with
-`acceptUserMessage()`, and hands `chat()` the stored row (`stored`). While a turn
-of its own is running it asks `steerOnly: true` first: that hands over if a turn
+`chat()`. The chat socket's `inbound_message_service` stores a message first, with
+`accept_user_message()`, and hands `chat()` the stored row (`stored`). While a turn
+of its own is running it asks `steer_only: true` first: that hands over if a turn
 owns the thread and otherwise claims nothing, so the message waits in the
 service's queue, which holds only rows that already exist.
 
@@ -1055,9 +1052,9 @@ mid-turn message always has a thread to be offered to.
 
 **Reachable from all three surfaces.** Slack gates nothing. The TUI composer
 stays live for the whole turn — the in-flight spinner moved out of the input box
-into `ThinkingRow`, above it — so Enter sends into the running turn. The **web**
+into `SpinnerRow`, above it — so Enter sends into the running turn. The **web**
 composer shows stop *next to* send while `isPending` rather than swapping them,
-and `isDisabled` (`ChatInput.tsx`) no longer folds in `isPending`, which is what
+and `isDisabled` (`web/src/components/chat/ChatInput.tsx`) no longer folds in `isPending`, which is what
 re-opens its Enter path too. Send keeps the rightmost slot in both states so its
 hit target doesn't move mid-turn. `isDisabled` does gate on the connection, so a
 socket that is down disables send and stop alike rather than accepting a click
@@ -1073,8 +1070,8 @@ turn boundary and re-registered it last, which accidentally masked that. The
 composer is now `cli/src/components/TextInput.tsx`, a small vendored fork that
 ignores every Ctrl chord, so the ordering no longer matters.
 
-**Trailing-user tripwire.** `warnOnTrailingAssistant()` (in `invoke.rs`) runs
-before every `generateText` call — initial, per-step, and early-stopping — and
+**Trailing-user tripwire.** `warn_on_trailing_assistant()` (in `invoke.rs`) runs
+before every `generate_text` call — initial, per-step, and early-stopping — and
 logs a warning plus a single `invocation trailing assistant` telemetry event per
 invocation when the array does not end on a `user` (or `tool`) message. Detection
 only, deliberately no repair: the point is to prove steering keeps the invariant,
@@ -1086,47 +1083,39 @@ messages into one provider-level user turn.
 
 Heartbeat and cron services call `invoke()` (the drain wrapper) directly in-process, no HTTP. They act on the whole run: its sends, its error and its final text. Structured budget metadata flows through as `InvokeResponse.error` (populated when any step carried `error: { type: 'budget_exceeded' }`).
 
-A heartbeat, unbound scheduled-task or webhook run gets `postingCeiling` (`deliveryTargetService.ceiling`): the places its delivery setting allows, web chat included as the `send_message` target `chat`. Nothing the run writes is delivered; the agent posts with `send_message`, which refuses a target outside the ceiling (`outside_delivery`). The prompt states this in a stable `### Posting` rule and lists the places in a dynamic `# Where This Run May Post` section. The final text is kept as the run's record (`keepWithheldRun`). The runtime posts only what the agent could not: a run that ended in an error, a budget notice, a deliver-only webhook.
+A heartbeat, unbound scheduled-task or webhook run gets `posting_ceiling` (`delivery_target_service.ceiling`): the places its delivery setting allows, web chat included as the `send_message` target `chat`. Nothing the run writes is delivered; the agent posts with `send_message`, which refuses a target outside the ceiling (`outside_delivery`). The prompt states this in a stable `### Posting` rule and lists the places in a dynamic `# Where This Run May Post` section. The final text is kept as the run's record (`keep_withheld_run`). The runtime posts only what the agent could not: a run that ended in an error, a budget notice, a deliver-only webhook.
 
 ## Step Limit and Early Stopping
 
-The `generateText()` call inside `invokeStream()` is capped at **100 steps** (`STEP_LIMIT` in `constants.rs`) using `stopWhen: stepCountIs(STEP_LIMIT)`. This prevents runaway agent loops.
+The `generate_text()` call inside `invoke_stream()` is capped at **100 steps** (`STEP_LIMIT` in `constants.rs`) using `step_count_is(STEP_LIMIT)`. This prevents runaway agent loops.
 
-When the step limit is reached, a follow-up `generateText()` call is made **without tools**, appending the `EARLY_STOPPING_PROMPT` (from `prompts/early_stopping_prompt.rs`). This asks the model to summarize its findings so far and produce a useful final response for the user. The summary is pushed onto the same step channel as a final `InvokeStep`, so streaming consumers (chat) see it as just another step and the `invoke()` drain wrapper aggregates it into the response like any other step.
+When the step limit is reached, a follow-up `generate_text()` call is made **without tools**, appending the `EARLY_STOPPING_PROMPT` (from `prompts/early_stopping_prompt.rs`). This asks the model to summarize its findings so far and produce a useful final response for the user. The summary is pushed onto the same step channel as a final `InvokeStep`, so streaming consumers (chat) see it as just another step and the `invoke()` drain wrapper aggregates it into the response like any other step.
 
 ### Shared Constants (`constants.rs`)
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
 | `STEP_LIMIT` | `100` | Maximum number of tool-use steps before stopping |
-| `MAX_OUTPUT_TOKENS` | `16000` | Max tokens per `generateText()` call |
+| `MAX_OUTPUT_TOKENS` | `16000` | Max tokens per `generate_text()` call |
 
-The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature`, `top_p`, `top_k`) at all — Opus 4.7 and later reject them (per Anthropic's Bedrock migration guide), so the invoke path omits them entirely rather than tracking which model version accepts what. The classification gates apply the same rule through the provider seam: `getGateRequest().samplingParams` is `{ temperature: 0 }` on Mantle only, whose Haiku 4.5 default accepts it. It is `{}` on bedrock, azure, anthropic and litellm, whose Haiku 5.5 default rejects it, and on openai and openrouter, whose GPT-5.x models reject or strip it.
+The main `invoke_stream()`/`invoke()` calls send no sampling params (`temperature`, `top_p`, `top_k`) at all — Opus 4.7 and later reject them (per Anthropic's Bedrock migration guide), so the invoke path omits them entirely rather than tracking which model version accepts what. The classification gates apply the same rule through the provider seam: `get_gate_request().sampling_params` is `{ temperature: 0 }` on Mantle only, whose Haiku 4.5 default accepts it. It is `{}` on bedrock, azure, anthropic and litellm, whose Haiku 5.5 default rejects it, and on openai and openrouter, whose GPT-5.x models reject or strip it.
 
 ## LLM Error Handling
 
-`lib/llm_errors.rs#buildErrorStep(error)` is the **single owner** of LLM/runtime error → user-facing text. It distinguishes gateway RFC 7807 `budget-exceeded` 429s (returns a friendly "spending limit reached" message and tags the step with `error: { type: 'budget_exceeded', detail }`) from generic errors (returns a "I encountered an error…" step tagged `error: { type: 'generic', detail }`, with the response body's `detail` field when present). The SDK wraps retried failures with a `lastError` field — `buildErrorStep` unwraps it before classifying. The heartbeat, cron and webhook services post an error result for the agent, since a failed run could not post it.
+`lib/llm_errors.rs#build_error_step(error)` is the **single owner** of LLM/runtime error → user-facing text. It distinguishes gateway RFC 7807 `budget-exceeded` 429s (returns a friendly "spending limit reached" message and tags the step with `error: { type: 'budget_exceeded', detail }`) from generic errors (returns a "I encountered an error…" step tagged `error: { type: 'generic', detail }`, with the response body's `detail` field when present). The SDK wraps retried failures with a `lastError` field — `build_error_step` unwraps it before classifying. The heartbeat, cron and webhook services post an error result for the agent, since a failed run could not post it.
 
-It's used only inside `invokeStream()`'s catch paths (context-fetch failure, `generateText` rejection). Errors are pushed onto the step channel rather than thrown, so consumers don't need a separate error-handling path: chat just sees a final friendly step and delivers it; `invoke()` aggregates the text and surfaces the structured `error` field on `InvokeResponse` so heartbeat/cron can detect budget exhaustion programmatically.
+It's used only inside `invoke_stream()`'s catch paths (context-fetch failure, `generate_text` rejection). Errors are pushed onto the step channel rather than thrown, so consumers don't need a separate error-handling path: chat just sees a final friendly step and delivers it; `invoke()` aggregates the text and surfaces the structured `error` field on `InvokeResponse` so heartbeat/cron can detect budget exhaustion programmatically.
 
-**No error is logged raw.** `logger` installs one global pino serializer for the `err`
-key (`lib/log_redaction.rs`), and it is an **allow-list**: `name`/`message`/`stack`/
-`code`/`errno`/`syscall`/`statusCode`/`url`/`isRetryable`/`reason`, plus `cause`,
-`lastError` and each entry of `errors` reduced to `{ name, message }` (that list
-bounded at five), plus `$metadata.httpStatusCode` lifted out as `statusCode` since an AWS
-SDK error carries its status nowhere else. Every other field is dropped and merely *named*
-in a `redacted: [...]` array. No request body, no response body and no headers reach a log;
-`message` is kept, so an error the SDK *builds* by interpolating content (a
-`JSONParseError` quotes the text it could not parse) still quotes that much. Pino's default
-`err` serializer copies every own property of an
-error, and the AI SDK's `APICallError` hangs `requestBodyValues` (the whole prompt) and
-`responseBody` off it — so a single `logger.error({ err }, …)` wrote the conversation,
-the system prompt and any provider tokens in the headers into the log. Allow-list rather
-than deny-list because the SDKs add fields over time and a new one must not leak by
-default; one serializer rather than per-call-site edits because the risk is a *future*
-`logger.error(err)`, not just today's. Pass errors as `err` (either
-`logger.error(err, msg)` or `logger.error({ err }, msg)`) — a message built by
-interpolating an error into a template string bypasses this entirely.
+**No error is logged raw.** `lib/log_redaction.rs#err_json` reduces an error to an
+allow-list: `name`/`message`/`stack`/`code`/`errno`/`syscall`/`statusCode`/`url`/
+`isRetryable`/`reason`, plus `cause`, `lastError` and each entry of `errors` reduced to
+`{ name, message }` (that list bounded at five). Every other field is dropped and named in a
+`redacted: [...]` array, so no request body, response body or header reaches a log. An
+`ApiCallError` (`ai/errors.rs`) holds the whole request and the response body, which is why
+the list is an allow-list: a field added later stays out by default. `message` is kept, so an
+error built by quoting model output still quotes that much. Log an error as
+`json!({ "err": err_json(&e) })`; a message built by formatting an error into a string
+bypasses the allow-list.
 
 ## Heartbeat Design
 
@@ -1134,7 +1123,7 @@ interpolating an error into a template string bypasses this entirely.
 
 The interval is measured from the last run. Each cycle arms one `setTimeout` for
 the absolute time the next check is due, in steps of at most one interval
-(`services/heartbeat_schedule.rs` does the arithmetic). `recordCycle` moves that
+(`services/heartbeat_schedule.rs` does the arithmetic). `record_cycle` moves that
 time on every terminal path of a timer run, an error included; a Slack-triggered
 run moves it once it completes. A check already due runs about a minute later,
 which is the delay floor.
@@ -1145,13 +1134,13 @@ process keeps the check where the last one had it.
 `AgentWorkspace.lastHeartbeat` is the check that really ran, which the prompt and
 the API report. A cadence change writes the deadline alone, so it moves the
 schedule without claiming a run. Both columns move in one write
-(`agentStatusService.updateHeartbeatSchedule`), so no boot reads one of them from
+(`agent_status_service.update_heartbeat_schedule`), so no boot reads one of them from
 an older event than the other. A row written before the deadline column holds
 null, and then the deadline is one interval after the last run. A stored deadline
 further out than one interval is trimmed to one interval from now, since a stopped
 heartbeat writes no deadline and its row can hold one a longer cadence set.
 
-`startHeartbeat` takes the anchor as a required second parameter. Boot and
+`start_heartbeat` takes the anchor as a required second parameter. Boot and
 `POST /agents/heartbeat/start` pass `'keep-schedule'`, which leaves the deadline
 alone; that route reads the schedule off the persisted row rather than the request
 body. The two writers of the cadence pass `'new-interval'`, which starts a fresh
@@ -1170,10 +1159,11 @@ The heartbeat uses a minimal prompt contract.
 
 ### Heartbeat Result Shape
 
-```typescript
-interface HeartbeatResult {
-  shouldSkip: boolean;  // true = the run posted nothing
-  text: string;         // alert text, or skip reason
+```rust
+// services/heartbeat_service.rs
+pub struct HeartbeatResult {
+    pub should_skip: bool, // true = the run posted nothing
+    pub text: String,      // alert text, or skip reason
 }
 ```
 
@@ -1183,11 +1173,11 @@ The heartbeat's duplicate guard is its send record (`lastSend`): the newest ten 
 
 ### Channel-Triggered Heartbeats
 
-A channel that starts the heartbeat with its own messages is a `HeartbeatTriggerSource`, registered with `heartbeatService.registerTriggerSource` in `index.rs`. Slack's is `slackMessageQueueService`. When a Slack message arrives in a heartbeat trigger channel, the Slack adapter enqueues it in the `PendingSlackMessage` table, claims the trigger's throttle and calls `heartbeatService.triggerFrom(slackMessageQueueService)`. The heartbeat reads the source's pending messages, runs once with them in its prompt, removes them once the run ends, and reports the source's channel as `heartbeat.trigger`.
+A channel that starts the heartbeat with its own messages is a `HeartbeatTriggerSource`, registered with `heartbeat_service.register_trigger_source` in `index.rs`. Slack's is `slack_message_queue_service`. When a Slack message arrives in a heartbeat trigger channel, the Slack adapter enqueues it in the `PendingSlackMessage` table, claims the trigger's throttle and calls `heartbeat_service.trigger_from(slack_message_queue_service)`. The heartbeat reads the source's pending messages, runs once with them in its prompt, removes them once the run ends, and reports the source's channel as `heartbeat.trigger`.
 
-- `triggerFrom(source)` returns `'queued'` when it started a run, or `'ignored'` when no heartbeat is registered or one is already running. Ignored messages stay queued for the next run.
+- `trigger_from(source)` returns `'queued'` when it started a run, or `'ignored'` when no heartbeat is registered or one is already running. Ignored messages stay queued for the next run.
 - **Timer-based heartbeats also read them**: a timer heartbeat reads every registered source before it invokes the LLM, so queued messages are never orphaned.
-- A run removes the messages it read only once it ends, so a restart before then leaves them for the next run, and the boot starts that run (`answerPendingTriggers`).
+- A run removes the messages it read only once it ends, so a restart before then leaves them for the next run, and the boot starts that run (`answer_pending_triggers`).
 
 ### Default Heartbeat Template
 
@@ -1199,24 +1189,23 @@ The `context_builder.rs` skips messages with empty or whitespace-only content wh
 
 ## Slack Adapter
 
-The agent-runtime owns the full Slack adapter implementation. It manages Bolt apps with Socket Mode, receives messages, handles verification codes, and calls Slack APIs directly.
+The runtime holds one Slack connection, built by `lib/slack_config.rs` from
+`SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` and checked with `auth.test` at boot.
 
-### Slack Architecture
-
-- **Bolt apps**: One `App` instance per Slack workspace connection, using Socket Mode for real-time events. `clientOptions` on the `App` constructor passes a `fetch` to the underlying WebClient that strips the body `token` field so auth flows only via the `Authorization` header — necessary when the bot token is a platform credential sentinel that only the MITM proxy can rewrite.
-- **Connection data**: source depends on mode.
-  - **Multi-tenant**: SlackConnection records (tokens, workspace info) are fetched from the backend via `backendClient.getActiveSlackConnections()` at startup and `backendClient.getSlackConnection()` at runtime. Agent-runtime does NOT directly access the backend's `SlackConnection` table; the backend exclusively owns it. Connection CRUD (create, update, deactivate) is handled by the backend's org-scoped endpoints.
-  - **Single-agent**: one synthetic connection is built by `lib/slack_config.rs` from the `SLACK_BOT_TOKEN` env var (validated via `auth.test` on boot). No backend, no decrypt, no encryption key. `SlackWebClient` (in `lib/slack_web_client.rs`) is the subclass that strips the body `token`.
-- **Message routing**: Incoming Slack messages are processed locally via `conversationEngineService.chat()` (no HTTP to backend)
-- **Response delivery**: Local `messageDeliveryService` -> local `slackAdapterService` -> local Bolt apps (no round-trip to backend)
-- **Heartbeat throttle**: Handled locally with a timer
-- **Verification codes**: DM and channel link verification done locally against the database
-
-### Message Flow
-
-1. Slack message arrives via Bolt Socket Mode in agent-runtime
-2. Agent-runtime's `conversationEngineService.chat()` handles thread management + LLM invocation locally
-3. Response delivered via local `messageDeliveryService` -> local `slackAdapterService` -> local Bolt apps
+- **Events**: `services/slack_socket_mode.rs` is the Socket Mode client. It opens
+  the socket with `apps.connections.open`, acknowledges each envelope, and
+  reconnects after a dropped socket or a failed health check.
+- **Web API**: `lib/slack_web_client.rs` sends the bot token only in the
+  `Authorization` header, never in a request body, because the bot token can be a
+  platform credential sentinel that only the sandbox proxy rewrites, and the proxy
+  rewrites headers only.
+- **Message flow**: an event goes to `conversation_engine_service.chat()`; the
+  reply goes through `message_delivery_service` to `slack_adapter_service`.
+- **Routed mode**: a router outside the runtime delivers events as envelopes on
+  `SLACK_PORT` (`services/slack_router_service.rs`) instead of a socket;
+  `docs/slack-router-protocol.md` is its contract.
+- **Verification codes**: DM and channel link verification run against the
+  database.
 
 ### Management API Endpoints
 
@@ -1232,7 +1221,7 @@ The agent-runtime owns the chat socket, `/api/ws`, which the web UI, the TUI and
 - **One stream, numbered**: every message (the person's own included), turn state, thread and desktop change is an event with a `seq`, sent to every socket. A reconnecting client names its cursor and is replayed the gap from memory, or told `resumed: false` and reloads history over REST. A message published with nobody connected is therefore never lost.
 - **Store first**: a send is stored under the client's uuid before anything else and only then confirmed, so a client resends anything unconfirmed and the same id is never stored twice.
 - **One turn at a time for the agent**: a message for another conversation waits, shown to every client as `queued`. The wait is also what keeps the agent quiet while a person holds the computer.
-- **Response delivery**: `messageDeliveryService.publish()` -> `websocketAdapterService` -> `eventStreamService.publish()`; a person's message and in-place edits go through `messageDeliveryService.mirror()`.
+- **Response delivery**: `message_delivery_service.publish()` -> `websocket_adapter_service` -> `event_stream_service.publish()`; a person's message and in-place edits go through `message_delivery_service.mirror()`.
 - **Editors are a client of this socket**: `prism acp` (`cli/src/acp/`) serves the Agent Client Protocol on stdio for the editor that starts it, and speaks the chat socket and REST to the runtime. An ACP session is one conversation, and the session id is the thread id.
 
 ## Agent Guide (agentMd)
@@ -1249,9 +1238,9 @@ drift from the agent's own edits. The user owns it, through one service call
 reachable at two URLs:
 
 - `PATCH /agents/documents/agentMd` (`routes/document_revisions.rs` →
-  `agentWorkspaceService.updateWorkspaceDoc`), body `{ content, reason? }`, the
+  `agentWorkspaceService.update_workspace_doc`), body `{ content, reason? }`, the
   whole document. An empty string clears it, which drops the section from the
-  prompt. The write goes through `writeWorkspaceDoc`, so it records a revision
+  prompt. The write goes through `write_workspace_doc`, so it records a revision
   with `actor: 'user'`, `method: 'rest'` and the caller's `reason` — the editor's
   optional note about what changed.
 - `PATCH /agents/agent-guide` (`routes/agent_guide.rs`), body
@@ -1264,7 +1253,7 @@ reachable at two URLs:
 
 Locked-in mode does not cover it — that lock withholds the agent's own writers,
 and there is none here — so the editors keep working while the lock is on. That
-holds for the other six documents too: `updateWorkspaceDoc` takes no lock, since
+holds for the other six documents too: `update_workspace_doc` takes no lock, since
 the user editing a document is not the agent rewriting itself.
 
 **It is also the tool risk gate's policy.** `lib/tool_risk_gate.rs` puts the
@@ -1286,7 +1275,7 @@ allow-authority on a writable document that makes the control a one-way ratchet:
 one landed guide write removes a refusal for every later turn on every channel.
 `gate.policy_hash` is one detection signal, since a shell write emits no `agent
 config updated` event; the document's own history is the other — a write that
-skips `writeWorkspaceDoc` records no revision, so the newest revision no longer
+skips `write_workspace_doc` records no revision, so the newest revision no longer
 matches the column and the history reports `drifted`. Both signals read the
 *straight-to-database* write. A shell that calls `PATCH
 /agents/documents/agentMd` instead gets a revision stamped `actor: 'user'`,
@@ -1296,19 +1285,19 @@ and this paragraph honest about it; the
 alternative design (narrowing from the guide, widening from a boot-time root) was
 weighed and declined.
 
-`resolvePolicy` is the one owner of what the classifier reads. `gate.policy` on
+`resolve_policy` is the one owner of what the classifier reads. `gate.policy` on
 both gate telemetry events reports its verdict — `none`, `default` or `custom` —
 and `default` **sends no policy at all**: every agent is created holding a seeded
-guide and keeps it. `isDefaultAgentGuide` (`templates/default_workspace.rs`)
+guide and keeps it. `is_default_agent_guide` (`templates/default_workspace.rs`)
 recognises by digest the current template and the one seeded from v2026.6.18060952
 until this template, whose `## Safety` section reads "read-only by default", which
 as a rule outranking the ordinary-work list refuses the file edits and builds the
-agent needs. `getDefaultWorkspaceFiles()` returns only the current template, so a
+agent needs. `get_default_workspace_files()` returns only the current template, so a
 comparison with it misses the earlier default. The guide seeded before
 v2026.6.18060952 reads as `custom`. Editing any part of a guide makes the whole
 document policy.
 
-One precedence paragraph, selected rather than duplicated: `classifierRules()`
+One precedence paragraph, selected rather than duplicated: `classifier_rules()`
 takes `PRECEDENCE_WITHOUT_POLICY` or `PRECEDENCE_WITH_POLICY`. Two opposed
 declarations in one prompt resolve by recency, differently per vendor. The
 section's end marker carries the policy digest, so a guide cannot close its own
@@ -1323,17 +1312,17 @@ Every accepted write to one of the seven identity documents appends one snapshot
 to `agent_workspace_revisions`. A revision is the **post-image** of the write, so
 the newest revision is what the document reads now.
 
-- **One write path.** `agentWorkspaceService.writeWorkspaceDoc` replaces the
-  column and records the revision in one `prisma.$transaction`, so a document and
+- **One write path.** `agentWorkspaceService.write_workspace_doc` replaces the
+  column and records the revision in one Diesel transaction, so a document and
   its history cannot disagree. Three call sites reach it: the agent's own
-  document tools (`tools/agent_config.rs`), `updateWorkspaceDoc` (the user's REST
+  document tools (`tools/agent_config.rs`), `update_workspace_doc` (the user's REST
   editor, for any of the seven), and the restore.
   Add a fourth rather than a second write path. `lib/workspace_docs.rs` owns the
   field list and the actor (`agent` | `user`) and method (`seed` | `replace` |
   `edit` | `clear` | `rest` | `rollback`) words.
 - **Append-only.** A restore writes a `rollback` revision instead of removing the
   revisions after it, so every step is kept and a restore is itself reversible.
-  `rollbackWorkspaceDoc` reads the target, compares the newest revision against
+  `rollback_workspace_doc` reads the target, compares the newest revision against
   the caller's `expectedRevisionId`, replaces the column and records the restore
   in one transaction — a check outside the transaction is not a check. A newer
   write answers `stale`, which the route reports as 409.
@@ -1343,8 +1332,8 @@ the newest revision is what the document reads now.
 - **Four routes**, `routes/document_revisions.rs`: the write
   (`PATCH /agents/documents/:field`), the history without the content
   (`GET /agents/documents/:field/revisions`), one revision with it (`…/:id`), and
-  the restore (`POST …/:id/restore`). One `readField` allow-list
-  (`isWorkspaceDocField`) keeps an arbitrary `:field` away from the database. The
+  the restore (`POST …/:id/restore`). One `read_field` allow-list
+  (`is_workspace_doc_field`) keeps an arbitrary `:field` away from the database. The
   route owns what the service does not — the heartbeat restart after a write or a
   restore of `heartbeatMd`, and the status codes.
 - **Locked-in mode does not gate a write or a restore here.** That lock withholds
@@ -1364,7 +1353,7 @@ The runtime supports **Agent Skills** following the open standard at
 frontmatter with required `name` + `description`, optional `scripts/`/
 `references/`/`assets/`).
 
-- **Where skills live.** Two sources, merged by `skillCatalogService` with
+- **Where skills live.** Two sources, merged by `skill_catalog_service` with
   workspace winning a name clash (project > personal, like Claude Code):
   - **Global** — `<DATA>/skills`, the persistent data dir resolved by
     `backend/src/lib/data_dir.rs`: `/data` inside the container, `~/.prism` outside
@@ -1373,16 +1362,16 @@ frontmatter with required `name` + `description`, optional `scripts/`/
   - **Workspace** — the repo the CLI was started in: `<workspaceRoot>/.claude/skills`
     and `<workspaceRoot>/.agents/skills` (`.claude` wins over `.agents`). The
     workspaceRoot is the thread's persisted launch cwd; autonomous heartbeat/cron
-    runs have none, so they see global skills only. `getCatalog`/`find`/
-    `getSkillBody` take an optional `workspaceRoot`; the `# Skills` section labels
+    runs have none, so they see global skills only. `get_catalog`/`find`/
+    `get_skill_body` take an optional `workspaceRoot`; the `# Skills` section labels
     workspace vs installed groups. `<workspaceRoot>/.claude/skills` is also seen
     natively by Claude Code (its cwd = workspaceRoot).
 - **Shared with the coding sub-agent.** At startup the configured
-  `CodingAgent`'s `prepareHome()` gives it a home inside the data dir that reads
+  `CodingAgent`'s `prepare_home()` gives it a home inside the data dir that reads
   the same skills. For Claude Code that is `CLAUDE_CONFIG_DIR=<DATA>/.claude` with
   `<DATA>/.claude/skills` → `<DATA>/skills` symlinked, so the `coding_agent` tool
   discovers the same skills — without touching the user's real `~/.claude`.
-- **Progressive disclosure.** `skillCatalogService` (mtime-cached) parses only
+- **Progressive disclosure.** `skill_catalog_service` (mtime-cached) parses only
   `name` + `description` for the `# Skills` system-prompt section; the `skill`
   tool (`backend/src/tools/skills/mod.rs`) loads a skill's full `SKILL.md` body on
   demand. The tool is omitted when no skills are installed.
@@ -1420,12 +1409,12 @@ need. The standard defines exactly two component types and nothing else.
   they are different problems with different fixes. Unknown top-level fields and
   a non-object `extensions` are *reported and ignored*; anything else rejects
   that plugin alone.
-- **Skills** are one more root in `skillCatalogService.roots()`, appended after
+- **Skills** are one more root in `skill_catalog_service.roots()`, appended after
   the global dir and tagged `source: 'plugin'` + `pluginId`. Plugin roots rank
   **last**, so a plugin can add a skill but never shadows a workspace or global
   one. Everything downstream (the `skill` tool, its emptiness gate, both REST
   endpoints, the `# Skills` prompt section) picks that up unchanged.
-- **`# Plugins` prompt section** (`buildPluginsSection` in `context_builder.rs`)
+- **`# Plugins` prompt section** (`build_plugins_section` in `context_builder.rs`)
   carries what nothing else can: which plugin a skill or tool came from, the
   `<plugin>__<server>__<tool>` naming scheme (the tools block has the names but
   can't explain them), and the plugins dir path, which is what makes "the agent
@@ -1434,13 +1423,13 @@ need. The standard defines exactly two component types and nothing else.
   their descriptions. Collapses to one sentence when no plugin is installed, so
   the common case stays cheap. Cacheable on the same terms as `# Skills`.
 - **MCP servers** (`plugin_mcp_config.rs` parses, `plugin_mcp_service.rs`
-  connects). stdio uses `@ai-sdk/mcp/mcp-stdio`; the spec's `streamable-http` is
+  connects). `ai/mcp/` is the client for stdio, Streamable HTTP and legacy SSE; the spec's `streamable-http` is
   translated to the SDK's `http` at the parse boundary. `client.tools()` is
   called **once at connect**, not per turn — that keeps one child process per
   server instead of per turn and makes the tools block byte-identical across
   turns and across the chat/compaction paths, which is what the prompt cache
   needs. Connection is lazy and coalesced; a failed server sticks until its
-  `mcp.json` changes. `shutdownAll()` runs from `index.rs` so a SIGTERM doesn't
+  `mcp.json` changes. `shutdown_all()` runs from `index.rs` so a SIGTERM doesn't
   orphan children.
 - **Deliberate leniencies, both reported as diagnostics.** `mcp.json` may omit
   `$schema` (assumed 1.0.0) and a server may omit `type` (assumed `stdio`),
@@ -1452,8 +1441,8 @@ need. The standard defines exactly two component types and nothing else.
   real declaration.
 - **Tool names** are `<pluginId>__<serverName>__<toolName>`, shortened when
   needed by the shared rule in `lib/tool_names.rs` (see **Tool naming** under
-  Tools). In `collectTools()` plugin tools merge **last** behind an explicit
-  guard, and `filterToolsByMode()` now wraps the *merged* map so MCP tools no
+  Tools). In `collect_tools()` plugin tools merge **last** behind an explicit
+  guard, and `filter_tools_by_mode()` now wraps the *merged* map so MCP tools no
   longer bypass mode gating.
 - **Failure isolation is graduated** (spec §11.3), and every level is covered by
   a test: a bad manifest skips one plugin; a bad `mcp.json` disables only MCP and
