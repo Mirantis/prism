@@ -591,7 +591,7 @@ impl ComputerAccess {
     }
 
     fn begin_secure(&self, client_id: &str, help_id: &str) {
-        let number = {
+        {
             let mut state = self.state.lock();
             // A window that is clearing up is replaced rather than joined. The new one
             // holds the guard under its own number, so the one ending cannot free it.
@@ -617,8 +617,7 @@ impl ComputerAccess {
             // it. `close_window` takes `state` and the guard's lock one after the
             // other, never both, so this order cannot deadlock.
             hold_secure_guard((self.holder, number));
-            number
-        };
+        }
         let mut props = agent_props();
         props.insert("computer.help_id".to_string(), help_id.to_string());
         track_event(

@@ -303,7 +303,7 @@ const PRICING_BATCH: i64 = 200;
 /// The tokens to price. Where the caller does not split the cache writes by lifetime,
 /// they have the lifetime the call's mode asks for (`cache_ttl_for`). A row priced
 /// again later has no split stored, so it takes that lifetime too.
-fn priced_tokens(purpose: &str, tokens: &CallTokens, ttl: CacheTtl) -> PricedTokens {
+fn priced_tokens(tokens: &CallTokens, ttl: CacheTtl) -> PricedTokens {
     PricedTokens {
         input_tokens: tokens.input_tokens,
         output_tokens: tokens.output_tokens,
@@ -337,7 +337,7 @@ fn ttl_of(purpose: &str, chat_ttl: CacheTtl) -> CacheTtl {
 const SUMMED_PURPOSES: [&str; 1] = ["coding-agent"];
 
 fn catalog_cost(price: &ModelPrice, purpose: &str, tokens: &CallTokens, chat_ttl: CacheTtl) -> i64 {
-    let tokens = priced_tokens(purpose, tokens, ttl_of(purpose, chat_ttl));
+    let tokens = priced_tokens(tokens, ttl_of(purpose, chat_ttl));
     if SUMMED_PURPOSES.contains(&purpose) {
         let base = ModelPrice {
             tiers: None,

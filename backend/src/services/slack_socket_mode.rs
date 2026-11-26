@@ -341,14 +341,13 @@ impl SocketModeClient {
         };
         let client = self.clone();
         tokio::spawn(async move {
-            client.run_socket(generation, url, control_rx, open).await;
+            client.run_socket(url, control_rx, open).await;
             client.on_socket_closed(generation);
         });
     }
 
     async fn run_socket(
         self: &Arc<Self>,
-        generation: u64,
         url: String,
         mut control: mpsc::UnboundedReceiver<Control>,
         open: Arc<AtomicBool>,

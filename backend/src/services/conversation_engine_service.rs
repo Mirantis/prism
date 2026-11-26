@@ -642,7 +642,6 @@ impl ConversationEngineService {
         user_message: &str,
         terminal_text: Option<&str>,
         user_id: &str,
-        agent_id: &str,
         abort_signal: Option<&CancellationToken>,
     ) -> anyhow::Result<bool> {
         if !is_telemetry_enabled() {
@@ -673,7 +672,6 @@ impl ConversationEngineService {
                 user_message,
                 terminal_text,
                 user_id,
-                agent_id,
                 abort_signal,
             )
             .await)
@@ -690,7 +688,6 @@ impl ConversationEngineService {
         user_message: &str,
         agent_response: &str,
         user_id: &str,
-        agent_id: &str,
         abort_signal: Option<&CancellationToken>,
     ) -> bool {
         let result = async {
@@ -1674,7 +1671,6 @@ impl ConversationEngineService {
                         prompt,
                         Some(&buffered.text),
                         user_id,
-                        agent_id,
                         params.abort_signal.as_ref(),
                     )
                     .await?;

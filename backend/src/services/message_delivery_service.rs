@@ -86,7 +86,6 @@ pub struct ThreadContext {
 struct DeliveryResult {
     adapter: String,
     delivered: bool,
-    reason: Option<String>,
 }
 
 // ============================================================================
@@ -382,7 +381,6 @@ impl MessageDeliveryService {
                 return DeliveryResult {
                     adapter: name,
                     delivered: false,
-                    reason: Some("not originating channel".to_string()),
                 };
             }
             let attempt = async {
@@ -396,19 +394,16 @@ impl MessageDeliveryService {
                 Ok(true) => DeliveryResult {
                     adapter: name,
                     delivered: true,
-                    reason: None,
                 },
                 Ok(false) => DeliveryResult {
                     adapter: name,
                     delivered: false,
-                    reason: Some("not connected".to_string()),
                 },
                 Err(error) => {
                     log_error!("Failed to deliver via {}: {}", name, error);
                     DeliveryResult {
                         adapter: name,
                         delivered: false,
-                        reason: Some(error.to_string()),
                     }
                 }
             }

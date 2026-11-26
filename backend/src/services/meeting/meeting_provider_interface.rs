@@ -326,7 +326,7 @@ pub trait MeetingProvider: Send + Sync {
     /// `ReauthRequired`, where that probe is precisely what was wrong.
     ///
     /// Optional: offered when `capabilities().sign_in` is set.
-    async fn sign_in(&self, page: &PageHandle, options: SignInOptions) {}
+    async fn sign_in(&self, _page: &PageHandle, _options: SignInOptions) {}
 
     /// Whether this provider handles the given link.
     fn matches_url(&self, url: &str) -> bool;
@@ -363,7 +363,7 @@ pub trait MeetingProvider: Send + Sync {
     ///
     /// Optional: a platform whose microphone state cannot be read offers none of this
     /// (`capabilities().microphone_live`).
-    async fn microphone_live(&self, page: &PageHandle) -> anyhow::Result<Option<bool>> {
+    async fn microphone_live(&self, _page: &PageHandle) -> anyhow::Result<Option<bool>> {
         Ok(None)
     }
 
@@ -381,7 +381,7 @@ pub trait MeetingProvider: Send + Sync {
     /// Optional, and paired with `microphone_live`: the runtime clicks before it settles for
     /// reading, so a platform offering only the read never reports on a call it could not
     /// make audible (`capabilities().set_microphone`).
-    async fn set_microphone(&self, page: &PageHandle, on: bool) -> anyhow::Result<Option<bool>> {
+    async fn set_microphone(&self, _page: &PageHandle, _on: bool) -> anyhow::Result<Option<bool>> {
         Ok(None)
     }
 
@@ -404,8 +404,8 @@ pub trait MeetingProvider: Send + Sync {
     /// (`capabilities().send_chat_message`).
     async fn send_chat_message(
         &self,
-        page: &PageHandle,
-        text: &str,
+        _page: &PageHandle,
+        _text: &str,
     ) -> anyhow::Result<ChatSendResult> {
         Ok(ChatSendResult::NotSent {
             step: ChatSendStep::Panel,
@@ -435,8 +435,8 @@ pub trait MeetingProvider: Send + Sync {
     /// (`capabilities().read_chat_messages`).
     async fn read_chat_messages(
         &self,
-        page: &PageHandle,
-        options: ChatReadOptions,
+        _page: &PageHandle,
+        _options: ChatReadOptions,
     ) -> anyhow::Result<ChatReadResult> {
         Ok(ChatReadResult::NotRead {
             step: ChatReadStep::Panel,
@@ -449,7 +449,7 @@ pub trait MeetingProvider: Send + Sync {
     /// Optional because it is a hint rather than a mechanism: a platform that cannot
     /// offer it still works, just with a transcriber that has never been told how the
     /// room's names are spelled (`capabilities().participant_names`).
-    async fn participant_names(&self, page: &PageHandle) -> anyhow::Result<Vec<String>> {
+    async fn participant_names(&self, _page: &PageHandle) -> anyhow::Result<Vec<String>> {
         Ok(Vec::new())
     }
 
@@ -467,7 +467,7 @@ pub trait MeetingProvider: Send + Sync {
     /// page at all — so the runtime asks on every join rather than once per profile. A
     /// provider that needs no such preparation may simply not offer this
     /// (`capabilities().enable_speaker_attribution`).
-    async fn enable_speaker_attribution(&self, page: &PageHandle) {}
+    async fn enable_speaker_attribution(&self, _page: &PageHandle) {}
 
     /// Who the platform last showed as speaking, or `None` when it cannot be told.
     ///
@@ -482,7 +482,7 @@ pub trait MeetingProvider: Send + Sync {
     /// Reading the participant list directly removes the ambiguity rather than compensating
     /// for it: a row's own label cannot be a sentence fragment, and the identity attribute
     /// beside it is a second structural check (`capabilities().current_speaker`).
-    async fn current_speaker(&self, page: &PageHandle) -> anyhow::Result<Option<SpeakerReading>> {
+    async fn current_speaker(&self, _page: &PageHandle) -> anyhow::Result<Option<SpeakerReading>> {
         Ok(None)
     }
 
@@ -494,7 +494,7 @@ pub trait MeetingProvider: Send + Sync {
     /// Reports a failure instead of erroring, as `join` does: a control that moved is
     /// something to say in the room, not a stack trace. Optional, so a platform that
     /// cannot present omits it (`capabilities().start_screen_share`).
-    async fn start_screen_share(&self, page: &PageHandle) -> anyhow::Result<ScreenShareOutcome> {
+    async fn start_screen_share(&self, _page: &PageHandle) -> anyhow::Result<ScreenShareOutcome> {
         Ok(ScreenShareOutcome::Failed {
             reason: "screen sharing is not available on this platform".into(),
         })
@@ -508,7 +508,7 @@ pub trait MeetingProvider: Send + Sync {
     ///
     /// Any provider that offers `start_screen_share` offers this too. A share that
     /// nothing can end lasts for the whole call (`capabilities().stop_screen_share`).
-    async fn stop_screen_share(&self, page: &PageHandle) -> anyhow::Result<ScreenShareOutcome> {
+    async fn stop_screen_share(&self, _page: &PageHandle) -> anyhow::Result<ScreenShareOutcome> {
         Ok(ScreenShareOutcome::Failed {
             reason: "screen sharing is not available on this platform".into(),
         })

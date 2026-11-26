@@ -38,7 +38,6 @@ use crate::{log_error, log_info, log_warn};
 // ============================================================================
 
 struct SessionState {
-    user_id: String,
     session_id: String,
     daily_reset_timeout: Option<AbortHandle>,
     idle_timeout: Option<AbortHandle>,
@@ -46,9 +45,8 @@ struct SessionState {
 }
 
 impl SessionState {
-    fn new(user_id: &str, session_id: String) -> Self {
+    fn new(session_id: String) -> Self {
         SessionState {
-            user_id: user_id.to_string(),
             session_id,
             daily_reset_timeout: None,
             idle_timeout: None,
@@ -146,10 +144,9 @@ impl SessionManagerService {
 
                 // Track current session
                 if let Some(session_id) = &agent.current_session_id {
-                    self.sessions.lock().insert(
-                        agent.user_id.clone(),
-                        SessionState::new(&agent.user_id, session_id.clone()),
-                    );
+                    self.sessions
+                        .lock()
+                        .insert(agent.user_id.clone(), SessionState::new(session_id.clone()));
                 }
             }
             Ok(agents.len())
@@ -178,10 +175,9 @@ impl SessionManagerService {
             let session_id = self.generate_session_id();
             self.write_session_id(&agent.id, &session_id).await?;
 
-            self.sessions.lock().insert(
-                user_id.to_string(),
-                SessionState::new(user_id, session_id.clone()),
-            );
+            self.sessions
+                .lock()
+                .insert(user_id.to_string(), SessionState::new(session_id.clone()));
             log_info!("Started new session {} for user {}", session_id, user_id);
 
             // Set up daily reset
@@ -311,7 +307,7 @@ impl SessionManagerService {
                 None => {
                     sessions.insert(
                         user_id.to_string(),
-                        SessionState::new(user_id, new_session_id.clone()),
+                        SessionState::new(new_session_id.clone()),
                     );
                 }
             }
@@ -614,7 +610,7 @@ mod tests {
         let service = service();
         service.sessions.lock().insert(
             "user-123".into(),
-            SessionState::new("user-123", "sess_existing123".into()),
+            SessionState::new("sess_existing123".into()),
         );
 
         let session_id = service.start_session("user-123").await.unwrap();
@@ -658,7 +654,7 @@ mod tests {
         assert!(!service.has_active_session("user-123"));
 
         let before = Utc::now() - chrono::Duration::hours(1);
-        let mut state = SessionState::new("user-123", "sess_1".into());
+        let mut state = SessionState::new("sess_1".into());
         state.last_activity = before;
         service.sessions.lock().insert("user-123".into(), state);
         service.record_activity("user-123");
@@ -670,10 +666,10 @@ mod tests {
         let service = SessionManagerService::new();
         assert_eq!(service.get_session_id("user-123"), None);
         assert!(!service.has_active_session("user-123"));
-        service.sessions.lock().insert(
-            "user-123".into(),
-            SessionState::new("user-123", "sess_abc".into()),
-        );
+        service
+            .sessions
+            .lock()
+            .insert("user-123".into(), SessionState::new("sess_abc".into()));
         assert_eq!(service.get_session_id("user-123"), Some("sess_abc".into()));
         assert!(service.has_active_session("user-123"));
         service.cleanup("user-123");
@@ -684,13 +680,13 @@ mod tests {
     async fn stops_every_session_and_its_timers() {
         let service = service();
         let timer = after(60_000, async {});
-        let mut state = SessionState::new("user-1", "sess_1".into());
+        let mut state = SessionState::new("sess_1".into());
         state.idle_timeout = Some(timer.clone());
         service.sessions.lock().insert("user-1".into(), state);
-        service.sessions.lock().insert(
-            "user-2".into(),
-            SessionState::new("user-2", "sess_2".into()),
-        );
+        service
+            .sessions
+            .lock()
+            .insert("user-2".into(), SessionState::new("sess_2".into()));
 
         service.stop_all();
 

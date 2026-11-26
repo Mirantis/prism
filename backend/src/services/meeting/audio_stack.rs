@@ -748,15 +748,6 @@ impl AudioStack {
         }
     }
 
-    /// Record the first unexpected death of capture or playback and tell the owner.
-    ///
-    /// Once only: `stop()` kills both, so the second exit is our own doing, and a
-    /// teardown already under way must not be told twice about a stack it is
-    /// dismantling. Logs `[Meeting] Audio stack lost: {reason}` at error.
-    fn note_loss(&self, reason: String) {
-        note_loss(&self.state, reason);
-    }
-
     /// Run `pactl` against the private daemon and answer its stdout.
     async fn pactl(&self, args: &[&str]) -> anyhow::Result<String> {
         let output = tokio::process::Command::new("pactl")
@@ -900,8 +891,14 @@ mod tests {
     #[test]
     fn reports_a_loss_once_and_to_a_handler_registered_late() {
         let stack = AudioStack::new();
-        stack.note_loss("the capture process exited (code 1)".to_string());
-        stack.note_loss("the playback process exited (code 1)".to_string());
+        note_loss(
+            &stack.state,
+            "the capture process exited (code 1)".to_string(),
+        );
+        note_loss(
+            &stack.state,
+            "the playback process exited (code 1)".to_string(),
+        );
         let seen = Arc::new(Mutex::new(Vec::<String>::new()));
         let recorder = seen.clone();
         let handler: LostHandler = Arc::new(move |reason| recorder.lock().push(reason));

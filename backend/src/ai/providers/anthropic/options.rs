@@ -193,6 +193,7 @@ pub(super) enum StructuredOutputMode {
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct CacheControlOption {
     #[serde(rename = "type")]
+    #[allow(dead_code)] // Required: the schema rejects a value without this tag.
     pub kind: EphemeralLiteral,
     #[serde(default)]
     pub ttl: Option<CacheTtlOption>,
@@ -248,6 +249,7 @@ pub(super) struct ToolConfigurationOption {
 #[serde(rename_all = "camelCase")]
 pub(super) struct McpServerOption {
     #[serde(rename = "type")]
+    #[allow(dead_code)] // Required: the schema rejects a value without this tag.
     pub kind: UrlLiteral,
     pub name: String,
     pub url: String,
@@ -293,6 +295,7 @@ pub(super) struct ContainerOption {
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct TaskBudgetOption {
     #[serde(rename = "type")]
+    #[allow(dead_code)] // Required: the schema rejects a value without this tag.
     pub kind: TokensLiteral,
     pub total: f64,
     #[serde(default)]
@@ -417,6 +420,7 @@ impl<'de> Deserialize<'de> for Fallbacks {
 #[serde(rename_all = "camelCase")]
 pub(super) struct SafeguardOption {
     #[serde(rename = "type")]
+    #[allow(dead_code)] // Required: the schema rejects a value without this tag.
     pub kind: DangerousToolUseLiteral,
     #[serde(default)]
     pub classifier_context: Option<Map<String, Value>>,
@@ -431,6 +435,7 @@ pub(super) enum DangerousToolUseLiteral {
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct CompactionOption {
     #[serde(rename = "type")]
+    #[allow(dead_code)] // Required: the schema rejects a value without this tag.
     pub kind: SummarizeLiteral,
     #[serde(default)]
     pub instructions: Option<String>,

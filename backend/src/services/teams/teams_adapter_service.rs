@@ -20,7 +20,6 @@
 //!   leaves the adapter idle, mirroring the Slack adapter.
 
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Once};
 use std::time::{Duration, Instant};
@@ -1084,7 +1083,8 @@ impl TeamsApp {
 struct BotServer {
     shutdown: CancellationToken,
     task: JoinHandle<()>,
-    addr: SocketAddr,
+    #[cfg(test)]
+    addr: std::net::SocketAddr,
 }
 
 /// Reads a message's files with the app's credentials: `bot` and `graph` through
@@ -1365,6 +1365,7 @@ impl TeamsAdapterService {
     /// failed serve is logged as `[TeamsAdapter] bot server error`.
     async fn listen(&self, app: Arc<TeamsApp>, host: &str, port: u16) -> anyhow::Result<()> {
         let listener = tokio::net::TcpListener::bind((host, port)).await?;
+        #[cfg(test)]
         let addr = listener.local_addr()?;
         let shutdown = CancellationToken::new();
         let router = Self::bot_router(Arc::clone(&app));
@@ -1380,6 +1381,7 @@ impl TeamsAdapterService {
         *self.server.lock() = Some(BotServer {
             shutdown,
             task,
+            #[cfg(test)]
             addr,
         });
         *self.app.write() = Some(app);
@@ -2595,7 +2597,7 @@ impl TeamsAdapterService {
 
     /// The address the bot's listener is bound to, while it runs.
     #[cfg(test)]
-    fn bound_addr(&self) -> Option<SocketAddr> {
+    fn bound_addr(&self) -> Option<std::net::SocketAddr> {
         self.server.lock().as_ref().map(|s| s.addr)
     }
 }

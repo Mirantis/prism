@@ -848,7 +848,6 @@ impl SlackAdapterService {
         let include_feedback = channel_context.and_then(|c| c.include_feedback) == Some(true);
         let attachments: &[AttachmentMeta] = message.attachments.as_deref().unwrap_or(&[]);
         let row = &message.inner;
-        let tool_calls = tool_call_list(row.tool_calls.as_ref());
 
         // If channelContext is provided and it's for Slack, deliver to that channel
         if let Some(context) = channel_context.filter(|c| c.channel == ChannelName::Slack)
@@ -2705,7 +2704,7 @@ impl SlackAdapterService {
                     channel_id
                 );
                 let result = self
-                    .verify_and_link_channel(&code, channel_id, slack_user_id, Some(team_id))
+                    .verify_and_link_channel(&code, channel_id, Some(team_id))
                     .await;
                 // A six-hex message without a mention is often not a code at all, such as a short commit SHA.
                 if !result.success && !is_mentioned {
@@ -3336,7 +3335,6 @@ impl SlackAdapterService {
         &self,
         code: &str,
         channel_id: &str,
-        slack_user_id: &str,
         team_id: Option<&str>,
     ) -> LinkResult {
         let verified: anyhow::Result<LinkResult> = async {

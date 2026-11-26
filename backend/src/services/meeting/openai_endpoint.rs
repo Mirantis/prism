@@ -60,10 +60,6 @@ pub(crate) fn url_host(url: &url::Url) -> String {
 ///
 /// Keep the same transport constraints for managed and explicit endpoints:
 /// remote credentials require TLS, while local test servers may use plaintext.
-fn resolve_realtime_base() -> anyhow::Result<String> {
-    resolve_realtime_base_from(CONFIG.openai_realtime_url.as_deref())
-}
-
 fn resolve_realtime_base_from(configured: Option<&str>) -> anyhow::Result<String> {
     let override_url = configured
         .filter(|url| !url.is_empty())

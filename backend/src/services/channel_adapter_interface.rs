@@ -311,8 +311,8 @@ pub trait ChannelAdapter: Send + Sync {
     /// guidelines in the prompt of a turn that continues the thread.
     async fn thread_destination(
         &self,
-        thread_id: &str,
-        origin_channel_id: Option<&str>,
+        _thread_id: &str,
+        _origin_channel_id: Option<&str>,
     ) -> Option<anyhow::Result<ChannelDestination>> {
         None
     }
@@ -323,8 +323,8 @@ pub trait ChannelAdapter: Send + Sync {
     /// has linked neither.
     async fn default_destination(
         &self,
-        agent_id: &str,
-        user_id: &str,
+        _agent_id: &str,
+        _user_id: &str,
     ) -> Option<anyhow::Result<Option<DefaultDestination>>> {
         None
     }
@@ -333,7 +333,11 @@ pub trait ChannelAdapter: Send + Sync {
     /// messages in a queue of its own. `message` is the newest message the reply
     /// owes an answer. A channel without it starts the reply's turn at once.
     /// `Some(())` when the channel took the reply.
-    fn continue_reply(&self, message: &ConversationMessage, resumed: &ResumedReply) -> Option<()> {
+    fn continue_reply(
+        &self,
+        _message: &ConversationMessage,
+        _resumed: &ResumedReply,
+    ) -> Option<()> {
         None
     }
 
@@ -341,13 +345,13 @@ pub trait ChannelAdapter: Send + Sync {
     /// such as a task notification, for a channel that answers its messages in a
     /// queue of its own. A channel without it starts the answer's turn at once.
     /// `Some(())` when the channel took the message.
-    fn answer_stored(&self, message: &ConversationMessage) -> Option<()> {
+    fn answer_stored(&self, _message: &ConversationMessage) -> Option<()> {
         None
     }
 
     /// The ids of the agent's linked shared channels, which a webhook or a
     /// scheduled task can choose to post to.
-    async fn linked_channel_ids(&self, agent_id: &str) -> Option<anyhow::Result<Vec<String>>> {
+    async fn linked_channel_ids(&self, _agent_id: &str) -> Option<anyhow::Result<Vec<String>>> {
         None
     }
 
@@ -380,7 +384,7 @@ pub trait ChannelAdapter: Send + Sync {
     /// The agent's linked channels and DMs on this platform.
     async fn list_linked_targets(
         &self,
-        agent_id: &str,
+        _agent_id: &str,
     ) -> Option<anyhow::Result<Vec<LinkedTarget>>> {
         None
     }
@@ -394,9 +398,9 @@ pub trait ChannelAdapter: Send + Sync {
     /// platform.
     async fn post_to_target(
         &self,
-        target: &LinkedTarget,
-        text: &str,
-        thread: Option<&str>,
+        _target: &LinkedTarget,
+        _text: &str,
+        _thread: Option<&str>,
     ) -> Option<anyhow::Result<PostedMessage>> {
         None
     }
