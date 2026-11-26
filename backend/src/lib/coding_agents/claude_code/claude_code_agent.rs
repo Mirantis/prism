@@ -11,8 +11,9 @@
 //! `CLAUDE_CONFIG_DIR`, so the CLI's own state (sessions, `.claude.json`) stays
 //! out of the data-dir root and the user's real `~/.claude` is never touched.
 //! The CLI discovers skills under `$CLAUDE_CONFIG_DIR/skills`, a symlink to the
-//! environment's skills dir: both read the same bytes. Its MCP servers are the
-//! runtime's own, given in a config file written for each task (`mcp_config`).
+//! environment's skills dir: both read the same bytes. It gets the runtime's MCP
+//! servers in a config file written for each task (`mcp_config`), added to the
+//! servers the CLI loads itself.
 
 use std::sync::Arc;
 
@@ -241,8 +242,8 @@ fn permission_mode_for(task: &CodingAgentTask, settings: &Settings) -> Permissio
 /// permission flags, `--settings` on the subscription, `--append-system-prompt`
 /// with the plan instruction and the caller's text joined by a blank line,
 /// `--model` and `--effort` only when the task names them, `--resume`,
-/// `--disallowed-tools AskUserQuestion`, `--mcp-config`, `--strict-mcp-config`
-/// and `--debug`, in that order.
+/// `--disallowed-tools AskUserQuestion`, `--mcp-config` and `--debug`, in that
+/// order.
 fn build_args(
     task: &CodingAgentTask,
     on_bedrock: bool,
@@ -322,13 +323,11 @@ fn build_args(
     }
     args.push("--disallowed-tools".to_string());
     args.push("AskUserQuestion".to_string());
-    // Strict, so the CLI's MCP servers are the runtime's alone: an `.mcp.json` in
-    // the working directory adds none, also when the runtime has none to give.
+    // Added to the servers the CLI loads itself; a server of the same name loses.
     if let Some(path) = mcp_config_path {
         args.push("--mcp-config".to_string());
         args.push(path.to_string());
     }
-    args.push("--strict-mcp-config".to_string());
     if task.debug == Some(true) {
         args.push("--debug".to_string());
     }

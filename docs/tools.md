@@ -169,8 +169,12 @@ pass `agent: "claude-code"` or `agent: "codex"` to choose one for a task, or omi
 `agent` to use the `CODING_AGENT` default. Use the same `agent` with a returned
 `sessionId` to resume a task.
 A Claude Code task has the agent's [MCP tools](#external-tools-mcp), plugin
-tools included, and no others: a repository's `.mcp.json` and servers added
-with `claude mcp add` add none. In a conversation you start with `prism` inside
+tools included. It also has the MCP servers Claude Code loads itself. On your
+Claude subscription these include your claude.ai connectors, and a repository's
+`.mcp.json` adds its servers. The agent's own tools keep their names when a
+server of the same name is loaded too. Claude Code calls claude.ai connectors
+through `mcp-proxy.anthropic.com`, so the sandbox's network policy must allow
+that host. In a conversation you start with `prism` inside
 a repository while commands [run in a container](#where-commands-run), the task
 leaves out plugin servers that start a command, because those run in the
 container.

@@ -1,8 +1,10 @@
-// The demo plugin's stdio MCP server: one tool that answers a fixed marker.
+// The demo plugin's stdio MCP server: one tool that answers a marker, the first
+// argument or `PLUGIN_MCP_TOOL_OK`.
 //
 // Hand-rolled JSON-RPC rather than the MCP SDK: the plugin is copied to a temp
 // dir with no `node_modules` above it, so an import would not resolve. A client
 // needs three methods.
+const marker = process.argv[2] ?? 'PLUGIN_MCP_TOOL_OK';
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 
 const handle = (message) => {
@@ -34,7 +36,7 @@ const handle = (message) => {
     send({
       jsonrpc: '2.0',
       id: message.id,
-      result: { content: [{ type: 'text', text: 'PLUGIN_MCP_TOOL_OK' }] },
+      result: { content: [{ type: 'text', text: marker }] },
     });
   } else if (message.id !== undefined) {
     // A notification has no id and wants no reply.

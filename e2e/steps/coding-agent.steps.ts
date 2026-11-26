@@ -16,12 +16,12 @@ import { DEFAULT_AGENT_ID, E2E_DATA_DIR, E2E_WORKSPACE } from '../fixtures/test-
 
 const { Given, Then, After } = createBdd();
 
-/** The Claude Code settings file a scenario wrote, removed again after it. */
-let writtenSettings: string | undefined;
+/** The files a scenario wrote, removed again after it. */
+let written: string[] = [];
 
 After(async () => {
-  if (writtenSettings) fs.rmSync(writtenSettings, { force: true });
-  writtenSettings = undefined;
+  for (const file of written) fs.rmSync(file, { force: true });
+  written = [];
 });
 
 Given('the coding agent\'s settings deny writing {string}', async ({}, filename: string) => {
@@ -32,13 +32,28 @@ Given('the coding agent\'s settings deny writing {string}', async ({}, filename:
   // The runtime's Claude Code home, with no CLAUDE_CONFIG_DIR set.
   const home = path.join(E2E_DATA_DIR, '.claude');
   fs.mkdirSync(home, { recursive: true });
-  writtenSettings = path.join(home, 'settings.json');
+  const settings = path.join(home, 'settings.json');
+  written.push(settings);
   // A deny rule refuses the action in every permission mode, so the refusal
   // does not depend on what the auto-mode classifier makes of the request.
-  fs.writeFileSync(writtenSettings, JSON.stringify({
+  fs.writeFileSync(settings, JSON.stringify({
     permissions: { deny: [`Write(**/${filename})`, `Edit(**/${filename})`] },
   }));
 });
+
+Given(
+  'the workspace\'s .mcp.json has a server {string} that answers {string}',
+  async ({}, name: string, marker: string) => {
+    fs.mkdirSync(E2E_WORKSPACE, { recursive: true });
+    const server = path.join(E2E_WORKSPACE, 'workspace-mcp-probe.mjs');
+    const config = path.join(E2E_WORKSPACE, '.mcp.json');
+    written.push(server, config);
+    fs.copyFileSync(path.join(__dirname, '..', 'fixtures', 'plugin-mcp-probe.mjs'), server);
+    fs.writeFileSync(config, JSON.stringify({
+      mcpServers: { [name]: { type: 'stdio', command: 'node', args: [server, marker] } },
+    }));
+  },
+);
 
 Then('the activity shows a {string} tool call', async ({ page, $testInfo }, label: string) => {
   await expect(
