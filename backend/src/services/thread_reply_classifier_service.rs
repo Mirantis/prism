@@ -204,7 +204,7 @@ fn system_prompt(platform_name: &str, agent: &GateAgent) -> String {
         "  An instruction counts even when it asks for no answer, because the agent acts on it by doing the work.".to_string(),
         "- action: \"no_reply\" if the last message gives the agent nothing to do. It answers, thanks or asks another person or bot about work that is theirs or that they took on, it continues an exchange that the agent takes no part in, or it asks for work that another bot does or a person took on. A greeting, a thanks or an aside is also \"no_reply\".".to_string(),
         String::new(),
-        "Decide by whether the agent has something to do, not by whether the message is a question or whom it names. A question to another member is \"no_reply\", also when the agent knows the answer.".to_string(),
+        "Decide by whether the agent has something to do, not by whether the message is a question or whom it names. A question to another member that gives the agent nothing to do is \"no_reply\", also when the agent knows the answer.".to_string(),
     ]
     .join("\n")
 }

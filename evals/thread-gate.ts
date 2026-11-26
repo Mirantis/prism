@@ -146,6 +146,17 @@ const CASES: GateCase[] = [
     ],
   },
   {
+    id: 'question-to-person-meets-wait',
+    expect: 'A question to another person that also says the condition the agent waits for is met is acted on.',
+    platform: 'slack',
+    label: 'respond',
+    thread: [
+      ['ana', 'Atlas, deploy billing-api v3.2 today'],
+      ['agent', 'billing-api v3.2 needs the orders migration first. I will deploy it when the migration is done.'],
+      ['ben', '<@U01ANA0001:Ana Example> the migration is done, can you check the dashboards?'],
+    ],
+  },
+  {
     id: 'tag-other-and-agent-work',
     expect: 'A message that tags a colleague and also gives the agent work is acted on.',
     platform: 'slack',
