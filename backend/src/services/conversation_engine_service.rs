@@ -1588,10 +1588,11 @@ impl ConversationEngineService {
                 .collect();
             if !shown.is_empty() {
                 // A step that called a tool is not the turn's last, so its text goes out
-                // now and the UI shows after it.
+                // now and the UI shows after it. The text introduces the UI, so the
+                // person sees it in concise mode too.
                 if let Some(buffered) = buffered_step.take() {
                     agent_message = Some(
-                        store_step(
+                        publish_step(
                             &params,
                             &buffered,
                             buffered_placed.take(),
@@ -1699,8 +1700,12 @@ impl ConversationEngineService {
             );
         }
 
-        // The turn ended on a UI: its later calls stay for the model, and nothing empty shows.
-        if ui_shown && buffered_step.is_none() && !pending_tool_calls.is_empty() {
+        // The turn ended on a UI: its later calls stay for the model, the files it still
+        // owes go out, and nothing empty shows.
+        if ui_shown
+            && buffered_step.is_none()
+            && (!pending_tool_calls.is_empty() || !all_attachment_ids.is_empty())
+        {
             if all_attachment_ids.is_empty() {
                 let mut row =
                     MessageInput::new(String::new(), MessageRole::Agent, MessageTrigger::UserInput);
@@ -1807,21 +1812,34 @@ async fn store_step(
     all_attachment_ids: &mut Vec<String>,
     images: &mut TurnImages,
 ) -> anyhow::Result<ConversationMessage> {
-    if !params.verbose {
-        let mut row = MessageInput::new(
-            step.text.clone(),
-            MessageRole::Agent,
-            MessageTrigger::UserInput,
-        );
-        row.tool_calls = non_empty(tool_calls)
-            .map(serde_json::to_value)
-            .transpose()?;
-        row.internal_step = Some(true);
-        return Ok(CONVERSATION_SERVICE
-            .add_message(&params.thread_id, row)
-            .await?
-            .message);
+    if params.verbose {
+        return publish_step(params, step, placed, tool_calls, all_attachment_ids, images).await;
     }
+    let mut row = MessageInput::new(
+        step.text.clone(),
+        MessageRole::Agent,
+        MessageTrigger::UserInput,
+    );
+    row.tool_calls = non_empty(tool_calls)
+        .map(serde_json::to_value)
+        .transpose()?;
+    row.internal_step = Some(true);
+    Ok(CONVERSATION_SERVICE
+        .add_message(&params.thread_id, row)
+        .await?
+        .message)
+}
+
+/// Delivers a text step that is not the turn's last, with the images its text places
+/// and no feedback buttons.
+async fn publish_step(
+    params: &StreamTurnParams,
+    step: &InvokeStep,
+    placed: Option<PlacedImages>,
+    tool_calls: &[ToolCallRecord],
+    all_attachment_ids: &mut Vec<String>,
+    images: &mut TurnImages,
+) -> anyhow::Result<ConversationMessage> {
     let placed = match placed {
         Some(placed) => placed,
         None => {

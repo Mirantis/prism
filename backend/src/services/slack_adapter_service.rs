@@ -926,11 +926,18 @@ impl SlackAdapterService {
             return Ok(());
         };
         let slack_app = self.get_app_for_team(&connection.team_id).await;
+        // A press finds its UI by the one ts the row keeps, so a UI posts once: to
+        // the main channel when there is one, else to the DM.
+        let ui_goes_to_channel = main_channel_id.is_some()
+            && crate::services::generated_ui::generated_ui_schema::is_generated_ui(
+                row.blocks.as_ref(),
+            );
 
         for mapping in &mappings {
             // Deliver to DM channel (personal mode)
             if let Some(dm_channel_id) =
                 mapping.dm_channel_id.as_deref().filter(|id| !id.is_empty())
+                && !ui_goes_to_channel
             {
                 let Some(slack_app) = &slack_app else {
                     log_warn!("Slack app not found for team {}", connection.team_id);

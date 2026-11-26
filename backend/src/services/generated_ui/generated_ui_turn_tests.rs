@@ -7,8 +7,9 @@ use diesel::prelude::*;
 use futures::StreamExt;
 use serde_json::{Value, json};
 
+use crate::db::models::NewMessageAttachment;
 use crate::db::models::{ConversationMessage, MessageRole};
-use crate::db::schema::agent_workspaces;
+use crate::db::schema::{agent_workspaces, message_attachments};
 use crate::services::conversation_engine_service::{CONVERSATION_ENGINE_SERVICE, ChatInput};
 use crate::services::question_cards::question_card_service::tests::{
     THREAD, USER, agent, agent_id, rows,
@@ -117,7 +118,7 @@ async fn in_verbose_mode_the_ui_shows_after_the_text_of_its_step_and_before_late
 
 #[tokio::test]
 #[serial_test::serial]
-async fn in_concise_mode_the_person_sees_the_ui_and_the_final_reply() {
+async fn in_concise_mode_the_person_sees_the_text_before_the_ui_the_ui_and_the_final_reply() {
     let _db = agent().await;
     model(vec![
         step("Let me draw it.", vec![shown(true)]),
@@ -128,9 +129,84 @@ async fn in_concise_mode_the_person_sees_the_ui_and_the_final_reply() {
         .into_iter()
         .filter(|(visible, _, _)| *visible)
         .collect();
+    assert_eq!(shown_rows.len(), 3);
+    assert_eq!(shown_rows[0].2, "Let me draw it.");
+    assert!(shown_rows[1].1, "the UI comes after its text");
+    assert_eq!(shown_rows[2].2, "Monday was the busiest.");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn in_concise_mode_the_text_before_the_ui_shows_when_the_last_step_is_empty() {
+    let _db = agent().await;
+    model(vec![
+        step(
+            "Wednesday frees the most time. Here are the three slots.",
+            vec![shown(true)],
+        ),
+        step("", vec![]),
+    ]);
+    chat().await;
+    let shown_rows: Vec<(bool, bool, String)> = agent_rows(rows(THREAD).await)
+        .into_iter()
+        .filter(|(visible, _, _)| *visible)
+        .collect();
     assert_eq!(shown_rows.len(), 2);
-    assert!(shown_rows[0].1, "the UI comes first");
-    assert_eq!(shown_rows[1].2, "Monday was the busiest.");
+    assert_eq!(
+        shown_rows[0].2,
+        "Wednesday frees the most time. Here are the three slots."
+    );
+    assert!(shown_rows[1].1, "the UI comes after its text");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_file_shared_earlier_goes_out_when_the_turn_ends_on_the_ui() {
+    let _db = agent().await;
+    let mut file = NewMessageAttachment::new("report.csv", "text/csv", 3, "text", "agent");
+    file.id = "att-report".into();
+    file.thread_id = Some(THREAD.into());
+    file.data = Some(b"a,b".to_vec());
+    crate::db::run(move |conn| {
+        diesel::insert_into(message_attachments::table)
+            .values(&file)
+            .execute(conn)?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let shared: ToolCallRecord = serde_json::from_value(json!({
+        "tool": "share_file",
+        "input": "{\"path\":\"report.csv\"}",
+        "output": "",
+        "success": true,
+        "timestamp": "2025-01-01"
+    }))
+    .unwrap();
+    model(vec![
+        InvokeStep {
+            attachment_ids: Some(vec!["att-report".into()]),
+            ..step("", vec![shared])
+        },
+        step("Here is the report.", vec![shown(true)]),
+        step("", vec![]),
+    ]);
+    chat().await;
+    let all = rows(THREAD).await;
+    let linked: Option<String> = crate::db::run(|conn| {
+        Ok(message_attachments::table
+            .find("att-report")
+            .select(message_attachments::message_id)
+            .first::<Option<String>>(conn)?)
+    })
+    .await
+    .unwrap();
+    let holder = all
+        .iter()
+        .find(|row| Some(&row.id) == linked.as_ref())
+        .expect("the file is linked to a message");
+    assert_eq!(holder.role, MessageRole::Agent);
+    assert!(!holder.internal_step, "the person sees the file");
 }
 
 #[tokio::test]

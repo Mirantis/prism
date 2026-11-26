@@ -400,12 +400,19 @@ async fn compacts_a_database_thread_at_the_threshold_from_the_turns_own_request(
 
 #[tokio::test]
 #[serial_test::serial]
-async fn advances_the_watermark_of_a_live_read_thread_and_flags_only_internal_step_rows() {
+async fn advances_the_watermark_of_a_live_read_thread_and_flags_only_the_database_rows() {
     let test = test_db();
-    seed(&test, "auto-slack", ThreadSource::Slack, &["i0", "s0"]);
+    seed(
+        &test,
+        "auto-slack",
+        ThreadSource::Slack,
+        &["p0", "i0", "s0"],
+    );
     let model = Scripted::answering("THE SUMMARY");
     let mut live = fork("auto-slack", model);
-    live.fork.context_rows = vec![
+    let mut context = vec![
+        // The press of a generated UI button: a stored user row with no Slack ts.
+        row("p0", true, 50),
         ForkRow {
             external_message_id: Some("1700.0002".into()),
             ..row("s0", false, 50)
@@ -414,6 +421,14 @@ async fn advances_the_watermark_of_a_live_read_thread_and_flags_only_internal_st
             internal_step: true,
             ..row("i0", false, 50)
         },
+    ];
+    // Enough replies after the press that the kept tail starts on the newest request.
+    context.extend((3..8).map(|i| ForkRow {
+        external_message_id: Some(format!("1700.000{i}")),
+        ..row(&format!("r{i}"), false, 50)
+    }));
+    live.fork.context_rows = context;
+    live.fork.context_rows.extend([
         ForkRow {
             external_message_id: Some("1700.0010".into()),
             ..row("s1", false, 50)
@@ -422,14 +437,14 @@ async fn advances_the_watermark_of_a_live_read_thread_and_flags_only_internal_st
             external_message_id: Some("1700.0011".into()),
             ..row("s2", true, 50)
         },
-    ];
+    ]);
 
     COMPACTION_SERVICE.maybe_auto_compact(live);
     settled("auto-slack").await;
 
     // Rows read from the channel have synthesized ids that match nothing in the
-    // database: only the internal-step row is flag-flipped.
-    assert_eq!(compacted_ids(&test, "auto-slack"), ["i0"]);
+    // database: only the internal-step and press rows are flag-flipped.
+    assert_eq!(compacted_ids(&test, "auto-slack"), ["p0", "i0"]);
     let (summary, through, _) = stored_thread(&test, "auto-slack");
     assert_eq!(summary.as_deref(), Some("THE SUMMARY"));
     assert_eq!(through.as_deref(), Some("1700.0010"));

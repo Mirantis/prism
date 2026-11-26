@@ -6,11 +6,11 @@ import { formatShare, formatValue, niceScale, seriesColor } from './chart-scale'
 import { LinePlot } from './line-plot';
 import { PiePlot } from './pie-plot';
 
-/** The chart's numbers as a table, for a screen reader. */
+/** The chart's numbers as a table, for a screen reader. The caption includes the values' unit, which the drawing shows on its axis. */
 function ChartTable({ chart }: { chart: GeneratedUiChart }) {
   return (
     <table className="sr-only">
-      <caption>{chart.title}</caption>
+      <caption>{chart.yLabel ? `${chart.title} (${chart.yLabel})` : chart.title}</caption>
       <thead>
         <tr>
           <th scope="col">{chart.xLabel ?? 'Category'}</th>

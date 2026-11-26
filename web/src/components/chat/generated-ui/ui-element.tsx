@@ -1,5 +1,5 @@
 import type { Viewer } from '@/lib/chat-socket/protocol';
-import type { Attachment, GeneratedUiBlock, GeneratedUiPress } from '@/types';
+import type { Attachment, GeneratedUiBlock } from '@/types';
 import { ActionsElement } from './actions-element';
 import { ButtonElement } from './button-element';
 import { CardElement } from './card-element';
@@ -12,6 +12,7 @@ import { HeadingElement } from './heading-element';
 import { ImageElement } from './image-element';
 import { LinkButtonElement } from './link-button-element';
 import { NoteElement } from './note-element';
+import { pressedNote } from './pressed-note';
 import { TableElement } from './table-element';
 import { TextElement } from './text-element';
 
@@ -25,11 +26,6 @@ export interface UiScope {
   /** The id of the line that says who pressed. */
   pressedNoteId: string;
   onPress: (elementId: string) => void;
-}
-
-function pressedNote(pressed: GeneratedUiPress, viewer: Viewer | undefined): string {
-  if (!pressed.by) return 'Pressed';
-  return pressed.by.id === viewer?.id ? 'Pressed by you' : `Pressed by ${pressed.by.name}`;
 }
 
 /** Draws the element with this id by its type, its children inside it. A type this client does not know draws nothing. */

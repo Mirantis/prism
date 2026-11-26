@@ -150,8 +150,11 @@ describe('GeneratedUi presses', () => {
   it('sends the pressed element id and shows the pressed block the route returns', async () => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(answer(200, { ui: { ...PRESSED, pressed: { ...PRESSED.pressed!, by: ADA } } }));
     show(DEPLOYS);
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
     fireEvent.click(button('Keep it'));
     await waitFor(() => expect(screen.getByTestId('generated-ui-pressed')).toHaveTextContent('Pressed by you'));
+    // The pressed button is disabled while it has focus, so the mounted status region says what happened.
+    expect(screen.getByRole('status')).toHaveTextContent('Pressed by you');
     expect(fetch).toHaveBeenCalledWith('/agents/generated-ui/ui-1/press', expect.objectContaining({ method: 'POST', body: JSON.stringify({ elementId: 'keep' }) }));
     expect(button('Keep it')).toBeDisabled();
     expect(button('Keep it')).toHaveAccessibleDescription('Pressed by you');
@@ -177,6 +180,7 @@ describe('GeneratedUi presses', () => {
     show(DEPLOYS);
     fireEvent.click(button('Roll back Wednesday'));
     await waitFor(() => expect(screen.getByTestId('generated-ui-pressed')).toHaveTextContent('Pressed by Grace Example'));
+    expect(screen.getByRole('status')).toHaveTextContent('Pressed by Grace Example');
     expect(button('Keep it')).toHaveAccessibleDescription('Pressed by Grace Example');
     expect(button('Roll back Wednesday')).toBeDisabled();
     expect(screen.queryByRole('alert')).toBeNull();
@@ -186,7 +190,9 @@ describe('GeneratedUi presses', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(answer(202, { ui: PRESSED, replyPending: true }));
     show(DEPLOYS);
     fireEvent.click(button('Keep it'));
-    expect(await screen.findByText('Your choice is saved. The reply is delayed.')).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Your choice is saved. The reply is delayed.'));
+    expect(screen.getByTestId('generated-ui-notice')).toHaveTextContent('Your choice is saved. The reply is delayed.');
+    expect(screen.getByTestId('generated-ui-notice')).toHaveAttribute('aria-hidden', 'true');
   });
 
   it('keeps the buttons and says so when the press fails', async () => {
@@ -223,6 +229,7 @@ describe('GeneratedUi pressed state', () => {
     view.rerender(<GeneratedUi block={PRESSED} viewer={ADA} attachments={null} />);
     expect(button('Keep it')).toBeDisabled();
     expect(screen.getByTestId('generated-ui-pressed')).toHaveTextContent('Pressed by Grace Example');
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
   });
 });
 

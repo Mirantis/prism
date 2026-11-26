@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use crate::protocol::chat_protocol::{
     GeneratedUiElement, UiButtonStyle, UiChartKind, UiChartProps, UiChecklistItem,
 };
-use crate::services::generated_ui::generated_ui_schema::IMAGE_SCHEME;
+use crate::services::generated_ui::generated_ui_schema::{IMAGE_SCHEME, MAX_TABLE_CHARS};
 use crate::support::js::len16;
 use crate::utils::slack_formatter::describe_images;
 use crate::utils::text_chunker::split_content;
@@ -23,8 +23,6 @@ pub const BLOCK_PREFIX: &str = "generated_ui:";
 
 pub const MAX_BLOCKS: usize = 50;
 pub const MAX_MARKDOWN_CHARS: usize = 12_000;
-pub const MAX_TABLE_CHARS: usize = 10_000;
-pub const MAX_CHARTS: usize = 2;
 const MAX_FIELD_CHARS: usize = 2_000;
 
 /// The text length Slack advises for one message. A longer text version posts as several messages.
@@ -212,7 +210,9 @@ impl Mapping<'_> {
             }
             GeneratedUiElement::Chart { props } => chart(props),
             GeneratedUiElement::Checklist { props } => checklist(&props.items),
-            // An image whose upload failed shows its description.
+            // An image whose upload failed shows its description. Slack's image block
+            // takes only PNG, JPEG and GIF, which is why the service limits every
+            // channel's UI images to those types.
             GeneratedUiElement::Image { props } => {
                 let id = props
                     .attachment
@@ -287,7 +287,6 @@ pub fn generated_ui_issues(
         .flat_map(|row| row.as_array().cloned().unwrap_or_default())
         .map(|cell| text_of(&cell))
         .sum();
-    let charts = of_type("data_visualization").count();
 
     let mut issues = Vec::new();
     if blocks.len() > MAX_BLOCKS {
@@ -304,11 +303,6 @@ pub fn generated_ui_issues(
     if table > MAX_TABLE_CHARS {
         issues.push(format!(
             "the table cells hold {table} characters in Slack; the most is {MAX_TABLE_CHARS}. Use fewer or shorter cells."
-        ));
-    }
-    if charts > MAX_CHARTS {
-        issues.push(format!(
-            "the UI has {charts} charts; Slack shows at most {MAX_CHARTS} in one message. Use fewer charts."
         ));
     }
     for (id, element) in elements {

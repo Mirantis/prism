@@ -35,7 +35,7 @@ use super::generated_ui_text::generated_ui_text;
 /// The `trigger_name` of a stored message that is the press of a button.
 pub const PRESS_TRIGGER_NAME: &str = "generated_ui_press";
 
-/// The media types Slack's image block takes, and so every channel.
+/// The image media types every channel shows.
 const IMAGE_TYPES: [&str; 3] = ["image/png", "image/jpeg", "image/gif"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]

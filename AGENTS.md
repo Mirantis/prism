@@ -884,7 +884,7 @@ There are three entry points for chat, all handled locally by the agent-runtime:
 
 In every case, `conversation_engine_service.chat()` manages the thread, **iterates `invoke_stream()` directly** (no queue, no HTTP), and `message_delivery_service.publish()`'es each text-bearing step the moment its `onStepFinish` fires. Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack), so users see intermediate text from multi-step responses in real time instead of one big block at the end.
 
-The engine keeps a **one-step buffer**: it can't know a step is the last text step until the next step (or stream end) arrives, so the last publish is the one that carries the accumulated UI `blocks` and the `should_show_feedback` decision. Earlier steps publish with `include_feedback: false` and no blocks.
+The engine keeps a **one-step buffer**: it can't know a step is the last text step until the next step (or stream end) arrives, so the last publish is the one that carries the `should_show_feedback` decision and the files the turn still owes. Earlier steps publish with `include_feedback: false` (in concise mode they are stored as hidden internal steps instead). A step that calls `show_ui` flushes the buffer early: its text is delivered in both modes, because it introduces the UI, and each UI then posts as a message of its own (`generated_ui_service.publish()`). When the turn ends on a UI, the files it still owes go out in a message of their own.
 
 The management `POST /agents/chat` endpoint remains available for internal/debug use.
 
