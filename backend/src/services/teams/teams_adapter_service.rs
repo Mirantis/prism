@@ -1386,30 +1386,33 @@ impl TeamsAdapterService {
         Ok(())
     }
 
-    /// Serve `app` for `connection` on `host:port`. A failure is logged as
-    /// `[TeamsAdapter] failed to initialize` and leaves the adapter idle.
+    /// Serve the app for `connection` on `host` and the port beside it. A failure,
+    /// a bad port included, is logged as `[TeamsAdapter] failed to initialize` and
+    /// leaves the adapter idle.
     async fn start(
         &self,
         connection: TeamsConnectionRecord,
-        app: anyhow::Result<Arc<TeamsApp>>,
+        target: anyhow::Result<(Arc<TeamsApp>, u16)>,
         host: &str,
-        port: u16,
     ) {
         *self.connection.write() = Some(connection.clone());
-        let started = match app {
-            Ok(app) => self.listen(app, host, port).await,
+        let started = match target {
+            Ok((app, port)) => self.listen(app, host, port).await.map(|()| port),
             Err(err) => Err(err),
         };
-        if let Err(err) = started {
-            log_error!(
-                json!({ "err": err_json(&err) }),
-                "[TeamsAdapter] failed to initialize"
-            );
-            *self.app.write() = None;
-            *self.server.lock() = None;
-            *self.connection.write() = None;
-            return;
-        }
+        let port = match started {
+            Ok(port) => port,
+            Err(err) => {
+                log_error!(
+                    json!({ "err": err_json(&err) }),
+                    "[TeamsAdapter] failed to initialize"
+                );
+                *self.app.write() = None;
+                *self.server.lock() = None;
+                *self.connection.write() = None;
+                return;
+            }
+        };
 
         log_info!(
             json!({
@@ -2742,13 +2745,11 @@ impl ChannelAdapter for TeamsAdapterService {
         )
         .await
         .map(Arc::new);
-        match CONFIG.teams_port.clone() {
-            Ok(port) => self.start(connection, app, &CONFIG.host, port).await,
-            Err(reason) => {
-                let app = app.and_then(|_| Err(anyhow::anyhow!(reason)));
-                self.start(connection, app, &CONFIG.host, 0).await
-            }
-        }
+        let target = app.and_then(|app| {
+            let port = CONFIG.teams_port.clone().map_err(anyhow::Error::msg)?;
+            Ok((app, port))
+        });
+        self.start(connection, target, &CONFIG.host).await;
         Ok(())
     }
 

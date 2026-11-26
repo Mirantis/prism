@@ -2,7 +2,6 @@
 //! provider sends through, `postJsonToApi`, and Anthropic's error response handler.
 
 use std::sync::{Arc, LazyLock};
-use std::time::Duration;
 
 use bytes::Bytes;
 use futures::future::BoxFuture;
@@ -11,19 +10,13 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::ai::errors::SharedError;
+use crate::ai::fetch_timeouts::{CONNECT_TIMEOUT, READ_TIMEOUT};
 use crate::ai::generate_text::with_user_agent_suffix;
 use crate::ai::json::{js_stringify, secure_json_parse};
 use crate::ai::{AbortError, ApiCallError, Headers};
 
 /// The `@ai-sdk/provider-utils` version the request's `user-agent` names.
 pub const PROVIDER_UTILS_VERSION: &str = "5.0.58";
-
-/// How long Node's `fetch` waits for response headers, and between two body
-/// chunks, before it fails the request.
-const READ_TIMEOUT: Duration = Duration::from_secs(300);
-
-/// How long Node's `fetch` (undici) waits for a connection.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// One HTTP request a provider sends: always a `POST` of a JSON text.
 #[derive(Debug, Clone)]

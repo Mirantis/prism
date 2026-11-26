@@ -2,7 +2,6 @@
 //! SDK builds from a configuration: Streamable HTTP and legacy SSE.
 
 use std::sync::{Arc, LazyLock};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use indexmap::IndexMap;
@@ -13,6 +12,7 @@ use super::http_transport::HttpMCPTransport;
 use super::sse_transport::SseMCPTransport;
 use super::types::LATEST_PROTOCOL_VERSION;
 use crate::ai::AbortError;
+use crate::ai::fetch_timeouts::CONNECT_TIMEOUT;
 
 /// Called with each message the server sends. An error is what the handler
 /// threw; the transport reports it as it reports its own.
@@ -103,14 +103,13 @@ pub fn create_mcp_transport(config: MCPTransportConfig) -> anyhow::Result<Arc<dy
     })
 }
 
-/// Node's global `fetch`: no proxy, a redirect fails the request, and undici's default
-/// timeouts of ten seconds to connect and five minutes for the response headers and
-/// between body reads.
+/// Node's global `fetch`: no proxy, a redirect fails the request, and a connect fails
+/// after undici's ten seconds. The client sets no read timeout, because a notification
+/// stream is idle by design; each JSON-RPC request has its own deadline instead.
 pub(crate) static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .no_proxy()
-        .connect_timeout(Duration::from_secs(10))
-        .read_timeout(Duration::from_secs(300))
+        .connect_timeout(CONNECT_TIMEOUT)
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             attempt.error("unexpected redirect")
         }))

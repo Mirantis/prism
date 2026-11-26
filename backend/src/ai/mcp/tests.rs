@@ -418,6 +418,20 @@ async fn fails_waiting_requests_when_the_client_closes() {
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn times_out_a_request_the_server_never_answers() {
+    // `null` makes the server leave every call unanswered.
+    let server = FakeServer::new(json!({ "tools": [] }), Value::Null);
+    let client = connect(&server).await;
+
+    let error = client
+        .call_tool("t", json!({}), RequestOptions::default())
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.to_string(), "Request timed out after 300000ms");
+}
+
 #[tokio::test]
 async fn aborts_a_call_whose_signal_fires() {
     let server = FakeServer::new(json!({ "tools": [] }), json!({}));
