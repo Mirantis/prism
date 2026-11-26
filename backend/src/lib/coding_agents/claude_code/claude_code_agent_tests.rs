@@ -668,9 +668,13 @@ fn mcp_harness(child: fn() -> Arc<FakeChild>, files: FakeFiles) -> McpHarness {
 
 impl McpHarness {
     fn start(&self) -> Arc<dyn CodingAgentRun> {
+        self.start_with(base_task())
+    }
+
+    fn start_with(&self, task: CodingAgentTask) -> Arc<dyn CodingAgentRun> {
         create_claude_code_agent(Some(self.environment.clone().arc())).run(CodingAgentTask {
             mcp_servers: servers(),
-            ..base_task()
+            ..task
         })
     }
 
@@ -687,17 +691,17 @@ impl McpHarness {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn gives_the_cli_no_mcp_server_at_all_when_the_runtime_connects_none() {
+async fn passes_no_mcp_config_when_the_runtime_connects_none() {
     let Launch { args, .. } = capture(base_task(), None).await;
     assert!(!args.contains(&"--mcp-config".to_string()));
-    // Strict with no config file: no server, an `.mcp.json` in the workdir included.
-    assert!(args.contains(&"--strict-mcp-config".to_string()));
+    // Strict would drop the CLI's own servers, the person's claude.ai connectors among them.
+    assert!(!args.contains(&"--strict-mcp-config".to_string()));
 }
 
 #[cfg(unix)]
 #[tokio::test]
 #[serial_test::serial]
-async fn points_the_cli_at_a_private_config_file_strictly() {
+async fn points_the_cli_at_a_private_config_file() {
     use std::os::unix::fs::PermissionsExt;
 
     let harness = mcp_harness(FakeChild::new, FakeFiles::local());
@@ -705,9 +709,9 @@ async fn points_the_cli_at_a_private_config_file_strictly() {
     let Launch { args, child, .. } = harness.launched().await;
 
     let config_path = value_of(&args, "--mcp-config").unwrap().to_string();
-    // Next to it, so the variadic `--mcp-config` takes the one path only.
+    // Last, so the variadic `--mcp-config` takes the one path only.
     let at = args.iter().position(|a| a == "--mcp-config").unwrap();
-    assert_eq!(args[at + 2], "--strict-mcp-config");
+    assert_eq!(at + 2, args.len());
     assert_eq!(
         std::fs::read_to_string(&config_path).unwrap(),
         claude_mcp_config(&servers(), true).document
@@ -719,6 +723,23 @@ async fn points_the_cli_at_a_private_config_file_strictly() {
         mode(std::path::Path::new(&config_path).parent().unwrap()),
         0o700
     );
+
+    child.finish(Some(0));
+    collect(&run).await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn ends_the_config_path_before_the_debug_flag() {
+    let harness = mcp_harness(FakeChild::new, FakeFiles::local());
+    let run = harness.start_with(CodingAgentTask {
+        debug: Some(true),
+        ..base_task()
+    });
+    let Launch { args, child, .. } = harness.launched().await;
+
+    let at = args.iter().position(|a| a == "--mcp-config").unwrap();
+    assert_eq!(args[at + 2], "--debug");
 
     child.finish(Some(0));
     collect(&run).await;

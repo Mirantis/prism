@@ -44,6 +44,18 @@ Feature: Coding sub-agent
     And the stored tool calls include "coding_agent" and "coding_agent_status"
     And the stored tool calls do not include "demo__probe__plugin_mcp_probe"
 
+  # @slow: two model turns plus a real Claude Code run on Bedrock. The server is
+  # in the workspace's .mcp.json, which only Claude Code loads.
+  @slow
+  Scenario: The coding sub-agent calls an MCP tool from the workspace's .mcp.json
+    Given the workspace's .mcp.json has a server "workspace-probe" that answers "WORKSPACE_MCP_TOOL_OK"
+    When I navigate to the agent chat page
+    And I type "Use the coding_agent tool exactly once, with maxTurns 5, giving it this prompt: Call the MCP tool mcp__workspace-probe__plugin_mcp_probe and reply with exactly what it returns and nothing else. Then call coding_agent_status with waitMs 30000 until completed is true. Call no other tool. Reply with one line only: RESULT=<the result>." in the chat input
+    And I send the message
+    Then the agent reply contains "WORKSPACE_MCP_TOOL_OK"
+    And no reply is an error
+    And the stored tool calls include "coding_agent" and "coding_agent_status"
+
   # @slow: a real Claude Code run on Bedrock that takes at least 30 seconds, and
   # the two model turns around it. The task's end, not a timer, starts the second.
   # The shell computes the marker's number, so only the task's output holds it.
