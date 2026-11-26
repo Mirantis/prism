@@ -103,7 +103,7 @@ fn hosts(agent: CodingAgentName) -> &'static str {
     match agent {
         CodingAgentName::ClaudeCode => "platform.claude.com, api.anthropic.com and claude.ai",
         CodingAgentName::Codex => "auth.openai.com, chatgpt.com and api.openai.com",
-        CodingAgentName::Agy => "accounts.google.com and antigravity.google",
+        CodingAgentName::Agy => "",
     }
 }
 
@@ -522,6 +522,13 @@ impl Inner {
     }
 
     async fn sign_out(self: &Arc<Self>, agent: CodingAgentName) -> anyhow::Result<CodingAgentRow> {
+        if !SUBSCRIPTION_CODING_AGENTS.contains(&agent) {
+            return Err(SignInUnavailableError(format!(
+                "{} doesn't support subscription sign-in here.",
+                NAMES.get(agent)
+            ))
+            .into());
+        }
         // Ended before the wait, so a confirmation in flight finds its attempt gone.
         self.end(agent, EndReason::SignedOut);
         {
@@ -1164,6 +1171,19 @@ mod tests {
             .unwrap_err();
         assert!(err.downcast_ref::<SignInUnavailableError>().is_some());
         assert_eq!(err.to_string(), "Codex isn't available on this agent.");
+
+        let start_agy = stage.service.start(CodingAgentName::Agy).await.unwrap_err();
+        assert!(start_agy.downcast_ref::<SignInUnavailableError>().is_some());
+        let sign_out_agy = stage
+            .service
+            .sign_out(CodingAgentName::Agy)
+            .await
+            .unwrap_err();
+        assert!(
+            sign_out_agy
+                .downcast_ref::<SignInUnavailableError>()
+                .is_some()
+        );
     }
 
     #[tokio::test]

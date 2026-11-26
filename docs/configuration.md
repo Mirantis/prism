@@ -177,16 +177,15 @@ public HTTPS (see [Microsoft Teams](teams.md#the-public-messaging-endpoint)).
 
 Set `CODING_AGENT` to `claude-code`, `codex`, or `agy` to choose the default coding agent.
 Each coding task can override it with the optional `agent` parameter; the tool lists
-agents available from your credentials. When unset, the default is Claude Code,
-then Codex, then Antigravity CLI when only its credentials are available. Codex also supports Bedrock credentials;
+agents available from your credentials. When unset, the default is the first available
+of Claude Code, Codex and Antigravity CLI, or Claude Code when none is available. Codex also supports Bedrock credentials;
 set `AWS_REGION` to a region with access to `openai.gpt-5.6-terra`.
 
 Codex uses `CODEX_API_KEY` or `OPENAI_API_KEY` first, then a saved `auth.json` login,
 then Bedrock credentials. To reuse a Codex login, set `CODEX_HOME` to its writable
 configuration directory before starting Prism; the default is `<data dir>/.codex`.
 
-Antigravity CLI (`agy`) is available when `agy` is on `PATH` and has `GEMINI_API_KEY`,
-`GOOGLE_API_KEY`, `AGY_ADC_AUTH=true`, or a saved login under `~/.gemini/config/config.json`.
+Antigravity CLI (`agy`) is available when `agy` is on `PATH` and signed in locally.
 
 Coding tasks can select a `model` tier (`small`, `medium`, `large`) and
 `effort` (`low`, `medium`, `high`), including when resuming a session.
@@ -331,6 +330,10 @@ still apply.
 
 A Codex task runs without Codex's sandbox and can write anywhere its user can. A Codex
 plan task is read-only by instruction only.
+
+An Antigravity CLI edit task runs every command without asking, with the agent's
+credentials, also when the prompt comes from a chat message, a webhook or a web page.
+An Antigravity CLI plan task runs in plan mode and reports refused actions.
 
 To refuse more, add `permissions.deny` rules to Claude Code's
 [managed settings](https://code.claude.com/docs/en/managed-settings) where the task runs.

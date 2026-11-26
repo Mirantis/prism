@@ -27,6 +27,8 @@ export AWS_SESSION_TOKEN=
 ```
 
 Coding-agent selection scenarios use an API key, a saved Codex login, or Bedrock credentials with access to OpenAI models.
+To test Antigravity CLI delegation, install `agy` on `PATH` with local credentials and run
+`npm run test --workspace=prism-agent-e2e -- --grep @agy`.
 To test a saved login, start with a stopped test runtime and run
 `CODEX_HOME=/path/to/codex-home OPENAI_API_KEY= CODEX_API_KEY= npm run test --workspace=prism-agent-e2e -- --grep @codex-login`.
 The Codex home must contain a valid, writable `auth.json` from `codex login`.

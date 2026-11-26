@@ -218,8 +218,8 @@ result, rather than doing everything in its own turn-by-turn loop.
 A Claude Code task runs under Claude Code's own permission checks, and its result
 names each action they refused. A Codex task runs without Codex's sandbox and can
 write anywhere its user can; a Codex plan task is read-only by instruction only. An
-Antigravity CLI edit task runs with `--dangerously-skip-permissions`, and a plan task
-runs in `plan` mode. See [Configuration](configuration.md#what-a-coding-task-may-do).
+Antigravity CLI edit task runs every command without asking; a plan task runs in plan
+mode. See [Configuration](configuration.md#what-a-coding-task-may-do).
 
 ## Monitors
 

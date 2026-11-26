@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
+use futures::StreamExt;
 use parking_lot::Mutex;
 use serde_json::json;
 
@@ -13,7 +14,7 @@ use crate::lib::coding_agents::subscription_switch::set_subscription_in_memory_f
 use crate::lib::coding_agents::testing::{
     FakeChild, FakeEnvironment, FakeFiles, env_of, fake_paths, wait_for,
 };
-use crate::lib::execution_environments::execution_environment::RunOptions;
+use crate::lib::execution_environments::execution_environment::{ProcessMark, RunOptions};
 use crate::lib::execution_environments::get_execution_environment::set_execution_environment_for_tests;
 
 fn task() -> CodingAgentTask {

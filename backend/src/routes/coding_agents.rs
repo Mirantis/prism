@@ -120,8 +120,9 @@ async fn submit_code(Path(id): Path<String>, body: JsonBody) -> Response {
 
 /// POST /agents/coding-agents/{agent}/sign-out
 ///
-/// An unknown agent answers 404 `No such coding agent.`. Otherwise the
-/// `CodingAgentRow` from `sign_out(agent)`; a failure is logged
+/// An unknown agent answers 404 `No such coding agent.`. A coding agent that
+/// does not support subscription sign-in answers 409 with its message.
+/// Otherwise the `CodingAgentRow` from `sign_out(agent)`; a failure is logged
 /// (`[CodingAgents] Sign-out failed`, with `err` and `agent`) and answers 500
 /// `The sign-out failed. Try again.`.
 async fn sign_out(Path(agent): Path<String>) -> Response {
@@ -130,12 +131,15 @@ async fn sign_out(Path(agent): Path<String>) -> Response {
     };
     match CODING_AGENT_SIGN_IN_SERVICE.sign_out(agent).await {
         Ok(row) => json(200, row),
-        Err(err) => {
-            log_error!(
-                json!({ "err": err_json(&err), "agent": agent.as_str() }),
-                "[CodingAgents] Sign-out failed"
-            );
-            error_json(500, "The sign-out failed. Try again.")
-        }
+        Err(err) => match err.downcast_ref::<SignInUnavailableError>() {
+            Some(unavailable) => error_json(409, unavailable.to_string()),
+            None => {
+                log_error!(
+                    json!({ "err": err_json(&err), "agent": agent.as_str() }),
+                    "[CodingAgents] Sign-out failed"
+                );
+                error_json(500, "The sign-out failed. Try again.")
+            }
+        },
     }
 }

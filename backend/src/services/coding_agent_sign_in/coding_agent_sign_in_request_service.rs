@@ -83,7 +83,7 @@ impl PerAgent {
 pub const PROVIDERS: PerAgent = PerAgent {
     claude_code: "Claude",
     codex: "ChatGPT",
-    agy: "Google",
+    agy: "",
 };
 
 /// The name each coding agent is shown with.

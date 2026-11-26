@@ -13,6 +13,7 @@ pub mod shared_skills_home;
 pub mod subscription;
 pub mod subscription_switch;
 pub mod terminal;
+pub mod tracked_run;
 // @generated-modules-end
 
 #[cfg(test)]
