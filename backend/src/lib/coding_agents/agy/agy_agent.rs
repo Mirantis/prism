@@ -15,7 +15,7 @@ use crate::lib::coding_agents::coding_agent::{
     CodingAgentRun, CodingAgentStopReason, CodingAgentTask, CodingAgentUsage,
     PLAN_ONLY_INSTRUCTION,
 };
-use crate::lib::coding_agents::shared_skills_home::points_at;
+use crate::lib::coding_agents::shared_skills_home::prepare_shared_skills_home;
 use crate::lib::coding_agents::tracked_run::track_run;
 use crate::lib::execution_environments::docker::volumes::CONTAINER_PATHS;
 use crate::lib::execution_environments::execution_environment::{
@@ -61,27 +61,21 @@ impl CodingAgent for AgyAgent {
         DISPLAY_NAME
     }
 
-    /// Reports the CLI's home directory without mutating the user's `~/.gemini`.
+    /// Links the runtime's skills directory into `agy`'s global customization
+    /// root (`<home>/.gemini/config/skills`). `agy` has no setting to relocate
+    /// `~/.gemini` away from `$HOME`; `prepare_shared_skills_home` refuses to
+    /// overwrite an existing real `skills` directory if the user already has one.
     async fn prepare_home(&self) -> anyhow::Result<CodingAgentHome> {
         let env = self.target();
         let base_env = env.base_env();
-        let home = home_dir_in(&*env, &base_env);
-        let config_dir = home
-            .as_deref()
-            .map(|home| format!("{home}/.gemini/antigravity-cli"))
-            .unwrap_or_default();
-        let skills_linked = match &home {
-            Some(home) => {
-                let link = format!("{home}/.agents/skills");
-                let skills_dir = env.paths().skills_dir;
-                points_at(&*env, &link, &skills_dir).await
-            }
-            None => false,
+        let Some(home) = home_dir_in(&*env, &base_env) else {
+            return Ok(CodingAgentHome {
+                config_dir: String::new(),
+                skills_linked: false,
+            });
         };
-        Ok(CodingAgentHome {
-            config_dir,
-            skills_linked,
-        })
+        let config_dir = format!("{home}/.gemini/config");
+        prepare_shared_skills_home(&*env, &config_dir, None).await
     }
 
     /// Available when `~/.gemini/antigravity-cli/jetski_state.pbtxt` exists and
@@ -301,7 +295,9 @@ fn create_parser(initial_model: String) -> ParseLine {
                                 long_cache_write_tokens: 0,
                                 output_tokens,
                                 cost_usd: None,
-                                subscription: false,
+                                // `agy` authenticates with a Google account plan rather than
+                                // per-token API billing, so Spending records $0 subscription usage.
+                                subscription: true,
                             },
                         });
                     }

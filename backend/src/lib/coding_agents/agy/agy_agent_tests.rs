@@ -201,7 +201,7 @@ async fn parses_stream_json_session_deltas_usage_and_result() {
                     long_cache_write_tokens: 0,
                     output_tokens: 36,
                     cost_usd: None,
-                    subscription: false,
+                    subscription: true,
                 },
             },
             CodingAgentEvent::Result {
@@ -353,7 +353,7 @@ async fn checks_state_and_models_probe_for_availability() {
 }
 
 #[tokio::test]
-async fn prepares_home_without_creating_files_in_users_home() {
+async fn prepares_home_by_linking_skills_into_agy_global_config_without_clobbering_real_dir() {
     let dir = tempfile::tempdir().unwrap();
     let skills = dir.path().join("skills");
     std::fs::create_dir_all(&skills).unwrap();
@@ -374,12 +374,32 @@ async fn prepares_home_without_creating_files_in_users_home() {
         .prepare_home()
         .await
         .unwrap();
+    assert_eq!(prepared.config_dir, format!("{home_str}/.gemini/config"));
+    assert!(prepared.skills_linked);
     assert_eq!(
-        prepared.config_dir,
-        format!("{home_str}/.gemini/antigravity-cli")
+        std::fs::canonicalize(home.join(".gemini/config/skills")).unwrap(),
+        std::fs::canonicalize(&skills).unwrap()
     );
-    assert!(!prepared.skills_linked);
-    assert!(!home.join(".gemini").exists());
+
+    // A real skills directory already owned by the user is never overwritten.
+    let owned_home = dir.path().join("owned-home");
+    std::fs::create_dir_all(owned_home.join(".gemini/config/skills")).unwrap();
+    let owned_str = owned_home.to_string_lossy().into_owned();
+    let owned_env = FakeEnvironment {
+        paths: paths.clone(),
+        base_env: env_of(&[("HOME", &owned_str)]),
+        files: FakeFiles::local(),
+        ..Default::default()
+    };
+    let prepared_owned = create_agy_agent(Some(owned_env.arc()))
+        .prepare_home()
+        .await
+        .unwrap();
+    assert_eq!(
+        prepared_owned.config_dir,
+        format!("{owned_str}/.gemini/config")
+    );
+    assert!(!prepared_owned.skills_linked);
 
     let no_home = FakeEnvironment {
         paths,
