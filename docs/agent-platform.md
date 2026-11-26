@@ -68,5 +68,5 @@ and [voice messages](dictation.md) use it, whatever backend runs chat.
 - **A tool call fails with a network error.** The sandbox's network policy
   blocks the host. Allow it in the platform.
 - **A coding task's result says it ran without an MCP server's tools.** The
-  sandbox's network policy may block the server's host. For a claude.ai
-  connector, allow `mcp-proxy.anthropic.com`.
+  sandbox's network policy may block the server's host, or the server needs a
+  sign-in. For a claude.ai connector, allow `mcp-proxy.anthropic.com`.

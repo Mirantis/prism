@@ -74,11 +74,12 @@ Then(
       .map((call) => JSON.parse(call.output as string) as {
         completed?: boolean;
         result?: string;
-        unconnectedMcpServers?: Array<{ name: string; host?: string }>;
+        unconnectedMcpServers?: Array<{ name: string; status: string; host?: string; network: boolean }>;
       });
     const done = statuses.find((status) => status.completed);
-    expect(done?.unconnectedMcpServers, JSON.stringify(done)).toContainEqual({ name });
-    expect(done?.result).toContain(`could not connect these MCP servers, so the task ran without their tools:\n- ${name}`);
+    expect(done?.unconnectedMcpServers, JSON.stringify(done)).toContainEqual({ name, status: 'failed', network: false });
+    expect(done?.result).toContain('could not connect these MCP servers, so the task ran without their tools:');
+    expect(done?.result).toContain(`\n- ${name} (failed)`);
   },
 );
 

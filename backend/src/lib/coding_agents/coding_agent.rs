@@ -218,9 +218,15 @@ pub struct CodingAgentRefusal {
 pub struct CodingAgentUnconnectedServer {
     /// The server's name, as the agent lists it.
     pub name: String,
+    /// The agent's own word for the server's state, such as `failed`.
+    #[serde(default)]
+    pub status: String,
     /// The host the agent connects the server through, when the adapter knows it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
+    /// Whether a host that the sandbox's network policy blocks can explain the state.
+    #[serde(default)]
+    pub network: bool,
 }
 
 /// The tokens one model spent on a task, as the agent reported them.
@@ -254,8 +260,8 @@ pub enum CodingAgentEvent {
         #[serde(rename = "sessionId")]
         session_id: String,
     },
-    /// The MCP servers that failed to connect when the run started, other than
-    /// the runtime's own. Reported before the result; a later report replaces it.
+    /// The MCP servers the agent could not connect when the run started. Reported
+    /// before the result; a later report replaces it.
     Unconnected {
         servers: Vec<CodingAgentUnconnectedServer>,
     },
