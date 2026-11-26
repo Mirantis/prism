@@ -1216,18 +1216,6 @@ async fn links_the_channel_unnamed_when_the_channel_list_lookup_fails() {
     TEAMS_ADAPTER_SERVICE.shutdown().await.unwrap();
 }
 
-async fn messages_of(thread_id: &str) -> Vec<ConversationMessage> {
-    let thread_id = thread_id.to_string();
-    crate::db::run(move |conn| {
-        Ok(cm::table
-            .filter(cm::thread_id.eq(&thread_id))
-            .select(ConversationMessage::as_select())
-            .load(conn)?)
-    })
-    .await
-    .unwrap()
-}
-
 #[tokio::test]
 #[serial_test::serial]
 async fn ignores_unmentioned_messages_outside_a_chain_the_bot_answered_in() {
