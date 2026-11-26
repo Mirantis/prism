@@ -282,9 +282,18 @@ pub enum CodingAgentName {
     ClaudeCode,
     #[serde(rename = "codex")]
     Codex,
+    #[serde(rename = "agy")]
+    Agy,
 }
 
-pub const CODING_AGENTS: [CodingAgentName; 2] =
+pub const CODING_AGENTS: [CodingAgentName; 3] = [
+    CodingAgentName::ClaudeCode,
+    CodingAgentName::Codex,
+    CodingAgentName::Agy,
+];
+
+/// Coding agents that support Prism's in-app subscription sign-in flow.
+pub const SUBSCRIPTION_CODING_AGENTS: [CodingAgentName; 2] =
     [CodingAgentName::ClaudeCode, CodingAgentName::Codex];
 
 impl CodingAgentName {
@@ -292,6 +301,7 @@ impl CodingAgentName {
         match self {
             Self::ClaudeCode => "claude-code",
             Self::Codex => "codex",
+            Self::Agy => "agy",
         }
     }
 
@@ -371,6 +381,7 @@ pub struct CodingAgentModels {
     #[serde(rename = "claude-code")]
     pub claude_code: TierSet<ClaudeCodeTierModel>,
     pub codex: TierSet<CodexTierModel>,
+    pub agy: TierSet<String>,
 }
 
 /// Where the selected vendor's chat requests go.
@@ -1493,6 +1504,11 @@ impl Config {
             medium: model_override("CODEX_MODEL_MEDIUM"),
             large: model_override("CODEX_MODEL_LARGE"),
         };
+        let agy_overrides = TierSet {
+            small: model_override("AGY_MODEL_SMALL"),
+            medium: model_override("AGY_MODEL_MEDIUM"),
+            large: model_override("AGY_MODEL_LARGE"),
+        };
         // The Codex tier, by the same rule as `claude_code_tier`.
         let codex_tier =
             |override_model: &Option<String>, openai: &str, bedrock: &str| CodexTierModel {
@@ -1537,6 +1553,17 @@ impl Config {
                     "openai.gpt-5.6-terra",
                 ),
                 large: codex_tier(&codex_overrides.large, "gpt-5.6-sol", "openai.gpt-5.6-sol"),
+            },
+            agy: TierSet {
+                small: agy_overrides
+                    .small
+                    .unwrap_or_else(|| "gemini-3.8-flash".to_string()),
+                medium: agy_overrides
+                    .medium
+                    .unwrap_or_else(|| "gemini-4-carbon".to_string()),
+                large: agy_overrides
+                    .large
+                    .unwrap_or_else(|| "gemini-4-neon".to_string()),
             },
         };
 

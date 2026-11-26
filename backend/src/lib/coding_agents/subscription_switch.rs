@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 use parking_lot::Mutex;
 use serde_json::json;
 
-use crate::config::{CODING_AGENTS, CONFIG, CodingAgentName};
+use crate::config::{CONFIG, CodingAgentName, SUBSCRIPTION_CODING_AGENTS};
 use crate::lib::log_redaction::err_json;
 use crate::log_warn;
 use crate::services::runtime_state_service::RUNTIME_STATE_SERVICE;
@@ -31,6 +31,7 @@ pub fn subscription_forced(agent: CodingAgentName) -> bool {
     match agent {
         CodingAgentName::ClaudeCode => CONFIG.claude_code_subscription,
         CodingAgentName::Codex => CONFIG.codex_subscription,
+        CodingAgentName::Agy => false,
     }
 }
 
@@ -41,7 +42,7 @@ pub fn uses_subscription(agent: CodingAgentName) -> bool {
 /// Read at boot. An unreadable switch stays off, so tasks run on the deployment's
 /// models (`[CodingAgents] Could not read the subscription switch`).
 pub async fn load_subscription_switches() {
-    for agent in CODING_AGENTS {
+    for agent in SUBSCRIPTION_CODING_AGENTS {
         match RUNTIME_STATE_SERVICE.get(&subscription_key(agent)).await {
             Ok(value) => {
                 if value.as_deref() == Some("on") {
@@ -122,7 +123,7 @@ mod tests {
             .await
             .unwrap();
         assert!(!uses_subscription(CodingAgentName::ClaudeCode));
-        for agent in CODING_AGENTS {
+        for agent in SUBSCRIPTION_CODING_AGENTS {
             assert_eq!(
                 RUNTIME_STATE_SERVICE
                     .get(&subscription_key(agent))

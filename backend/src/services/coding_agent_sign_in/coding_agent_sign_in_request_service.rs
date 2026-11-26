@@ -66,6 +66,7 @@ pub struct CodingAgentSignInRequest {
 pub struct PerAgent {
     pub claude_code: &'static str,
     pub codex: &'static str,
+    pub agy: &'static str,
 }
 
 impl PerAgent {
@@ -73,6 +74,7 @@ impl PerAgent {
         match agent {
             CodingAgentName::ClaudeCode => self.claude_code,
             CodingAgentName::Codex => self.codex,
+            CodingAgentName::Agy => self.agy,
         }
     }
 }
@@ -81,12 +83,14 @@ impl PerAgent {
 pub const PROVIDERS: PerAgent = PerAgent {
     claude_code: "Claude",
     codex: "ChatGPT",
+    agy: "Google",
 };
 
 /// The name each coding agent is shown with.
 pub const NAMES: PerAgent = PerAgent {
     claude_code: "Claude Code",
     codex: "Codex",
+    agy: "Antigravity CLI",
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

@@ -85,6 +85,7 @@ fn sign_in_hosts(agent: CodingAgentName) -> &'static [&'static str] {
     match agent {
         CodingAgentName::ClaudeCode => &["claude.com", "claude.ai"],
         CodingAgentName::Codex => &["auth.openai.com"],
+        CodingAgentName::Agy => &[],
     }
 }
 
@@ -142,6 +143,11 @@ pub fn sign_in_command(agent: CodingAgentName, base_env: &ProcessEnv, home: &str
                 codex_subscription_environment(base_env),
                 &[("CODEX_HOME", home)],
             ),
+        },
+        CodingAgentName::Agy => SignInCommand {
+            command: "agy".to_string(),
+            args: Vec::new(),
+            env: base_env.clone(),
         },
     }
 }

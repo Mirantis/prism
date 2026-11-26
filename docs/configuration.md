@@ -175,15 +175,18 @@ public HTTPS (see [Microsoft Teams](teams.md#the-public-messaging-endpoint)).
 | `TOOL_OUTPUT_TTL_HOURS` | How long the saved copy of an oversized tool result is kept before the hourly sweep deletes it, so the agent can search the part it wasn't shown. See [Tools](tools.md#large-tool-outputs). | `168` (7 days) |
 | `THREAD_MODE` | `single` gives the agent one conversation, which every client opens and which scheduled tasks, goals and heartbeats post into. See [one conversation](web-ui.md#one-conversation). | `multi` |
 
-Set `CODING_AGENT` to `claude-code` or `codex` to choose the default coding agent.
+Set `CODING_AGENT` to `claude-code`, `codex`, or `agy` to choose the default coding agent.
 Each coding task can override it with the optional `agent` parameter; the tool lists
 agents available from your credentials. When unset, the default is Claude Code,
-or Codex when only Codex credentials are available. Codex also supports Bedrock credentials;
+then Codex, then Antigravity CLI when only its credentials are available. Codex also supports Bedrock credentials;
 set `AWS_REGION` to a region with access to `openai.gpt-5.6-terra`.
 
 Codex uses `CODEX_API_KEY` or `OPENAI_API_KEY` first, then a saved `auth.json` login,
 then Bedrock credentials. To reuse a Codex login, set `CODEX_HOME` to its writable
 configuration directory before starting Prism; the default is `<data dir>/.codex`.
+
+Antigravity CLI (`agy`) is available when `agy` is on `PATH` and has `GEMINI_API_KEY`,
+`GOOGLE_API_KEY`, `AGY_ADC_AUTH=true`, or a saved login under `~/.gemini/config/config.json`.
 
 Coding tasks can select a `model` tier (`small`, `medium`, `large`) and
 `effort` (`low`, `medium`, `high`), including when resuming a session.
@@ -200,6 +203,9 @@ Omitted parameters keep the deployment's model and effort behavior.
 | `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
 | `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |
 | `CODEX_SUBSCRIPTION` | `true` runs every Codex task on the ChatGPT subscription signed in by hand. See [Codex tasks on a ChatGPT subscription](#codex-tasks-on-a-chatgpt-subscription). | off |
+| `AGY_MODEL_SMALL` | Model for the Antigravity CLI small tier | `gemini-3.8-flash` |
+| `AGY_MODEL_MEDIUM` | Model for the Antigravity CLI medium tier | `gemini-4-carbon` |
+| `AGY_MODEL_LARGE` | Model for the Antigravity CLI large tier | `gemini-4-neon` |
 
 A `CLAUDE_CODE_MODEL_*` value that is a Bedrock ID, such as
 `eu.anthropic.claude-haiku-5-5`, applies only to tasks that run on Bedrock. Tasks

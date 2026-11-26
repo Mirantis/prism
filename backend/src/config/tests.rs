@@ -115,6 +115,38 @@ fn reads_each_coding_agent_model_override() {
             "[Startup] empty coding agent model override; using the default".to_string()
         )));
     }
+
+    let agy_defaults = [
+        ("small", "gemini-3.8-flash"),
+        ("medium", "gemini-4-carbon"),
+        ("large", "gemini-4-neon"),
+    ];
+    for (tier, default) in agy_defaults {
+        let name = format!("AGY_MODEL_{}", tier.to_uppercase());
+        let cfg = load(&[("LLM_PROVIDER", "anthropic")]);
+        assert_eq!(
+            cfg.coding_agent_models.agy.get(tier).map(String::as_str),
+            Some(default)
+        );
+        let cfg = load(&[("LLM_PROVIDER", "anthropic"), (&name, "  custom-model  ")]);
+        assert_eq!(
+            cfg.coding_agent_models.agy.get(tier).map(String::as_str),
+            Some("custom-model")
+        );
+        let (cfg, warnings) = load_with_warnings(&[("LLM_PROVIDER", "anthropic"), (&name, "   ")]);
+        assert_eq!(
+            cfg.unwrap()
+                .coding_agent_models
+                .agy
+                .get(tier)
+                .map(String::as_str),
+            Some(default)
+        );
+        assert!(warnings.contains(&(
+            json!({ "variable": name }),
+            "[Startup] empty coding agent model override; using the default".to_string()
+        )));
+    }
 }
 
 #[test]
@@ -1758,5 +1790,9 @@ fn warns_about_an_unknown_coding_agent() {
     assert_eq!(
         load(&[("CODING_AGENT", "codex")]).configured_coding_agent,
         Some(CodingAgentName::Codex)
+    );
+    assert_eq!(
+        load(&[("CODING_AGENT", "agy")]).configured_coding_agent,
+        Some(CodingAgentName::Agy)
     );
 }

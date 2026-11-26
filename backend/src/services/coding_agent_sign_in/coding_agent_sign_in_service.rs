@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::task::AbortHandle;
 
-use crate::config::{CODING_AGENTS, CONFIG, CodingAgentName};
+use crate::config::{CONFIG, CodingAgentName, SUBSCRIPTION_CODING_AGENTS};
 use crate::lib::coding_agents::availability::redetect_coding_agents;
 use crate::lib::coding_agents::claude_code::authenticated_home::{SavedLogin, read_saved_login};
 use crate::lib::coding_agents::codex::credentials::{SavedCodexLogin, read_codex_login};
@@ -103,6 +103,7 @@ fn hosts(agent: CodingAgentName) -> &'static str {
     match agent {
         CodingAgentName::ClaudeCode => "platform.claude.com, api.anthropic.com and claude.ai",
         CodingAgentName::Codex => "auth.openai.com, chatgpt.com and api.openai.com",
+        CodingAgentName::Agy => "accounts.google.com and antigravity.google",
     }
 }
 
@@ -273,7 +274,12 @@ impl CodingAgentSignInService {
     }
 
     pub async fn list(&self) -> Vec<CodingAgentRow> {
-        futures::future::join_all(CODING_AGENTS.iter().map(|agent| self.row(*agent))).await
+        futures::future::join_all(
+            SUBSCRIPTION_CODING_AGENTS
+                .iter()
+                .map(|agent| self.row(*agent)),
+        )
+        .await
     }
 
     pub async fn row(&self, agent: CodingAgentName) -> CodingAgentRow {
@@ -349,6 +355,13 @@ impl Inner {
     }
 
     async fn start(self: &Arc<Self>, agent: CodingAgentName) -> anyhow::Result<SignInAttempt> {
+        if !SUBSCRIPTION_CODING_AGENTS.contains(&agent) {
+            return Err(SignInUnavailableError(format!(
+                "{} doesn't support subscription sign-in here.",
+                NAMES.get(agent)
+            ))
+            .into());
+        }
         let environment = get_execution_environment();
         let deps = deps();
         if !deps.cli_installed(&*environment, agent).await {
@@ -612,6 +625,7 @@ impl Inner {
                     .await?
                     == SavedCodexLogin::Chatgpt
             }
+            CodingAgentName::Agy => false,
         })
     }
 
@@ -910,7 +924,7 @@ mod tests {
         fn drop(&mut self) {
             *SIGN_IN_DEPS.write() = Arc::new(CliSignInDeps);
             set_execution_environment_for_tests(None);
-            for agent in CODING_AGENTS {
+            for agent in SUBSCRIPTION_CODING_AGENTS {
                 set_subscription_in_memory_for_tests(agent, false);
             }
             CONFIG.set_available_coding_agents(vec![CodingAgentName::ClaudeCode]);
@@ -1179,7 +1193,7 @@ mod tests {
         let rows = stage.service.list().await;
         assert_eq!(
             rows.iter().map(|row| row.agent).collect::<Vec<_>>(),
-            CODING_AGENTS
+            SUBSCRIPTION_CODING_AGENTS
         );
         assert!(
             rows.iter()
