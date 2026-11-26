@@ -62,7 +62,7 @@ Feature: Coding sub-agent
   Scenario: The coding task names an MCP server that failed to connect
     Given the workspace's .mcp.json has a server "broken-probe" that exits at once
     When I navigate to the agent chat page
-    And I type "Use the coding_agent tool exactly once, with maxTurns 2, giving it this prompt: Reply with exactly OK. Then call coding_agent_status with waitMs 30000 until completed is true. Call no other tool. Reply with one line only: DONE." in the chat input
+    And I type "Use the coding_agent tool exactly once, with agent claude-code and maxTurns 2, giving it this prompt: Reply with exactly OK. Then call coding_agent_status with waitMs 30000 until completed is true. Call no other tool. Reply with one line only: DONE." in the chat input
     And I send the message
     Then the agent reply contains "DONE"
     And no reply is an error
