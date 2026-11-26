@@ -26,7 +26,7 @@ const handle = (message) => {
         tools: [
           {
             name: 'plugin_mcp_probe',
-            description: 'Returns a fixed marker proving the plugin MCP server ran.',
+            description: 'Returns the marker it was started with.',
             inputSchema: { type: 'object', properties: {} },
           },
         ],

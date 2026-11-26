@@ -323,7 +323,7 @@ fn build_args(
     }
     args.push("--disallowed-tools".to_string());
     args.push("AskUserQuestion".to_string());
-    // Added to the servers the CLI loads itself; a server of the same name loses.
+    // The CLI also loads its own servers. On a name clash, it uses the server in this file.
     if let Some(path) = mcp_config_path {
         args.push("--mcp-config".to_string());
         args.push(path.to_string());

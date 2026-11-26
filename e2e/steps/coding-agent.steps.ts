@@ -45,10 +45,9 @@ Given(
   'the workspace\'s .mcp.json has a server {string} that answers {string}',
   async ({}, name: string, marker: string) => {
     fs.mkdirSync(E2E_WORKSPACE, { recursive: true });
-    const server = path.join(E2E_WORKSPACE, 'workspace-mcp-probe.mjs');
+    const server = path.join(__dirname, '..', 'fixtures', 'plugin-mcp-probe.mjs');
     const config = path.join(E2E_WORKSPACE, '.mcp.json');
-    written.push(server, config);
-    fs.copyFileSync(path.join(__dirname, '..', 'fixtures', 'plugin-mcp-probe.mjs'), server);
+    written.push(config);
     fs.writeFileSync(config, JSON.stringify({
       mcpServers: { [name]: { type: 'stdio', command: 'node', args: [server, marker] } },
     }));

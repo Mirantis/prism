@@ -73,6 +73,14 @@ impl Started {
 fn recording(
     status: Option<&'static str>,
 ) -> (FakeEnvironment, Arc<Mutex<Vec<Launch>>>, Arc<AtomicUsize>) {
+    recording_with(status, FakeFiles::default())
+}
+
+/// `recording` over the given files.
+fn recording_with(
+    status: Option<&'static str>,
+    files: FakeFiles,
+) -> (FakeEnvironment, Arc<Mutex<Vec<Launch>>>, Arc<AtomicUsize>) {
     let launches: Arc<Mutex<Vec<Launch>>> = Arc::default();
     let asked = Arc::new(AtomicUsize::new(0));
     let (sink, count) = (launches.clone(), asked.clone());
@@ -82,7 +90,7 @@ fn recording(
                 Some(_) => Ok(DIR_STAT),
                 None => anyhow::bail!("ENOENT"),
             })),
-            ..Default::default()
+            ..files
         },
         ..FakeEnvironment::with_run_program(move |command, args, options| {
             let child = FakeChild::new();
@@ -386,6 +394,34 @@ async fn runs_a_task_on_the_signed_in_subscription_with_nothing_that_outranks_it
         settings["env"]["ANTHROPIC_BASE_URL"],
         "https://api.anthropic.com"
     );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn keeps_the_clis_own_servers_on_the_subscription() {
+    let _on = SubscriptionOn::new();
+    for mcp_servers in [Vec::new(), servers()] {
+        let with_config = !mcp_servers.is_empty();
+        // Real files, so the config file can be written.
+        let (environment, launches, asked) =
+            recording_with(Some(SUBSCRIPTION_STATUS), FakeFiles::local());
+        let started = Started {
+            run: create_claude_code_agent(Some(environment.arc())).run(CodingAgentTask {
+                mcp_servers,
+                ..base_task()
+            }),
+            launches,
+            asked,
+        };
+        let Launch { args, child, .. } = started.launched().await;
+        // The CLI loads its own servers, the person's claude.ai connectors among them.
+        assert!(!args.contains(&"--strict-mcp-config".to_string()));
+        assert_eq!(args.contains(&"--mcp-config".to_string()), with_config);
+        // Passed only on the subscription.
+        assert!(args.contains(&"--settings".to_string()));
+        child.finish(Some(0));
+        collect(&started.run).await;
+    }
 }
 
 #[tokio::test]
@@ -694,7 +730,7 @@ impl McpHarness {
 async fn passes_no_mcp_config_when_the_runtime_connects_none() {
     let Launch { args, .. } = capture(base_task(), None).await;
     assert!(!args.contains(&"--mcp-config".to_string()));
-    // Strict would drop the CLI's own servers, the person's claude.ai connectors among them.
+    // The CLI loads its own servers, the person's claude.ai connectors among them.
     assert!(!args.contains(&"--strict-mcp-config".to_string()));
 }
 
