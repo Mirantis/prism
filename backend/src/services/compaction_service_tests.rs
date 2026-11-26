@@ -400,6 +400,47 @@ async fn compacts_a_database_thread_at_the_threshold_from_the_turns_own_request(
 
 #[tokio::test]
 #[serial_test::serial]
+async fn compacts_the_generated_uis_of_a_database_thread_with_their_range() {
+    let test = test_db();
+    let ids = ["m0", "m1", "m2", "m3", "m4", "m5", "m6", "m7"];
+    seed(&test, "ui-db", ThreadSource::Database, &ids);
+    // A UI shown after m0, and one stored after the context was read. Neither is a
+    // context row: the context replays a UI through its `show_ui` call.
+    test.db
+        .run_sync(|conn| {
+            let start = Utc::now() - chrono::Duration::hours(1);
+            for (id, millis) in [("ui-old", 500), ("ui-new", 7_500)] {
+                let mut message = NewConversationMessage::new(
+                    "ui-db".to_string(),
+                    MessageRole::Agent,
+                    "Deploys",
+                    MessageTrigger::UserInput,
+                );
+                message.id = id.into();
+                message.blocks = Some(json!([{ "type": "generated_ui", "id": id }]));
+                message.created_at = (start + chrono::Duration::milliseconds(millis)).into();
+                diesel::insert_into(conversation_messages::table)
+                    .values(&message)
+                    .execute(conn)?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let events = capture("ui-db");
+    let mut at_threshold = fork("ui-db", Scripted::answering("THE SUMMARY"));
+    at_threshold.snapshot.used_percent = 90;
+
+    COMPACTION_SERVICE.maybe_auto_compact(at_threshold);
+    settled("ui-db").await;
+
+    assert_eq!(compacted_ids(&test, "ui-db"), ["m0", "ui-old", "m1"]);
+    // The estimate counts the summary and the tail alone.
+    let last = events.lock().last().cloned().unwrap();
+    assert_eq!(last.tokens_after, Some(Some((11 + 600 + 3) / 4)));
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn advances_the_watermark_of_a_live_read_thread_and_flags_only_the_database_rows() {
     let test = test_db();
     seed(

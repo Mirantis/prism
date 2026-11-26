@@ -101,6 +101,7 @@ use crate::services::context_usage_service::{
     CONTEXT_USAGE_SERVICE, ContextUsageSnapshot, EstimateInput,
 };
 use crate::services::conversation_service::{CONVERSATION_SERVICE, MessageStored};
+use crate::services::generated_ui::generated_ui_schema::is_generated_ui;
 use crate::services::llm_call_service::{LLM_CALL_SERVICE, LlmCallPurpose};
 use crate::services::message_delivery_service::MESSAGE_DELIVERY_SERVICE;
 use crate::services::thread_turn_service::THREAD_TURN_SERVICE;
@@ -1644,12 +1645,30 @@ impl CompactionService {
             let read_ids: Vec<String> = rows.iter().map(|row| row.id.clone()).collect();
             let later_id = id.clone();
             let compacted_at = crate::db::run(move |conn| {
+                let mut ids = ids;
                 let newest: Option<DateTime<Utc>> = m::conversation_messages
                     .filter(m::id.eq_any(&ids))
                     .order(m::created_at.desc())
                     .select(m::created_at)
                     .first::<DateTime<Utc>>(conn)
                     .optional()?;
+                // A generated UI is left out of the context, which replays it through
+                // its `show_ui` call, so the UIs in the summarized range are compacted
+                // with it.
+                if let Some(newest) = newest {
+                    let uis: Vec<(String, Option<serde_json::Value>)> = m::conversation_messages
+                        .filter(m::thread_id.eq(&id))
+                        .filter(m::is_compacted.eq(false))
+                        .filter(m::created_at.le(DbDateTime(newest)))
+                        .filter(m::blocks.is_not_null())
+                        .select((m::id, m::blocks))
+                        .load(conn)?;
+                    ids.extend(
+                        uis.into_iter()
+                            .filter(|(_, blocks)| is_generated_ui(blocks.as_ref()))
+                            .map(|(id, _)| id),
+                    );
+                }
                 conn.transaction(|conn| {
                     diesel::update(m::conversation_messages.filter(m::id.eq_any(&ids)))
                         .set(m::is_compacted.eq(true))
@@ -1682,6 +1701,10 @@ impl CompactionService {
                     .load::<StoredRowChars>(conn)?)
             })
             .await?;
+            let later: Vec<StoredRowChars> = later
+                .into_iter()
+                .filter(|(_, _, blocks)| !is_generated_ui(blocks.as_ref()))
+                .collect();
             later_chars = stored_chars(&later);
         }
 
