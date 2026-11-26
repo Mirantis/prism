@@ -289,7 +289,7 @@ async fn connected(mock: &MockBotFramework) -> Arc<TeamsApp> {
     TEAMS_ADAPTER_SERVICE.reset_for_tests();
     let app = mock.app();
     TEAMS_ADAPTER_SERVICE
-        .start(connection(), Ok(Arc::clone(&app)), "127.0.0.1", 0)
+        .start(connection(), Ok((Arc::clone(&app), 0)), "127.0.0.1")
         .await;
     assert!(TEAMS_ADAPTER_SERVICE.current_app().is_some());
     app
@@ -730,7 +730,7 @@ async fn idles_when_the_bot_port_is_taken() {
     let port = squatter.local_addr().unwrap().port();
 
     TEAMS_ADAPTER_SERVICE
-        .start(connection(), Ok(mock.app()), "127.0.0.1", port)
+        .start(connection(), Ok((mock.app(), port)), "127.0.0.1")
         .await;
 
     assert!(TEAMS_ADAPTER_SERVICE.current_app().is_none());

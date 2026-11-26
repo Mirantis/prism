@@ -144,22 +144,18 @@ impl SlackRouterService {
     }
 
     /// Open the listener on `SLACK_PORT`, which hands each envelope it accepts
-    /// to `handlers`.
+    /// to `handlers`. The handlers are set first, so the events a restart
+    /// interrupted stay pending when the listener cannot open.
     pub async fn start(
         &'static self,
         handlers: Arc<dyn SlackRouterHandlers>,
     ) -> anyhow::Result<()> {
+        *self.handlers.write() = Some(handlers);
         let port = CONFIG.slack_port.clone().map_err(anyhow::Error::msg)?;
-        self.listen(handlers, &CONFIG.host, port).await
+        self.listen(&CONFIG.host, port).await
     }
 
-    async fn listen(
-        &'static self,
-        handlers: Arc<dyn SlackRouterHandlers>,
-        host: &str,
-        port: u16,
-    ) -> anyhow::Result<()> {
-        *self.handlers.write() = Some(handlers);
+    async fn listen(&'static self, host: &str, port: u16) -> anyhow::Result<()> {
         if self.listener.lock().is_some() {
             return Ok(());
         }

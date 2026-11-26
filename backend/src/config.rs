@@ -1768,7 +1768,7 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// A port from `parseInt`. A value that is not a port stops startup.
+/// A port from `parseInt`.
 fn parse_port(text: &str, name: &str) -> anyhow::Result<u16> {
     crate::support::js::parse_int(text)
         .filter(|p| (0..=65535).contains(p))

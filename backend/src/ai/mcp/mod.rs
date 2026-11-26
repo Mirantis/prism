@@ -52,6 +52,7 @@ use self::types::{
     JsonObject, SchemaError, parse_discover_result, parse_initialize_result,
     parse_list_tools_result,
 };
+use crate::ai::fetch_timeouts::READ_TIMEOUT;
 use crate::ai::json::js_stringify;
 use crate::ai::{
     DataContent, FileData, Tool, ToolResultContentPart, ToolResultOutput, ToolSet, dynamic_tool,
@@ -61,6 +62,11 @@ use crate::ai::{
 const CLIENT_VERSION: &str = "1.0.0";
 const DEFAULT_CLIENT_NAME: &str = "ai-sdk-mcp-client";
 const DEFAULT_PROTOCOL_DISCOVERY_TIMEOUT_MS: u64 = 1000;
+/// The deadline of a request that sets none: undici's read timeout, so a server that
+/// accepts a request and never answers it gives the turn back. A tool call that runs
+/// longer, even with progress on its stream, is cut there; the turn going on is the
+/// trade.
+const DEFAULT_REQUEST_TIMEOUT_MS: u64 = READ_TIMEOUT.as_millis() as u64;
 const MODERN_PROTOCOL_ERROR_CODES: [i64; 3] = [-32020, -32021, -32022];
 
 /// MIME type of an HTML resource rendered as an MCP App.
@@ -630,12 +636,10 @@ impl ClientInner {
         if signal.as_ref().is_some_and(|s| s.is_cancelled()) {
             return Err(abort_error());
         }
-        let timeout = effective_timeout(&options);
-        let transport_signal = match (&signal, timeout) {
-            (None, None) => None,
-            (Some(signal), None) => Some(signal.clone()),
-            (Some(signal), Some(_)) => Some(signal.child_token()),
-            (None, Some(_)) => Some(CancellationToken::new()),
+        let timeout = effective_timeout(&options).unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS);
+        let transport_signal = match &signal {
+            Some(signal) => signal.child_token(),
+            None => CancellationToken::new(),
         };
 
         let message_id = {
@@ -660,17 +664,12 @@ impl ClientInner {
         let send = self.transport.send(
             Value::Object(message),
             MCPTransportSendOptions {
-                signal: transport_signal.clone(),
+                signal: Some(transport_signal.clone()),
                 headers,
             },
         );
         tokio::pin!(send);
-        let expiry = async {
-            match timeout {
-                Some(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
-                None => std::future::pending().await,
-            }
-        };
+        let expiry = tokio::time::sleep(Duration::from_millis(timeout));
         tokio::pin!(expiry);
         let aborted = async {
             match &signal {
@@ -693,12 +692,9 @@ impl ClientInner {
                     return Err(MCPClientError::new("Request was aborted").with_cause(abort_error()).into());
                 }
                 _ = &mut expiry => {
-                    if let Some(transport_signal) = &transport_signal {
-                        transport_signal.cancel();
-                    }
+                    transport_signal.cancel();
                     return Err(MCPClientError::new(format!(
-                        "Request timed out after {}ms",
-                        timeout.unwrap_or_default()
+                        "Request timed out after {timeout}ms"
                     ))
                     .into());
                 }

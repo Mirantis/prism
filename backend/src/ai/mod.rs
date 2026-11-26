@@ -7,6 +7,7 @@
 pub mod cache;
 pub mod embed;
 pub mod errors;
+pub mod fetch_timeouts;
 pub mod generate_object;
 pub mod generate_text;
 pub mod json;

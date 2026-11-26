@@ -3,7 +3,6 @@
 //! handler): one JSON POST through a `FetchFunction`, and the errors it turns into.
 
 use std::sync::{Arc, LazyLock};
-use std::time::Duration;
 
 use bytes::Bytes;
 use futures::future::BoxFuture;
@@ -12,6 +11,7 @@ use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::ai::errors::{AbortError, ApiCallError, InvalidArgumentError, LoadApiKeyError};
+use crate::ai::fetch_timeouts::{CONNECT_TIMEOUT, READ_TIMEOUT};
 use crate::ai::generate_text::with_user_agent_suffix;
 use crate::ai::json::{js_stringify, secure_json_parse};
 use crate::ai::provider::Headers;
@@ -71,8 +71,8 @@ impl std::error::Error for FetchFailedError {}
 static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .no_proxy()
-        .connect_timeout(Duration::from_secs(10))
-        .read_timeout(Duration::from_secs(300))
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(READ_TIMEOUT)
         .build()
         .expect("HTTP client builds")
 });
