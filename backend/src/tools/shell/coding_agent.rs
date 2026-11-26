@@ -122,7 +122,7 @@ pub fn build_coding_agent_input_schema() -> Value {
                 "enum": ["edit", "plan"]
             },
             "maxTurns": {
-                "description": "Claude Code turn limit (default: 100, max: 200). Codex runs one task to completion; use coding_agent_stop to cancel.",
+                "description": "Claude Code turn limit (default: 100, max: 200). Codex and Agy run one task to completion; use coding_agent_stop to cancel.",
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 200

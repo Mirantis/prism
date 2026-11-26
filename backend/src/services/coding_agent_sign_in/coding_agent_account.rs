@@ -10,7 +10,7 @@ use std::sync::{Arc, LazyLock};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::config::{CODING_AGENTS, CodingAgentName};
+use crate::config::{CodingAgentName, SUBSCRIPTION_CODING_AGENTS};
 use anyhow::Context;
 use base64::Engine;
 use serde_json::json;
@@ -37,6 +37,7 @@ fn command(agent: CodingAgentName) -> &'static str {
     match agent {
         CodingAgentName::ClaudeCode => "claude",
         CodingAgentName::Codex => "codex",
+        CodingAgentName::Agy => "agy",
     }
 }
 
@@ -46,6 +47,7 @@ pub fn home_of(environment: &dyn ExecutionEnvironment, agent: CodingAgentName) -
     match agent {
         CodingAgentName::ClaudeCode => paths.claude_home,
         CodingAgentName::Codex => paths.codex_home,
+        CodingAgentName::Agy => String::new(),
     }
 }
 
@@ -59,6 +61,7 @@ fn cli_environment(environment: &dyn ExecutionEnvironment, agent: CodingAgentNam
             (claude_subscription_environment(&base), "CLAUDE_CONFIG_DIR")
         }
         CodingAgentName::Codex => (codex_subscription_environment(&base), "CODEX_HOME"),
+        CodingAgentName::Agy => return base,
     };
     env.insert(key.to_string(), home);
     env
@@ -89,15 +92,15 @@ pub async fn cli_installed(environment: &dyn ExecutionEnvironment, agent: Coding
         .await
 }
 
-/// The coding agents whose CLI runs here, in `CODING_AGENTS` order.
+/// The subscription coding agents whose CLI runs here, in `SUBSCRIPTION_CODING_AGENTS` order.
 pub async fn installed_clis(environment: &dyn ExecutionEnvironment) -> Vec<CodingAgentName> {
     let runs = futures::future::join_all(
-        CODING_AGENTS
+        SUBSCRIPTION_CODING_AGENTS
             .iter()
             .map(|agent| cli_installed(environment, *agent)),
     )
     .await;
-    CODING_AGENTS
+    SUBSCRIPTION_CODING_AGENTS
         .into_iter()
         .zip(runs)
         .filter_map(|(agent, installed)| installed.then_some(agent))
@@ -128,6 +131,7 @@ pub async fn read_account(
     let read = match agent {
         CodingAgentName::ClaudeCode => read_claude_account(environment).await,
         CodingAgentName::Codex => read_codex_account(environment).await,
+        CodingAgentName::Agy => Ok(None),
     };
     match read {
         Ok(account) => account,
@@ -232,6 +236,7 @@ pub async fn sign_out_cli(
             "-c".into(),
             "cli_auth_credentials_store=\"file\"".into(),
         ],
+        CodingAgentName::Agy => anyhow::bail!("agy does not support subscription sign-out"),
     };
     let run = probe_cli(
         environment,

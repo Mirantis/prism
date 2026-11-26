@@ -5,6 +5,7 @@ use std::sync::{Arc, LazyLock};
 
 use parking_lot::Mutex;
 
+use super::agy::agy_agent::create_agy_agent;
 use super::claude_code::claude_code_agent::create_claude_code_agent;
 use super::codex::codex_agent::create_codex_agent;
 use super::coding_agent::CodingAgent;
@@ -14,6 +15,7 @@ fn factory(name: CodingAgentName) -> Arc<dyn CodingAgent> {
     match name {
         CodingAgentName::ClaudeCode => create_claude_code_agent(None),
         CodingAgentName::Codex => create_codex_agent(None),
+        CodingAgentName::Agy => create_agy_agent(None),
     }
 }
 
@@ -64,7 +66,11 @@ mod tests {
         }
     }
 
-    const BOTH: [CodingAgentName; 2] = [CodingAgentName::ClaudeCode, CodingAgentName::Codex];
+    const ALL: [CodingAgentName; 3] = [
+        CodingAgentName::ClaudeCode,
+        CodingAgentName::Codex,
+        CodingAgentName::Agy,
+    ];
 
     #[test]
     #[serial_test::serial]
@@ -72,8 +78,9 @@ mod tests {
         for (id, name) in [
             (CodingAgentName::ClaudeCode, "Claude Code"),
             (CodingAgentName::Codex, "Codex"),
+            (CodingAgentName::Agy, "Antigravity CLI"),
         ] {
-            with_agents(&BOTH, id, || {
+            with_agents(&ALL, id, || {
                 let agent = get_coding_agent(None).unwrap();
                 assert_eq!(agent.id(), id);
                 assert_eq!(agent.display_name(), name);
@@ -84,22 +91,29 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn reuses_one_instance_per_available_agent() {
-        with_agents(&BOTH, CodingAgentName::ClaudeCode, || {
+        with_agents(&ALL, CodingAgentName::ClaudeCode, || {
             let codex = || get_coding_agent(Some(CodingAgentName::Codex)).unwrap();
             let claude = || get_coding_agent(Some(CodingAgentName::ClaudeCode)).unwrap();
+            let agy = || get_coding_agent(Some(CodingAgentName::Agy)).unwrap();
             assert!(Arc::ptr_eq(&codex(), &codex()));
             assert!(Arc::ptr_eq(&claude(), &claude()));
+            assert!(Arc::ptr_eq(&agy(), &agy()));
             assert!(!Arc::ptr_eq(&codex(), &claude()));
+            assert!(!Arc::ptr_eq(&agy(), &claude()));
         });
     }
 
     #[test]
     #[serial_test::serial]
     fn selects_an_available_agent_instead_of_the_configured_default() {
-        with_agents(&BOTH, CodingAgentName::ClaudeCode, || {
+        with_agents(&ALL, CodingAgentName::ClaudeCode, || {
             assert_eq!(
                 get_coding_agent(Some(CodingAgentName::Codex)).unwrap().id(),
                 CodingAgentName::Codex
+            );
+            assert_eq!(
+                get_coding_agent(Some(CodingAgentName::Agy)).unwrap().id(),
+                CodingAgentName::Agy
             );
         });
     }

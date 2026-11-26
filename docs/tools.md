@@ -173,7 +173,7 @@ tools.
 For a task of many steps, such as research, a report, a document or code, the
 agent can hand the work to a **coding agent** running as an autonomous
 sub-agent in the workspace. The tool lists available agents;
-pass `agent: "claude-code"` or `agent: "codex"` to choose one for a task, or omit
+pass `agent: "claude-code"`, `agent: "codex"`, or `agent: "agy"` to choose one for a task, or omit
 `agent` to use the `CODING_AGENT` default. Use the same `agent` with a returned
 `sessionId` to resume a task.
 A Claude Code task has the agent's [MCP tools](#external-tools-mcp), plugin
@@ -190,8 +190,9 @@ status to a server whose host the sandbox blocks. In a conversation you start wi
 a repository while commands [run in a container](#where-commands-run), the task
 leaves out plugin servers that start a command, because those run in the
 container.
-The Docker image includes both CLIs; for a local installation, run
-`npm install -g @anthropic-ai/claude-code @openai/codex`.
+The Docker image includes Claude Code and Codex; for a local installation, run
+`npm install -g @anthropic-ai/claude-code @openai/codex`. Install the Antigravity CLI (`agy`)
+on `PATH` and sign in locally to use `agent: "agy"`.
 
 If you set `CLAUDE_CONFIG_DIR`, Claude Code uses that directory and Prism leaves
 it untouched; link its `skills` directory to your Prism skills directory to share
@@ -216,8 +217,9 @@ result, rather than doing everything in its own turn-by-turn loop.
 
 A Claude Code task runs under Claude Code's own permission checks, and its result
 names each action they refused. A Codex task runs without Codex's sandbox and can
-write anywhere its user can; a Codex plan task is read-only by instruction only. See
-[Configuration](configuration.md#what-a-coding-task-may-do).
+write anywhere its user can; a Codex plan task is read-only by instruction only. An
+Antigravity CLI edit task runs with `--dangerously-skip-permissions`, and a plan task
+runs in `plan` mode. See [Configuration](configuration.md#what-a-coding-task-may-do).
 
 ## Monitors
 

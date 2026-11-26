@@ -18,6 +18,7 @@ pub fn subscription_forced_in(env: &ProcessEnv, agent: CodingAgentName) -> bool 
     let name = match agent {
         CodingAgentName::ClaudeCode => "CLAUDE_CODE_SUBSCRIPTION",
         CodingAgentName::Codex => "CODEX_SUBSCRIPTION",
+        CodingAgentName::Agy => return false,
     };
     env.get(name)
         .is_some_and(|value| crate::support::js::trim(value).to_lowercase() == "true")
@@ -31,6 +32,7 @@ pub fn not_signed_in_message(agent: CodingAgentName, host_home: Option<&str>) ->
     let set_to = match agent {
         CodingAgentName::ClaudeCode => "Claude Code is set to use your Claude subscription",
         CodingAgentName::Codex => "Codex is set to use your ChatGPT subscription",
+        CodingAgentName::Agy => "Antigravity CLI is not signed in",
     };
     let Some(host_home) = host_home.filter(|home| !home.is_empty()) else {
         return format!(
@@ -45,6 +47,7 @@ pub fn not_signed_in_message(agent: CodingAgentName, host_home: Option<&str>) ->
         CodingAgentName::Codex => {
             format!("CODEX_HOME={home} codex login -c 'cli_auth_credentials_store=\"file\"'")
         }
+        CodingAgentName::Agy => "agy".to_string(),
     };
     format!(
         "{set_to}, and nobody is signed in to it on this computer, where this conversation's folder is. \

@@ -1,4 +1,5 @@
 // @generated-modules-start
+pub mod agy;
 pub mod availability;
 pub mod bedrock_credentials;
 pub mod claude_code;

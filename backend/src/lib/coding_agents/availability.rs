@@ -17,6 +17,7 @@ use parking_lot::Mutex;
 use serde_json::json;
 use tokio::sync::OnceCell;
 
+use super::agy::agy_agent::create_agy_agent;
 use super::claude_code::claude_code_agent::create_claude_code_agent;
 use super::codex::codex_agent::create_codex_agent;
 use super::coding_agent::CodingAgent;
@@ -31,6 +32,7 @@ fn factory(name: CodingAgentName) -> Arc<dyn CodingAgent> {
     match name {
         CodingAgentName::ClaudeCode => create_claude_code_agent(None),
         CodingAgentName::Codex => create_codex_agent(None),
+        CodingAgentName::Agy => create_agy_agent(None),
     }
 }
 
@@ -85,15 +87,14 @@ async fn detect() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Claude Code when it is available or Codex is not, else Codex.
+/// Claude Code, then Codex, then Agy, falling back to Claude Code when none are available.
 fn default_agent(available: &[CodingAgentName]) -> CodingAgentName {
-    if available.contains(&CodingAgentName::ClaudeCode)
-        || !available.contains(&CodingAgentName::Codex)
-    {
-        CodingAgentName::ClaudeCode
-    } else {
-        CodingAgentName::Codex
+    for candidate in CODING_AGENTS {
+        if available.contains(&candidate) {
+            return candidate;
+        }
     }
+    CodingAgentName::ClaudeCode
 }
 
 /// Ask again after a sign-in, which can make an agent available. A changed
@@ -119,6 +120,9 @@ mod tests {
         assert_eq!(default_agent(&[]), ClaudeCode);
         assert_eq!(default_agent(&[ClaudeCode]), ClaudeCode);
         assert_eq!(default_agent(&[ClaudeCode, Codex]), ClaudeCode);
+        assert_eq!(default_agent(&[ClaudeCode, Agy]), ClaudeCode);
         assert_eq!(default_agent(&[Codex]), Codex);
+        assert_eq!(default_agent(&[Codex, Agy]), Codex);
+        assert_eq!(default_agent(&[Agy]), Agy);
     }
 }
