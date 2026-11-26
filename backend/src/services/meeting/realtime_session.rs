@@ -194,7 +194,6 @@ fn read_marker(metadata: Option<&Value>) -> Option<String> {
 
 /// A probe on the wire, waiting for the model to answer it.
 struct PendingProbe {
-    send_id: String,
     settle: oneshot::Sender<Option<String>>,
     timer: AbortHandle,
     /// Accumulated `output_text` deltas, used when `response.done` carries no output.
@@ -208,7 +207,6 @@ struct PendingCreate {
     event_id: String,
     /// Set when a probe asked for this one; absent means the conversation did.
     probe_send_id: Option<String>,
-    at: i64,
     /// When this stops being attributable.
     ///
     /// Per entry rather than one shared cutoff, because a probe waits longer than the
@@ -1456,7 +1454,6 @@ impl RealtimeSession {
             state.probes_by_send_id.insert(
                 send_id.clone(),
                 PendingProbe {
-                    send_id: send_id.clone(),
                     settle: tx,
                     timer: timer.abort_handle(),
                     text: String::new(),
@@ -1605,7 +1602,6 @@ impl RealtimeSession {
         state.pending_creates.push_back(PendingCreate {
             event_id: event_id.to_string(),
             probe_send_id: probe_send_id.map(str::to_string),
-            at,
             expires_at: at + ttl_ms as i64,
         });
     }

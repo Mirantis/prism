@@ -77,18 +77,8 @@ struct ConversationTools {
 /// so the least recently used one loses least: one cache miss on its next turn.
 const MAX_CONVERSATIONS: usize = 100;
 
-/// The parts of a tool the model sees. Everything else, `execute` included,
-/// comes from the turn.
-const WIRE_FIELDS: [&str; 6] = [
-    "type",
-    "description",
-    "inputSchema",
-    "inputExamples",
-    "strict",
-    "providerOptions",
-];
-
-/// The tool with only its `WIRE_FIELDS`.
+/// The tool with only the parts the model sees. Everything else, `execute`
+/// included, comes from the turn.
 fn wire_definition(tool: &Tool) -> Tool {
     Tool {
         tool_type: tool.tool_type.clone(),
@@ -101,7 +91,7 @@ fn wire_definition(tool: &Tool) -> Tool {
     }
 }
 
-/// The turn's tool with a declared definition over it: every `WIRE_FIELDS` value
+/// The turn's tool with a declared definition over it: every `wire_definition` field
 /// the definition sets wins, and the turn's tool gives the rest.
 fn over_live(live: &Tool, definition: &Tool) -> Tool {
     Tool {

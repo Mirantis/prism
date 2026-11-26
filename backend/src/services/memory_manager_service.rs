@@ -188,7 +188,7 @@ impl MemoryManagerService {
     /// threshold is 0.3.
     pub async fn search(
         &self,
-        user_id: &str,
+        _user_id: &str,
         query: Option<&str>,
         options: &MemorySearchOptions,
     ) -> anyhow::Result<Vec<MemorySearchResult>> {
@@ -270,7 +270,7 @@ impl MemoryManagerService {
     /// `err` and `entryId`.
     pub async fn write(
         &self,
-        user_id: &str,
+        _user_id: &str,
         input: &MemoryWriteInput,
         agent_id: &str,
     ) -> anyhow::Result<MemoryEntry> {
@@ -306,7 +306,7 @@ impl MemoryManagerService {
     /// Delete a memory entry by ID. True when one was deleted.
     pub async fn delete(
         &self,
-        user_id: &str,
+        _user_id: &str,
         entry_id: &str,
         agent_id: &str,
     ) -> anyhow::Result<bool> {
@@ -327,7 +327,7 @@ impl MemoryManagerService {
     /// Delete multiple memory entries by IDs. Returns how many were deleted.
     pub async fn delete_many(
         &self,
-        user_id: &str,
+        _user_id: &str,
         entry_ids: &[String],
         agent_id: &str,
     ) -> anyhow::Result<i64> {
@@ -349,7 +349,7 @@ impl MemoryManagerService {
     /// defaults to 20.
     pub async fn get_by_category(
         &self,
-        user_id: &str,
+        _user_id: &str,
         category: &str,
         agent_id: &str,
         limit: Option<i64>,
@@ -577,7 +577,7 @@ impl MemoryManagerService {
     /// are older than `days_to_keep` (default 30). Returns how many were removed.
     pub async fn cleanup(
         &self,
-        user_id: &str,
+        _user_id: &str,
         agent_id: &str,
         days_to_keep: Option<i64>,
         importance_threshold: Option<i64>,
@@ -599,7 +599,7 @@ impl MemoryManagerService {
     }
 
     /// Get memory stats for an agent. `avg_importance` is 0 with no entries.
-    pub async fn get_stats(&self, user_id: &str, agent_id: &str) -> anyhow::Result<MemoryStats> {
+    pub async fn get_stats(&self, _user_id: &str, agent_id: &str) -> anyhow::Result<MemoryStats> {
         let agent_id = agent_id.to_string();
         let (total_entries, category_stats, avg) = crate::db::read(move |conn| {
             let total: i64 = m::memory_entries

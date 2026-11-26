@@ -98,19 +98,6 @@ pub const THREAD_TRANSCRIPT_LINES: usize = 10;
 /// The most of the Soul that the classifier reads as the agent's role.
 const SOUL_EXCERPT_CHARS: usize = 600;
 
-/// The structured output the model returns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ThreadClassificationAction {
-    Respond,
-    NoReply,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ThreadClassification {
-    action: ThreadClassificationAction,
-}
-
 /// Telemetry-safe description of a failure: the kind of failure and the HTTP
 /// status the model client reports (`ApiCallError.status_code`). Never the
 /// message, which can quote the request, and so the transcript, back.

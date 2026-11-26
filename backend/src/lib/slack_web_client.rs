@@ -967,12 +967,6 @@ pub(crate) mod testing {
                 .find(|(key, _)| key == name)
                 .map(|(_, value)| value)
         }
-
-        /// A form field holding JSON.
-        pub fn json_field(&self, name: &str) -> Option<Value> {
-            self.field(name)
-                .and_then(|text| serde_json::from_str(&text).ok())
-        }
     }
 
     pub type Handler = Arc<dyn Fn(&str, &RecordedRequest) -> (u16, Value) + Send + Sync>;

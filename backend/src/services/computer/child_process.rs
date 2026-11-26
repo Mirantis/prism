@@ -210,7 +210,6 @@ impl ChildExit {
 /// handle on the same process.
 #[derive(Clone)]
 pub(crate) struct ChildHandle {
-    pid: Option<u32>,
     exited: Arc<AtomicBool>,
     stop: mpsc::UnboundedSender<StopSignal>,
     exit: watch::Receiver<Option<ChildExit>>,
@@ -257,7 +256,6 @@ pub(crate) fn spawn_child(
         stdout: child.stdout.take(),
         stderr: child.stderr.take(),
     };
-    let pid = child.id();
     let exited = Arc::new(AtomicBool::new(false));
     let (stop_tx, mut stop_rx) = mpsc::unbounded_channel::<StopSignal>();
     let (exit_tx, exit_rx) = watch::channel::<Option<ChildExit>>(None);
@@ -288,7 +286,6 @@ pub(crate) fn spawn_child(
     });
     Ok((
         ChildHandle {
-            pid,
             exited,
             stop: stop_tx,
             exit: exit_rx,
@@ -301,10 +298,6 @@ impl ChildHandle {
     /// Whether the process has exited, by a code or a signal.
     pub fn has_exited(&self) -> bool {
         self.exited.load(Ordering::SeqCst)
-    }
-
-    pub fn pid(&self) -> Option<u32> {
-        self.pid
     }
 
     /// Send the process a signal. A process that already exited is left alone.

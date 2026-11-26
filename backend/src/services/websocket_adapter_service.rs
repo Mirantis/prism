@@ -97,9 +97,9 @@ impl ChannelAdapter for WebSocketAdapterService {
     /// as `WebSocket deliver failed for user {userId}: {message}` and not returned.
     async fn deliver(
         &self,
-        user_id: &str,
+        _user_id: &str,
         message: &DeliverableMessage,
-        channel_context: Option<&ChannelContext>,
+        _channel_context: Option<&ChannelContext>,
     ) -> anyhow::Result<()> {
         // Publishing has no failure to report: the frame always serializes, and a
         // subscriber only queues it for its socket.
@@ -109,7 +109,7 @@ impl ChannelAdapter for WebSocketAdapterService {
 
     /// Always connected. The stream keeps what it is given for a client that is
     /// away right now, and a reply that was never published could never be sent again.
-    async fn is_user_connected(&self, user_id: &str) -> anyhow::Result<bool> {
+    async fn is_user_connected(&self, _user_id: &str) -> anyhow::Result<bool> {
         Ok(true)
     }
 
@@ -118,7 +118,7 @@ impl ChannelAdapter for WebSocketAdapterService {
     async fn thread_destination(
         &self,
         thread_id: &str,
-        origin_channel_id: Option<&str>,
+        _origin_channel_id: Option<&str>,
     ) -> Option<anyhow::Result<ChannelDestination>> {
         Some(
             web_chat_label(thread_id)

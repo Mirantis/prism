@@ -110,6 +110,7 @@ pub struct LocalProcess {
     /// Set once it has exited and both output streams reached end of file.
     pub(crate) closed: watch::Receiver<Option<ExecEnd>>,
     /// Asks the waiter to end the process: Windows has no signals to send.
+    #[cfg_attr(unix, allow(dead_code))]
     pub(crate) kill_requests: tokio::sync::mpsc::UnboundedSender<Signal>,
 }
 

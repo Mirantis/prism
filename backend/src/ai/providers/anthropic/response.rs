@@ -82,6 +82,7 @@ pub(super) enum Citation {
         start_char_index: f64,
         end_char_index: f64,
     },
+    #[allow(dead_code)] // Required by the schema; no source is made from this citation.
     ContentBlockLocation {
         cited_text: String,
         document_index: usize,
@@ -89,6 +90,7 @@ pub(super) enum Citation {
         start_block_index: f64,
         end_block_index: f64,
     },
+    #[allow(dead_code)] // Required by the schema; no source is made from this citation.
     SearchResultLocation {
         cited_text: String,
         search_result_index: f64,
@@ -201,6 +203,7 @@ pub(super) struct ModelRef {
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct AnthropicResponse {
     #[serde(rename = "type")]
+    #[allow(dead_code)] // Required: the schema rejects a value without this tag.
     pub kind: MessageLiteral,
     #[serde(default)]
     pub id: Option<String>,
