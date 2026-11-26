@@ -1008,11 +1008,11 @@ fn adds_the_network_hint_only_for_a_server_marked_network() {
     let server = unconnected("repo-server", "failed", None, false);
     let remote = unconnected("repo-remote", "needs-auth", None, true);
     assert_eq!(
-        describe_unconnected("Fake Agent", &[server.clone()]),
+        describe_unconnected("Fake Agent", std::slice::from_ref(&server)),
         format!("{head}\n- repo-server (failed)")
     );
     assert_eq!(
-        describe_unconnected("Fake Agent", &[remote.clone()]),
+        describe_unconnected("Fake Agent", std::slice::from_ref(&remote)),
         format!("{head}\n- repo-remote (needs-auth){hint}")
     );
     assert_eq!(
