@@ -164,7 +164,7 @@ try {
     $bearer = if ($env:AWS_BEARER_TOKEN_BEDROCK) { $env:AWS_BEARER_TOKEN_BEDROCK } else { '' }
     $envContent = @"
 # Prism Agent server configuration. Restart the service after editing:
-#   Stop-ScheduledTask -TaskName PrismServer; Start-ScheduledTask -TaskName PrismServer
+#   Stop-ScheduledTask -TaskName PrismServer; Start-Sleep -Seconds 1; Start-ScheduledTask -TaskName PrismServer
 #
 # The prism-server binary sets its own database path before this file is read,
 # so setting DATABASE_URL here has no effect -- move `$env:PRISM_HOME if you
