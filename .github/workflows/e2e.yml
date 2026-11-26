@@ -94,7 +94,9 @@ jobs:
     name: e2e-web (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     # A few times a shard's usual run: the limit stops a hang, not a slow green run.
-    timeout-minutes: 20
+    # Each job that installs the desktop packages (`web: 'true'`) adds 12 minutes:
+    # with the apt cache evicted, a slow mirror has taken that long to install them.
+    timeout-minutes: 32
     strategy:
       # A red shard does not cancel the others, so the run reports every result.
       fail-fast: false
@@ -349,7 +351,7 @@ jobs:
   e2e-single-thread:
     needs: backend
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 27
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -379,7 +381,7 @@ jobs:
   e2e-no-llm-provider:
     needs: backend
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 27
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -408,7 +410,7 @@ jobs:
   e2e-tool-search:
     needs: backend
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 27
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -452,7 +454,7 @@ jobs:
   e2e-slack:
     needs: backend
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 37
 
     # `queue: max` makes waiters line up instead of cancelling each other, which
     # is what a shared Slack app needs: only one of these may hold the token.
