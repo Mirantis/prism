@@ -394,7 +394,7 @@ describe('the ChatGPT subscription', () => {
         'forced_login_method="chatgpt"', 'cli_auth_credentials_store="file"',
       ]));
       expect(args).not.toContain('model_provider="amazon-bedrock"');
-      expect(args[args.indexOf('--model') + 1]).toBe('gpt-5.6-terra');
+      expect(args[args.indexOf('--model') + 1]).toBe('gpt-5.6-sol');
       child.emitLine(JSON.stringify({ type: 'turn.completed' }));
       child.finish(0);
       await Array.fromAsync(run.events);
@@ -527,7 +527,7 @@ describe('the ChatGPT subscription', () => {
 
 describe('model tier and effort', () => {
   const tiers = ['small', 'medium', 'large'] as const;
-  const models = ["gpt-5.6-luna","gpt-5.6-terra","gpt-5.6-sol"];
+  const models = ["gpt-5.6-terra","gpt-5.6-sol","gpt-6-astra"];
   for (const sessionId of [undefined, 'session-1']) {
     it.each(tiers)('maps %s for session ' + sessionId, async (modelTier) => {
       const child = new FakeChild();
@@ -606,9 +606,9 @@ describe('model tier and effort', () => {
 });
 
 it.each([
-  ['small', 'openai.gpt-5.6-luna'],
-  ['medium', 'openai.gpt-5.6-terra'],
-  ['large', 'openai.gpt-5.6-sol'],
+  ['small', 'openai.gpt-5.6-terra'],
+  ['medium', 'openai.gpt-5.6-sol'],
+  ['large', 'openai.gpt-6-astra'],
 ] as const)('uses the Bedrock model for %s', async (modelTier, model) => {
   const child = new FakeChild();
   let args: readonly string[] = [];

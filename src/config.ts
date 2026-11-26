@@ -942,14 +942,14 @@ const codingAgentModels = {
       { default: 'sonnet', bedrock: 'global.anthropic.claude-sonnet-5-5' }),
     large: claudeCodeTier(codingAgentModelOverrides['claude-code'].large, { default: 'opus', bedrock: 'opus' }),
   },
-  // Reuse the repository's model choices: luna is the fast classification model,
-  // sol is the main model, and terra is the Codex adapter's existing Bedrock default.
   // Bedrock defaults use the vendor prefix.
   codex: {
-    small: codexTier(codingAgentModelOverrides.codex.small, { openai: 'gpt-5.6-luna', bedrock: 'openai.gpt-5.6-luna' }),
-    medium: codexTier(codingAgentModelOverrides.codex.medium,
+    small: codexTier(codingAgentModelOverrides.codex.small,
       { openai: 'gpt-5.6-terra', bedrock: 'openai.gpt-5.6-terra' }),
-    large: codexTier(codingAgentModelOverrides.codex.large, { openai: 'gpt-5.6-sol', bedrock: 'openai.gpt-5.6-sol' }),
+    medium: codexTier(codingAgentModelOverrides.codex.medium,
+      { openai: 'gpt-5.6-sol', bedrock: 'openai.gpt-5.6-sol' }),
+    large: codexTier(codingAgentModelOverrides.codex.large,
+      { openai: 'gpt-6-astra', bedrock: 'openai.gpt-6-astra' }),
   },
 };
 
