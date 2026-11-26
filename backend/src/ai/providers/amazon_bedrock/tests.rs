@@ -9,9 +9,9 @@ use serde_json::{Value, json};
 
 use super::api::{EnvLookup, FetchFunction, FetchRequest, FetchResponse};
 use super::*;
+use crate::ai::ApiCallError;
 use crate::ai::json::{js_stringify, normalize_numbers};
 use crate::ai::provider::{EmbeddingModelV4CallOptions, LanguageModelV4CallOptions};
-use crate::ai::{ApiCallError, LanguageModel};
 
 fn fixtures() -> Value {
     serde_json::from_str(include_str!("testdata/sdk_requests.json")).unwrap()

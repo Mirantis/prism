@@ -13,7 +13,6 @@ use std::sync::LazyLock;
 use diesel::prelude::*;
 
 use crate::config::CONFIG;
-use crate::db::models::ThreadSource;
 use crate::db::schema::conversation_threads::dsl as t;
 use crate::services::conversation_service::CONVERSATION_SERVICE;
 use crate::services::runtime_state_service::RUNTIME_STATE_SERVICE;

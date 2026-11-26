@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 
 use parking_lot::{Mutex, RwLock};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use serde_json::json;
 

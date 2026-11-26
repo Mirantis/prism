@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::ai::{ModelMessage, Tool, ToolSet};
+use crate::ai::{ModelMessage, ToolSet};
 use crate::config::CONFIG;
 use crate::db::models::ThreadSource;
 use crate::lib::coding_agents::availability::ensure_coding_agents_detected;
@@ -641,6 +641,7 @@ pub fn filter_tools_by_mode(tools: ToolSet, mode: &str) -> ToolSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::Tool;
     use crate::lib::llm_providers::llm_provider::{
         ANTHROPIC_CACHE_POINT, provider_options, provider_options_json,
     };

@@ -92,7 +92,7 @@ use crate::utils::slack_formatter::{
     FeedbackRating, FormatSlackMessageOptions, FormattedSlackMessage, SlackBlock,
     build_feedback_ack_block, format_slack_message, slack_channel_label,
 };
-use crate::{log_debug, log_error, log_info, log_warn};
+use crate::{log_error, log_info, log_warn};
 
 // ============================================================================
 // Tunables

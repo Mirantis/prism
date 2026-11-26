@@ -34,7 +34,7 @@ use crate::config::{CONFIG, ThreadMode};
 use crate::db::models::{MessageTrigger, ThreadSource};
 use crate::lib::log_redaction::err_json;
 use crate::lib::telemetry::track_event;
-use crate::prompts::voice_chat_prompt::{NO_CALL_SUMMARY, VOICE_CALL_SUMMARY_INSTRUCTIONS};
+use crate::prompts::voice_chat_prompt::NO_CALL_SUMMARY;
 use crate::services::channel_adapter_interface::{ChannelContext, ChannelName};
 use crate::services::computer::agent_computer::{AgentComputer, ModelChannel};
 use crate::services::computer::computer_access::{ComputerCaller, ComputerUse};

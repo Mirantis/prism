@@ -138,7 +138,7 @@ use crate::services::webhook_receiver_service::WEBHOOK_RECEIVER_SERVICE;
 use crate::services::webhook_service::{
     WEBHOOK_NAME_RE, normalize_webhook_name, to_public_subscription,
 };
-use crate::support::http::{JsonBody, QueryParams, empty, error_json, json};
+use crate::support::http::{JsonBody, QueryParams, error_json, json};
 use crate::support::js;
 use crate::{log_error, log_info, log_warn};
 

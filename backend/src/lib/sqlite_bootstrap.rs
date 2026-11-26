@@ -21,7 +21,7 @@ use serde_json::json;
 use crate::db::Database;
 use crate::db::schema::memory_entries;
 use crate::lib::embedding_providers::embedding_provider::EMBEDDING_DIMENSIONS;
-use crate::{log_info, log_warn};
+use crate::log_info;
 
 // One source of truth for the vector width: the embedding-provider contract
 // declares it (a light, dependency-free module every vendor imports), and the

@@ -28,9 +28,7 @@ use parking_lot::Mutex;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::lib::execution_environments::execution_environment::{
-    DirEntry, ExecutionFiles, FileStat,
-};
+use crate::lib::execution_environments::execution_environment::{ExecutionFiles, FileStat};
 use crate::lib::execution_environments::get_execution_environment::get_execution_environment;
 use crate::log_warn;
 use crate::support::js::number_text;

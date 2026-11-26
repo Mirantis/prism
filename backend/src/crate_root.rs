@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_imports, unused_variables, special_module_name)]
+#![allow(dead_code, unused_variables, special_module_name)]
 
 pub mod ai;
 pub mod db;

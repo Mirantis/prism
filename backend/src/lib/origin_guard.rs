@@ -36,7 +36,6 @@
 //! fetch that adds one fails its CORS preflight — and a non-browser client
 //! already passes by stating no `Origin`.
 
-use axum::Json;
 use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -45,7 +44,6 @@ use http::header::{
     ACCESS_CONTROL_MAX_AGE, ACCESS_CONTROL_REQUEST_METHOD, HOST, ORIGIN, VARY,
 };
 use http::{HeaderMap, HeaderValue, Method, StatusCode};
-use serde_json::json;
 use url::Url;
 
 use crate::config::CONFIG;
@@ -292,6 +290,7 @@ pub async fn origin_guard(req: Request, next: Next) -> Response {
 mod tests {
     use super::*;
     use crate::support::http::testing::{request, send};
+    use serde_json::json;
 
     #[test]
     fn allows_a_request_that_states_no_origin_or_no_host() {
