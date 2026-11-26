@@ -173,11 +173,12 @@ tools included. It also has the MCP servers Claude Code loads itself. On your
 Claude subscription these include your claude.ai connectors. A repository's
 `.mcp.json` adds its servers, and Claude Code starts their commands when a task
 starts in that repository. When Claude Code loads a server with the name of one
-of the agent's servers, the task uses the agent's server. Claude Code calls claude.ai connectors
-through `mcp-proxy.anthropic.com`, so the sandbox's network policy must allow
-that host. A server that fails to connect when a task starts is named at the end
-of the task's result, with that host for a claude.ai connector, so the agent can
-ask you to allow it. In a conversation you start with `prism` inside
+of the agent's servers, the task uses the agent's server. Claude Code calls
+claude.ai connectors through `mcp-proxy.anthropic.com`, so the sandbox's network
+policy must allow that host. The end of a task's result names each server that
+failed to connect, with that host for a claude.ai connector. It also names each
+remote server that Claude Code lists as `needs-auth`. Claude Code gives that
+status to a server whose host the sandbox blocks. In a conversation you start with `prism` inside
 a repository while commands [run in a container](#where-commands-run), the task
 leaves out plugin servers that start a command, because those run in the
 container.

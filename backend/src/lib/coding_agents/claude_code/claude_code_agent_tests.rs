@@ -1035,54 +1035,85 @@ fn parse(line: Value) -> Vec<CodingAgentEvent> {
 }
 
 #[test]
-fn reports_the_servers_an_init_line_lists_as_failed_apart_from_the_runtimes_own() {
-    // The statuses Claude Code 2.1.332 reports, with mcp-proxy.anthropic.com refused.
-    let task = CodingAgentTask {
-        mcp_servers: servers(),
-        ..base_task()
-    };
-    let events = parse_line(
-        &json!({
-            "type": "system", "subtype": "init",
-            "mcp_servers": [
-                { "name": "nexus", "status": "failed" },
-                { "name": "claude.ai Atlassian", "status": "failed" },
-                { "name": "claude.ai Slack", "status": "connected" },
-                { "name": "claude.ai Gmail", "status": "needs-auth" },
-                { "name": "claude.ai Google Drive", "status": "pending" },
-                { "name": "repo-server", "status": "failed" },
-            ],
-        })
-        .to_string(),
-        &task,
-        &deployment(),
-        true,
-    )
-    .unwrap();
+fn reports_failed_servers_and_remote_servers_that_ask_for_a_sign_in() {
+    // The fields Claude Code 2.1.332 reports, with mcp-proxy.anthropic.com refused.
+    let events = parse(json!({
+        "type": "system", "subtype": "init",
+        "mcp_servers": [
+            { "name": "nexus", "status": "failed", "source": "dynamic" },
+            { "name": "claude.ai Atlassian", "status": "failed", "source": "claudeai" },
+            { "name": "claude.ai Slack", "status": "connected", "source": "claudeai" },
+            { "name": "claude.ai Gmail", "status": "needs-auth", "source": "claudeai" },
+            { "name": "claude.ai Google Drive", "status": "pending", "source": "claudeai" },
+            { "name": "repo-server", "status": "failed", "source": "project" },
+            { "name": "repo-remote", "status": "needs-auth", "source": "project" },
+        ],
+    }));
     assert_eq!(
         events,
         [CodingAgentEvent::Unconnected {
             servers: vec![
-                CodingAgentUnconnectedServer {
-                    name: "claude.ai Atlassian".into(),
-                    host: Some("mcp-proxy.anthropic.com".into()),
-                },
-                CodingAgentUnconnectedServer {
-                    name: "repo-server".into(),
-                    host: None,
-                },
+                listed("nexus", "failed", None, false),
+                listed(
+                    "claude.ai Atlassian",
+                    "failed",
+                    Some("mcp-proxy.anthropic.com"),
+                    true
+                ),
+                listed("repo-server", "failed", None, false),
+                listed("repo-remote", "needs-auth", None, true),
+            ],
+        }]
+    );
+}
+
+fn listed(
+    name: &str,
+    status: &str,
+    host: Option<&str>,
+    network: bool,
+) -> CodingAgentUnconnectedServer {
+    CodingAgentUnconnectedServer {
+        name: name.into(),
+        status: status.into(),
+        host: host.map(Into::into),
+        network,
+    }
+}
+
+#[test]
+fn marks_a_connector_by_its_name_also_when_the_line_has_no_source() {
+    let events = parse(json!({
+        "type": "system", "subtype": "init",
+        "mcp_servers": [
+            { "name": "claude.ai Atlassian", "status": "failed" },
+            { "name": "claude.ai Gmail", "status": "needs-auth" },
+            { "name": "repo-remote", "status": "needs-auth" },
+        ],
+    }));
+    assert_eq!(
+        events,
+        [CodingAgentEvent::Unconnected {
+            servers: vec![
+                listed(
+                    "claude.ai Atlassian",
+                    "failed",
+                    Some("mcp-proxy.anthropic.com"),
+                    true
+                ),
+                listed("repo-remote", "needs-auth", None, true),
             ],
         }]
     );
 }
 
 #[test]
-fn reports_no_server_when_every_one_connected_or_waits_for_a_sign_in() {
+fn reports_no_connector_that_connected_or_waits_for_a_sign_in() {
     let events = parse(json!({
         "type": "system", "subtype": "init",
         "mcp_servers": [
-            { "name": "claude.ai Slack", "status": "connected" },
-            { "name": "claude.ai Gmail", "status": "needs-auth" },
+            { "name": "claude.ai Slack", "status": "connected", "source": "claudeai" },
+            { "name": "claude.ai Gmail", "status": "needs-auth", "source": "claudeai" },
         ],
     }));
     assert!(

@@ -392,7 +392,7 @@ fn parse_line(
     // The opening line lists each MCP server's status; a connection failure
     // appears there and in no tool output.
     if text(&parsed, "subtype") == Some("init") {
-        let servers = unconnected_servers(&parsed, task);
+        let servers = unconnected_servers(&parsed);
         if !servers.is_empty() {
             events.push(CodingAgentEvent::Unconnected { servers });
         }
@@ -465,22 +465,32 @@ fn parse_line(
 /// The host Claude Code connects every claude.ai connector through.
 const CONNECTOR_HOST: &str = "mcp-proxy.anthropic.com";
 
-/// The servers an `init` line lists as `failed`, apart from the runtime's own,
-/// which the runtime connects for the agent too. A claude.ai connector comes
-/// with the host it connects through.
-fn unconnected_servers(init: &Value, task: &CodingAgentTask) -> Vec<CodingAgentUnconnectedServer> {
+/// The `source` Claude Code gives a claude.ai connector in an `init` line.
+const CONNECTOR_SOURCE: &str = "claudeai";
+
+/// The servers an `init` line lists as `failed` or `needs-auth`. Claude Code lists
+/// a remote server whose host the sandbox refuses as `needs-auth`. It also lists a
+/// claude.ai connector as `needs-auth` until the person connects it on claude.ai,
+/// so for a connector only `failed` counts, and it comes with its host. The
+/// `claude.ai ` name prefix also identifies a connector.
+fn unconnected_servers(init: &Value) -> Vec<CodingAgentUnconnectedServer> {
     init.get("mcp_servers")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter(|server| text(server, "status") == Some("failed"))
-        .filter_map(|server| text(server, "name"))
-        .filter(|name| !task.mcp_servers.iter().any(|own| own.name() == *name))
-        .map(|name| CodingAgentUnconnectedServer {
-            name: name.to_string(),
-            host: name
-                .starts_with("claude.ai ")
-                .then(|| CONNECTOR_HOST.to_string()),
+        .filter_map(|server| {
+            let name = text(server, "name")?;
+            let status = text(server, "status")?;
+            let connector =
+                text(server, "source") == Some(CONNECTOR_SOURCE) || name.starts_with("claude.ai ");
+            let needs_auth = status == "needs-auth";
+            let counts = status == "failed" || (needs_auth && !connector);
+            counts.then(|| CodingAgentUnconnectedServer {
+                name: name.to_string(),
+                status: status.to_string(),
+                host: connector.then(|| CONNECTOR_HOST.to_string()),
+                network: connector || needs_auth,
+            })
         })
         .collect()
 }

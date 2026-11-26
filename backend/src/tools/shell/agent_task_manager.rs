@@ -899,8 +899,8 @@ impl AgentTaskManager {
 
     /// Read the run's events into the entry's state until the stream ends, then
     /// finalize the result (emitting `coding task refused` when the agent's checks
-    /// refused actions, and `coding task mcp unconnected` when MCP servers failed
-    /// to connect).
+    /// refused actions, and `coding task mcp unconnected` when MCP servers did not
+    /// connect).
     async fn drive(
         &self,
         task_id: &str,
@@ -1007,7 +1007,6 @@ impl AgentTaskManager {
             kept_refusals = Some(refusals);
         }
 
-        let mut kept_unconnected = None;
         if !unconnected.is_empty() {
             result.push_str(&format!(
                 "\n\n{}",
@@ -1025,7 +1024,6 @@ impl AgentTaskManager {
                 Some(&CONFIG.owner_user_id()),
                 Some(props),
             );
-            kept_unconnected = Some(unconnected);
         }
 
         {
@@ -1033,7 +1031,6 @@ impl AgentTaskManager {
             if kept_refusals.is_some() {
                 state.refusals = kept_refusals;
             }
-            state.unconnected_mcp_servers = kept_unconnected;
             state.completed = true;
             state.reporting = true;
             state.result = Some(result);
@@ -1153,8 +1150,9 @@ pub fn describe_refusals(display_name: &str, refusals: &[CodingAgentRefusal]) ->
     )
 }
 
-/// The MCP servers a run started without, each with the host it connects
-/// through when the adapter knows it.
+/// The MCP servers a run started without, each with its status and, when the
+/// adapter knows it, the host it connects through. The network hint goes with a
+/// server that the adapter marks as `network`.
 pub fn describe_unconnected(
     display_name: &str,
     servers: &[CodingAgentUnconnectedServer],
@@ -1162,14 +1160,21 @@ pub fn describe_unconnected(
     let lines: Vec<String> = servers
         .iter()
         .map(|server| match &server.host {
-            Some(host) => format!("- {} (connects through {host})", server.name),
-            None => format!("- {}", server.name),
+            Some(host) => format!(
+                "- {} ({}, connects through {host})",
+                server.name, server.status
+            ),
+            None => format!("- {} ({})", server.name, server.status),
         })
         .collect();
-    format!(
-        "[unconnected]: {display_name} could not connect these MCP servers, so the task ran without their tools:\n{}\nThe sandbox's network policy may block a server's host. A person can allow a host in the platform.",
+    let mut text = format!(
+        "[unconnected]: {display_name} could not connect these MCP servers, so the task ran without their tools:\n{}",
         lines.join("\n")
-    )
+    );
+    if servers.iter().any(|server| server.network) {
+        text.push_str("\nThe sandbox's network policy may block a server's host, or a server may need a sign-in. A person can allow a host in the platform.");
+    }
+    text
 }
 
 /// Append text, keeping the newest `MAX_BUFFER_SIZE` UTF-16 units behind a
