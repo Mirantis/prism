@@ -27,7 +27,7 @@ Element ids are 1 to 64 characters of A-Z, a-z, 0-9, _ and -. Every element but 
 
 ## Limits per UI
 
-At most 100 elements, one Table or Comparison, and two charts. Table and comparison cells hold at most 10000 characters together. In Slack a UI also has to fit one message; when it does not fit, show_ui says so.
+At most 100 elements, one Table or Comparison, and two charts. Table and comparison cells hold at most 10000 characters together. When a UI does not fit the channel, show_ui says so.
 
 ## Rules
 

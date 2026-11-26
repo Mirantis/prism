@@ -44,9 +44,12 @@ export function fromTop(scale: Scale, value: number): number {
 }
 
 const VALUE = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
-const TICK = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
+// Below 1 a value keeps its leading digits however small it is, so 0.004 does not read as 0.
+const SMALL_VALUE = new Intl.NumberFormat(undefined, { maximumSignificantDigits: 3 });
+// A tick is at most four steps from zero and a step is 1, 2 or 5 times a power of ten, so two digits name every tick.
+const TICK = new Intl.NumberFormat(undefined, { notation: 'compact', maximumSignificantDigits: 2 });
 const PERCENT = new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 0 });
 
-export const formatValue = (value: number) => VALUE.format(value);
+export const formatValue = (value: number) => (Math.abs(value) < 1 ? SMALL_VALUE : VALUE).format(value);
 export const formatTick = (value: number) => TICK.format(value);
 export const formatShare = (share: number) => PERCENT.format(share);

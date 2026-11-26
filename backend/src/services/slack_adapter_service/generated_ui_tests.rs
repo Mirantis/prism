@@ -14,7 +14,7 @@ use crate::lib::slack_web_client::testing::{FakeSlackApi, fake_slack_api};
 use crate::services::generated_ui::generated_ui_schema::parse_spec;
 use crate::services::generated_ui::generated_ui_service::PRESS_TRIGGER_NAME;
 use crate::services::question_cards::question_card_service::tests::{
-    THREAD, agent, chat_work, rows, stored,
+    THREAD, USER, agent, agent_id, chat_work, rows, stored,
 };
 use crate::services::slack_adapter_service::testing::install_app;
 use crate::services::slack_router_envelope::{RouterEnvelope, parse_router_envelope};
@@ -188,6 +188,44 @@ async fn posts_a_ui_as_its_blocks_and_links_the_stored_message() {
     );
     let stored = rows(THREAD).await;
     assert_eq!(stored[0].external_message_id.as_deref(), Some(TS));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn autonomous_delivery_posts_a_ui_only_to_the_main_channel_not_also_to_the_dm() {
+    let _db = agent().await;
+    set_slack_config_for_tests(Some(connection()));
+    let api = fake_slack_api(Arc::new(|method, _| match method {
+        "chat.postMessage" => (200, json!({ "ok": true, "ts": TS })),
+        _ => (200, json!({ "ok": true })),
+    }))
+    .await;
+    let _app = install_app(TEAM, &api.url);
+    let mut mapping = crate::db::models::NewSlackMapping::new(TEAM, agent_id());
+    mapping.lens_user_id = Some(USER.into());
+    mapping.dm_channel_id = Some("D0ADA".into());
+    mapping.slack_channel_id = Some("C1".into());
+    mapping.is_main_channel = true;
+    crate::db::run(move |conn| {
+        diesel::insert_into(crate::db::schema::slack_mappings::table)
+            .values(&mapping)
+            .execute(conn)?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let ui = ui();
+    seed_ui(&ui).await;
+    let row = rows(THREAD).await.remove(0);
+    adapter()
+        .deliver(USER, &DeliverableMessage::bare(row), None)
+        .await
+        .unwrap();
+    __reset_slack_config_for_tests();
+
+    let posts = api.calls("chat.postMessage");
+    let channels: Vec<Option<String>> = posts.iter().map(|post| post.field("channel")).collect();
+    assert_eq!(channels, [Some("C1".to_string())]);
 }
 
 #[tokio::test]

@@ -1612,9 +1612,11 @@ impl CompactionService {
                     max
                 }
             });
+            // The watermark covers the rows read from the channel. The rows read from
+            // the database have no channel id: internal steps and button presses.
             let internal_ids: Vec<String> = compactable
                 .iter()
-                .filter(|row| row.internal_step)
+                .filter(|row| row.internal_step || row.external_message_id.is_none())
                 .map(|row| row.id.clone())
                 .collect();
             crate::db::run(move |conn| {

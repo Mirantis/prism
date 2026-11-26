@@ -22,7 +22,7 @@ Feature: The agent shows a UI in the conversation
     When I open the conversation with the UI
     Then the UI shows the heading "Deploys this week"
     And the UI shows a table with the cell "api"
-    And the UI shows the chart "Deploys per day"
+    And the UI shows the chart "Deploys per day" with "5" for "Tue"
     And the UI shows the checklist item "Tag the release"
     And the UI shows a link "Runbook" to "https://example.com/runbook"
     When "Grace Åström" presses "Roll back" in the UI first

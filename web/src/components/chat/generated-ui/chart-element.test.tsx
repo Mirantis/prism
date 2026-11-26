@@ -56,7 +56,7 @@ describe('ChartElement', () => {
 
   it('gives a screen reader the numbers as a table', () => {
     render(<ChartElement chart={BARS} />);
-    const table = screen.getByRole('table', { name: 'Balance per month' });
+    const table = screen.getByRole('table', { name: 'Balance per month (EUR)' });
     expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Month', 'Team A', 'Team B']);
     const feb = within(table).getByRole('rowheader', { name: 'Feb' }).closest('tr')!;
     expect(within(feb).getAllByRole('cell').map((cell) => cell.textContent)).toEqual(['-20', '30']);
@@ -75,6 +75,19 @@ describe('ChartElement', () => {
     const { container } = render(<ChartElement chart={{ ...PIE, categories: ['EU'], series: [{ name: 'Requests', values: [5] }] }} />);
     expect(container.querySelectorAll('svg circle')).toHaveLength(1);
     expect(screen.getByText('EU: 5 (100%)')).toBeTruthy();
+  });
+
+  it('keeps the digits of small values in titles, the table, the axis and the pie legend', () => {
+    const small: GeneratedUiChart = { kind: 'bar', title: 'Error rate', categories: ['a', 'b', 'c'], series: [{ name: 'rate', values: [0.001, 0.004, 0.07] }] };
+    const bars = render(<ChartElement chart={small} />);
+    expect(screen.getByTitle('rate, a: 0.001')).toBeTruthy();
+    const table = screen.getByRole('table', { name: 'Error rate' });
+    expect(within(table).getAllByRole('cell').map((cell) => cell.textContent)).toEqual(['0.001', '0.004', '0.07']);
+    for (const tick of ['0.08', '0.06', '0.04', '0.02', '0']) expect(screen.getByText(tick)).toBeTruthy();
+    bars.unmount();
+    render(<ChartElement chart={{ ...small, kind: 'pie', series: [{ name: 'rate', values: [0.001, 0.002, 0.004] }] }} />);
+    const legend = screen.getAllByRole('listitem', { hidden: true }).map((item) => item.textContent);
+    expect(legend).toEqual(['a0.001 · 14%', 'b0.002 · 29%', 'c0.004 · 57%']);
   });
 
   it('draws a line and a point per value, and an area fills under its line', () => {

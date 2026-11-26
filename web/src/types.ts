@@ -870,7 +870,7 @@ export function codingAgentSignInBlocks(message: ConversationMessage): CodingAge
   ) ?? [];
 }
 
-export type GeneratedUiChartKind = 'bar' | 'line' | 'area' | 'pie';
+type GeneratedUiChartKind = 'bar' | 'line' | 'area' | 'pie';
 
 export interface GeneratedUiChart {
   kind: GeneratedUiChartKind;
@@ -900,7 +900,7 @@ export type GeneratedUiElement =
   | { type: 'LinkButton'; props: { label: string; url: string } }
   | { type: 'Button'; props: { label: string; style?: GeneratedUiButtonStyle } };
 
-export type GeneratedUiElementType = GeneratedUiElement['type'];
+type GeneratedUiElementType = GeneratedUiElement['type'];
 
 export interface GeneratedUiPress {
   elementId: string;

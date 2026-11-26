@@ -78,8 +78,11 @@ Then('the UI shows a table with the cell {string}', async ({ page }, text: strin
   await expect(ui(page).getByRole('cell', { name: text, exact: true }).first()).toBeVisible({ timeout: UI_TIMEOUT });
 });
 
-Then('the UI shows the chart {string}', async ({ page }, title: string) => {
-  await expect(ui(page).getByText(title, { exact: true }).first()).toBeVisible();
+Then('the UI shows the chart {string} with {string} for {string}', async ({ page }, title: string, value: string, category: string) => {
+  const chart = ui(page).getByTestId('generated-ui-chart').filter({ hasText: title });
+  await expect(chart).toBeVisible();
+  const row = chart.getByRole('table', { name: title }).getByRole('row').filter({ has: page.getByRole('rowheader', { name: category, exact: true }) });
+  await expect(row.getByRole('cell')).toHaveText([value]);
 });
 
 Then('the UI shows the checklist item {string}', async ({ page }, text: string) => {
@@ -107,7 +110,7 @@ When('I press {string} in the UI', async ({ page }, label: string) => {
 Then('the UI shows {string} under {string}', async ({ page }, line: string, label: string) => {
   const button = ui(page).getByRole('button', { name: label });
   await expect(button).toHaveAccessibleDescription(line, { timeout: 30_000 });
-  await expect(ui(page).getByRole('button').filter({ hasNotText: 'Runbook' }).first()).toBeDisabled();
+  for (const each of await ui(page).getByRole('button').all()) await expect(each).toBeDisabled();
 });
 
 When('{string} presses {string} in the UI first', async ({ page }, name: string, label: string) => {
