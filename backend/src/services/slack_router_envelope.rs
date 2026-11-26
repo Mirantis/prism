@@ -297,6 +297,8 @@ struct IdOnly {
 struct ActionMessageWire {
     ts: Id,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    thread_ts: Option<Id>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     blocks: Option<Vec<Map<String, Value>>>,

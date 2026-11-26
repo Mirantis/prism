@@ -229,14 +229,6 @@ fn finds_no_attachment_without_a_share() {
 }
 
 #[test]
-fn reads_blocks_from_a_fenced_json_block() {
-    let blocks = extract_blocks("text\n```json\n{\"blocks\":[{\"type\":\"card\"}]}\n```").unwrap();
-    assert_eq!(blocks[0].r#type, "card");
-    assert!(extract_blocks("no blocks").is_none());
-    assert!(extract_blocks("```json\n{\"blocks\":{}}\n```").is_none());
-}
-
-#[test]
 fn joins_only_the_steps_that_have_text() {
     let steps = vec![
         InvokeStep {

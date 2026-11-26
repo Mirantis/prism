@@ -134,6 +134,10 @@ switching to a DM link, and vice-versa.
   read it.
 - **Feedback.** Final messages carry 👍 / 👎 buttons; tapping one records
   feedback.
+- **Tables, charts and buttons.** The agent can post them as a message of their
+  own. Anyone in the conversation can press a button once: the message then
+  names the choice and who made it, and the agent answers it as that person's
+  reply.
 
 Autonomous messages from the agent — [heartbeat](heartbeat.md) alerts and
 [scheduled task](scheduled-tasks.md) results — arrive as channel posts. In Team

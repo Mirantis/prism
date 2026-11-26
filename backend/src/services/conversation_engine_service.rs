@@ -38,6 +38,12 @@ use crate::services::attachment_service::ATTACHMENT_SERVICE;
 use crate::services::channel_adapter_interface::{ChannelContext, ChannelName};
 use crate::services::conversation_service::{AddedMessage, CONVERSATION_SERVICE, MessageInput};
 use crate::services::conversation_thread_activity_service::CONVERSATION_THREAD_ACTIVITY_SERVICE;
+use crate::services::generated_ui::generated_ui_schema::{
+    ParsedSpec, SHOW_UI_TOOL_NAME, image_attachment_ids, parse_spec,
+};
+use crate::services::generated_ui::generated_ui_service::{
+    GENERATED_UI_SERVICE, PRESS_TRIGGER_NAME,
+};
 use crate::services::inline_image_placement::{
     PlacedImages, PlacementContext, place_inline_images,
 };
@@ -52,7 +58,7 @@ use crate::support::{js, now_ms};
 use crate::types::{
     AgentMessageOrigin, HistoryReadListener, InvokeError, InvokeErrorType, InvokeMode,
     InvokeRequest, InvokeStep, PromptSource, ResumedReply, SteeringSource, TaskNotificationOrigin,
-    ToolCallRecord, UIBlock,
+    ToolCallRecord,
 };
 use crate::{log_error, log_info};
 
@@ -82,7 +88,6 @@ Answer with one word: WORTHY or SKIP.";
 struct StreamedTurn {
     text: String,
     tool_calls: Vec<ToolCallRecord>,
-    blocks: Vec<UIBlock>,
     agent_message: Option<ConversationMessage>,
     /// Set when the turn ended on an error step, whose text is the published reply.
     error: Option<InvokeError>,
@@ -196,6 +201,9 @@ pub struct UserMessageInput {
     pub runtime_written: bool,
     /// See `ChatInput::task_notification`.
     pub task_notification: Option<TaskNotificationOrigin>,
+    /// The message is the press of a generated UI button, which a channel that
+    /// reads its history live merges from the stored rows.
+    pub generated_ui_press: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,8 +218,6 @@ pub struct ChatResponse {
     pub message_id: Option<String>,
     pub content: String,
     pub tool_calls: Vec<ToolCallRecord>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub blocks: Option<Vec<Value>>,
     pub duration_ms: i64,
     /// The title just assigned to the thread from this message, else null.
     pub title_set: Option<String>,
@@ -246,6 +252,8 @@ pub struct ChatWorkMessage {
     pub runtime_written: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_notification: Option<TaskNotificationOrigin>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub generated_ui_press: bool,
 }
 
 /// A message owed an answer, as `pending_work` holds it: where its thread is and
@@ -288,6 +296,7 @@ pub fn chat_work_for(input: &UserMessageInput, thread_id: &str) -> ChatWork {
             agent_message: input.agent_message.clone(),
             runtime_written: input.runtime_written,
             task_notification: input.task_notification.clone(),
+            generated_ui_press: input.generated_ui_press,
         }),
         ..ChatWork::default()
     }
@@ -538,23 +547,10 @@ fn no_turn(
         message_id: None,
         content: String::new(),
         tool_calls: Vec::new(),
-        blocks: None,
         duration_ms: now_ms() - started,
         title_set,
         steered: Some(steered),
     }
-}
-
-fn blocks_json(blocks: &[UIBlock]) -> Option<Vec<Value>> {
-    if blocks.is_empty() {
-        return None;
-    }
-    Some(
-        blocks
-            .iter()
-            .map(|block| serde_json::to_value(block).expect("a UI block serializes"))
-            .collect(),
-    )
 }
 
 fn non_empty<T: Clone>(items: &[T]) -> Option<Vec<T>> {
@@ -842,6 +838,7 @@ impl ConversationEngineService {
                     agent_message: agent_origin.clone(),
                     runtime_written: input.runtime_written,
                     task_notification: input.task_notification.clone(),
+                    generated_ui_press: false,
                 };
                 let (thread_id, message_id) = (thread_id.clone(), message_id.clone());
                 tokio::spawn(async move {
@@ -898,7 +895,6 @@ impl ConversationEngineService {
             });
 
         let mut response_texts: Vec<String> = Vec::new();
-        let mut all_blocks: Vec<UIBlock> = Vec::new();
         let mut all_tool_calls: Vec<ToolCallRecord> = Vec::new();
         let mut agent_message: Option<ConversationMessage> = None;
         let mut turn_error: Option<InvokeError> = None;
@@ -1152,7 +1148,6 @@ impl ConversationEngineService {
                         images.missed += streamed.images.missed;
                         images.attached += streamed.images.attached;
                         all_tool_calls.extend(streamed.tool_calls);
-                        all_blocks.extend(streamed.blocks);
                         if streamed.agent_message.is_some() {
                             agent_message = streamed.agent_message;
                         }
@@ -1302,7 +1297,6 @@ impl ConversationEngineService {
             message_id: agent_message.map(|message| message.id),
             content: response,
             tool_calls: all_tool_calls,
-            blocks: blocks_json(&all_blocks),
             duration_ms: now_ms() - start_time,
             title_set,
             steered: None,
@@ -1366,6 +1360,9 @@ impl ConversationEngineService {
                     .metadata
                     .as_ref()
                     .and_then(|metadata| metadata.sender_name.clone());
+                if input.generated_ui_press {
+                    row.trigger_name = Some(PRESS_TRIGGER_NAME.to_string());
+                }
             }
         }
         // A reply the person typed stands in for the answers to any card still waiting.
@@ -1480,9 +1477,8 @@ impl ConversationEngineService {
     /// summary), and this drains that stream to its end. An exchange calls this
     /// again for each coalesced follow-up.
     ///
-    /// A one-step buffer lets us tag the LAST text step with the accumulated UI
-    /// blocks and the feedback decision — we can't know a step was last until the
-    /// next step (or the stream end) arrives.
+    /// A one-step buffer lets us tag the LAST text step with the feedback decision —
+    /// we can't know a step was last until the next step (or the stream end) arrives.
     async fn stream_turn(&self, params: StreamTurnParams) -> anyhow::Result<StreamedTurn> {
         let StreamTurnParams {
             user_id,
@@ -1499,7 +1495,6 @@ impl ConversationEngineService {
         let mut buffered_step: Option<InvokeStep> = None;
         let mut buffered_tool_calls: Vec<ToolCallRecord> = Vec::new();
         let mut response_texts: Vec<String> = Vec::new();
-        let mut all_blocks: Vec<UIBlock> = Vec::new();
         let mut all_tool_calls: Vec<ToolCallRecord> = Vec::new();
         // Files the agent shared (share_file) accrue across steps. A delivered step
         // takes the images its text places; the rest ride out on the final delivered
@@ -1514,6 +1509,8 @@ impl ConversationEngineService {
         let mut error: Option<InvokeError> = None;
         // Whether the row holds calls or files that this turn's reply takes over.
         let mut owes = !all_attachment_ids.is_empty();
+        // Whether a show_ui call posted a UI this turn.
+        let mut ui_shown = false;
 
         let request = InvokeRequest {
             user_id: user_id.clone(),
@@ -1541,9 +1538,6 @@ impl ConversationEngineService {
         while let Some(step) = steps.next().await {
             let step = step?;
             all_tool_calls.extend(step.tool_calls.iter().cloned());
-            if let Some(blocks) = &step.blocks {
-                all_blocks.extend(blocks.iter().cloned());
-            }
             if let Some(attachment_ids) = &step.attachment_ids {
                 all_attachment_ids.extend(attachment_ids.iter().cloned());
             }
@@ -1554,63 +1548,19 @@ impl ConversationEngineService {
                 response_texts.push(step.text.clone());
 
                 // Flush the previously buffered step now that we know it wasn't last:
-                // no blocks, no feedback gate.
+                // no feedback gate.
                 if let Some(buffered) = &buffered_step {
-                    if params.verbose {
-                        let placed = match buffered_placed.take() {
-                            Some(placed) => placed,
-                            None => {
-                                place(
-                                    thread_id,
-                                    params.workspace_root.as_deref(),
-                                    &all_attachment_ids,
-                                    &buffered.text,
-                                )
-                                .await
-                            }
-                        };
-                        let placed = deliver(placed, &mut all_attachment_ids, &mut images);
-                        agent_message = Some(
-                            MESSAGE_DELIVERY_SERVICE
-                                .publish(
-                                    user_id,
-                                    thread_id,
-                                    &placed.content,
-                                    MessageTrigger::UserInput,
-                                    PublishOptions {
-                                        tool_calls: non_empty(&buffered_tool_calls),
-                                        attachment_ids: non_empty(&placed.attachment_ids),
-                                        channel_context: channel_context.clone().map(|context| {
-                                            ChannelContext {
-                                                include_feedback: Some(false),
-                                                ..context
-                                            }
-                                        }),
-                                        ..PublishOptions::default()
-                                    },
-                                )
-                                .await?,
-                        );
-                    } else {
-                        // Concise mode: persist without delivering to the channel. Marked
-                        // internal_step so client history hides it, while the model-context
-                        // read still replays it (tool rounds must survive for the model).
-                        let mut row = MessageInput::new(
-                            buffered.text.clone(),
-                            MessageRole::Agent,
-                            MessageTrigger::UserInput,
-                        );
-                        row.tool_calls = non_empty(&buffered_tool_calls)
-                            .map(serde_json::to_value)
-                            .transpose()?;
-                        row.internal_step = Some(true);
-                        agent_message = Some(
-                            CONVERSATION_SERVICE
-                                .add_message(thread_id, row)
-                                .await?
-                                .message,
-                        );
-                    }
+                    agent_message = Some(
+                        store_step(
+                            &params,
+                            buffered,
+                            buffered_placed.take(),
+                            &buffered_tool_calls,
+                            &mut all_attachment_ids,
+                            &mut images,
+                        )
+                        .await?,
+                    );
                 }
 
                 buffered_step = Some(step.clone());
@@ -1628,6 +1578,39 @@ impl ConversationEngineService {
                     None
                 };
                 buffered_tool_calls = std::mem::take(&mut pending_tool_calls);
+            }
+            let shown: Vec<ParsedSpec> = step
+                .tool_calls
+                .iter()
+                .filter(|call| call.tool == SHOW_UI_TOOL_NAME && call.success)
+                .filter_map(|call| serde_json::from_str::<Value>(&call.input).ok())
+                .filter_map(|input| parse_spec(&input).ok())
+                .collect();
+            if !shown.is_empty() {
+                // A step that called a tool is not the turn's last, so its text goes out
+                // now and the UI shows after it.
+                if let Some(buffered) = buffered_step.take() {
+                    agent_message = Some(
+                        store_step(
+                            &params,
+                            &buffered,
+                            buffered_placed.take(),
+                            &buffered_tool_calls,
+                            &mut all_attachment_ids,
+                            &mut images,
+                        )
+                        .await?,
+                    );
+                    buffered_tool_calls.clear();
+                }
+                for spec in shown {
+                    let images_of = image_attachment_ids(&spec.elements);
+                    all_attachment_ids.retain(|id| !images_of.contains(id));
+                    GENERATED_UI_SERVICE
+                        .publish(agent_id, user_id, thread_id, channel_context.clone(), spec)
+                        .await?;
+                }
+                ui_shown = true;
             }
             if !step.tool_calls.is_empty() || !step.text.is_empty() {
                 let unsaved: Vec<ToolCallRecord> = buffered_tool_calls
@@ -1653,7 +1636,6 @@ impl ConversationEngineService {
             return Ok(StreamedTurn {
                 text: response,
                 tool_calls: all_tool_calls,
-                blocks: all_blocks,
                 agent_message,
                 error,
                 completed,
@@ -1662,7 +1644,7 @@ impl ConversationEngineService {
         }
 
         // The stream is done. The buffered step (if any) is the LAST text step:
-        // attach the accumulated blocks and the feedback decision here.
+        // attach the feedback decision here.
         if let Some(buffered) = &buffered_step {
             let include_feedback = params.prompt_source == PromptSource::Person
                 && self
@@ -1703,7 +1685,6 @@ impl ConversationEngineService {
                         MessageTrigger::UserInput,
                         PublishOptions {
                             tool_calls: non_empty(&buffered_tool_calls),
-                            blocks: blocks_json(&all_blocks),
                             attachment_ids: non_empty(&attachment_ids),
                             channel_context: channel_context.clone().map(|context| {
                                 ChannelContext {
@@ -1718,16 +1699,46 @@ impl ConversationEngineService {
             );
         }
 
+        // The turn ended on a UI: its later calls stay for the model, and nothing empty shows.
+        if ui_shown && buffered_step.is_none() && !pending_tool_calls.is_empty() {
+            if all_attachment_ids.is_empty() {
+                let mut row =
+                    MessageInput::new(String::new(), MessageRole::Agent, MessageTrigger::UserInput);
+                row.tool_calls = Some(serde_json::to_value(&pending_tool_calls)?);
+                row.internal_step = Some(true);
+                agent_message = Some(
+                    CONVERSATION_SERVICE
+                        .add_message(thread_id, row)
+                        .await?
+                        .message,
+                );
+            } else {
+                images.attached += all_attachment_ids.len();
+                agent_message = Some(
+                    MESSAGE_DELIVERY_SERVICE
+                        .publish(
+                            user_id,
+                            thread_id,
+                            "",
+                            MessageTrigger::UserInput,
+                            PublishOptions {
+                                tool_calls: non_empty(&pending_tool_calls),
+                                attachment_ids: non_empty(&all_attachment_ids),
+                                channel_context: channel_context.clone(),
+                                ..PublishOptions::default()
+                            },
+                        )
+                        .await?,
+                );
+            }
+        }
+
         // A question card is the turn's whole reply: the row keeps its tool call for the
         // model and shows nothing under the card.
         let asked = all_tool_calls
             .iter()
             .any(|call| call.tool == ASK_QUESTIONS_TOOL_NAME && call.success);
-        if agent_message.is_none()
-            && asked
-            && all_blocks.is_empty()
-            && all_attachment_ids.is_empty()
-        {
+        if agent_message.is_none() && asked && all_attachment_ids.is_empty() {
             let mut row = MessageInput::new(
                 response.clone(),
                 MessageRole::Agent,
@@ -1744,15 +1755,12 @@ impl ConversationEngineService {
         }
 
         // Fallback: the stream produced no text step. Publish only if there's still
-        // something to show (tool calls, UI blocks or files) — e.g. a tool-only turn.
+        // something to show (tool calls or files) — e.g. a tool-only turn.
         // When a turn is cancelled before producing anything, skip it rather than
         // render an empty agent bubble. (In this branch `response` is always empty,
         // because any text step would have set `agent_message` via the buffered-step
         // publish.)
-        if agent_message.is_none()
-            && (!all_tool_calls.is_empty()
-                || !all_blocks.is_empty()
-                || !all_attachment_ids.is_empty())
+        if agent_message.is_none() && (!all_tool_calls.is_empty() || !all_attachment_ids.is_empty())
         {
             images.attached += all_attachment_ids.len();
             agent_message = Some(
@@ -1764,7 +1772,6 @@ impl ConversationEngineService {
                         MessageTrigger::UserInput,
                         PublishOptions {
                             tool_calls: non_empty(&all_tool_calls),
-                            blocks: blocks_json(&all_blocks),
                             attachment_ids: non_empty(&all_attachment_ids),
                             channel_context: channel_context.clone(),
                             ..PublishOptions::default()
@@ -1781,13 +1788,73 @@ impl ConversationEngineService {
         Ok(StreamedTurn {
             text: response,
             tool_calls: all_tool_calls,
-            blocks: all_blocks,
             agent_message,
             error,
             completed,
             images,
         })
     }
+}
+
+/// Stores a text step that is not the turn's last: delivered in verbose mode, and
+/// in concise mode kept as an internal step that client history hides while the
+/// model's history still replays it (tool rounds must survive for the model).
+async fn store_step(
+    params: &StreamTurnParams,
+    step: &InvokeStep,
+    placed: Option<PlacedImages>,
+    tool_calls: &[ToolCallRecord],
+    all_attachment_ids: &mut Vec<String>,
+    images: &mut TurnImages,
+) -> anyhow::Result<ConversationMessage> {
+    if !params.verbose {
+        let mut row = MessageInput::new(
+            step.text.clone(),
+            MessageRole::Agent,
+            MessageTrigger::UserInput,
+        );
+        row.tool_calls = non_empty(tool_calls)
+            .map(serde_json::to_value)
+            .transpose()?;
+        row.internal_step = Some(true);
+        return Ok(CONVERSATION_SERVICE
+            .add_message(&params.thread_id, row)
+            .await?
+            .message);
+    }
+    let placed = match placed {
+        Some(placed) => placed,
+        None => {
+            place(
+                &params.thread_id,
+                params.workspace_root.as_deref(),
+                all_attachment_ids,
+                &step.text,
+            )
+            .await
+        }
+    };
+    let placed = deliver(placed, all_attachment_ids, images);
+    MESSAGE_DELIVERY_SERVICE
+        .publish(
+            &params.user_id,
+            &params.thread_id,
+            &placed.content,
+            MessageTrigger::UserInput,
+            PublishOptions {
+                tool_calls: non_empty(tool_calls),
+                attachment_ids: non_empty(&placed.attachment_ids),
+                channel_context: params
+                    .channel_context
+                    .clone()
+                    .map(|context| ChannelContext {
+                        include_feedback: Some(false),
+                        ..context
+                    }),
+                ..PublishOptions::default()
+            },
+        )
+        .await
 }
 
 /// The images `text` places, read from the run's workspace, with the files this

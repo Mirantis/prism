@@ -12,6 +12,7 @@ pub mod memory;
 pub mod send_message;
 pub mod share_file;
 pub mod shell;
+pub mod show_ui;
 pub mod skills;
 pub mod web;
 // @generated-modules-end

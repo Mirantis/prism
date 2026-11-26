@@ -247,6 +247,109 @@ the person who sent them.
 | 409 | `{ error, card }` | The card is closed. `card` is the stored card, which the client shows. |
 | 503 | `{ error }` | The agent is still starting. |
 
+## Generated UI
+
+An `AGENT` message can hold one block of type `generated_ui`: components the agent
+chose to show, such as a table, a chart or buttons. The message's `content` is the
+same UI as plain text, so a client that cannot draw the block shows `content`. The
+JSON Schema of the block is
+[`backend/src/protocol/fixtures/generated-ui.schema.json`](../backend/src/protocol/fixtures/generated-ui.schema.json). A message a real
+runtime stored is
+[`generated-ui-message.json`](../backend/src/protocol/fixtures/generated-ui-message.json)
+beside it.
+
+```json
+{
+  "type": "generated_ui",
+  "version": 1,
+  "id": "6b0d6a4e-2f1c-4d8e-9c55-1e2f3a4b5c6d",
+  "root": "summary",
+  "elements": {
+    "summary": { "type": "Card", "props": { "title": "Deploys this week" }, "children": ["chart", "choose"] },
+    "chart": {
+      "type": "Chart",
+      "props": {
+        "kind": "bar",
+        "title": "Deploys per day",
+        "categories": ["Mon", "Tue", "Wed"],
+        "series": [{ "name": "prod", "values": [3, 5, 2] }]
+      }
+    },
+    "choose": { "type": "Actions", "children": ["roll-back", "keep"] },
+    "roll-back": { "type": "Button", "props": { "label": "Roll back Wednesday", "style": "danger" } },
+    "keep": { "type": "Button", "props": { "label": "Keep it" } }
+  }
+}
+```
+
+- `elements` maps an element id to `{ type, props, children }`. `props` and
+  `children` are present only on the types that have them. `root` is the id of
+  the element drawn first, and every other element is a child of exactly one
+  element.
+- Draw `children` in their order, inside their parent.
+- The block is static. Draw it as it is: it holds no state, bindings or
+  conditions, and no HTML or script.
+- A pressed block also has `pressed`: `{ "elementId", "label", "by" }`, where `by`
+  is `{ id, name }`, or `null` when the person is not known. Show which button was
+  pressed and by whom, and take no more presses.
+- A block that changes arrives again as a `message` event with the same message id.
+- Ignore an element of a type you do not know. Show `content` instead of the
+  block when its `version` is not `1`.
+
+Element ids are 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `_` and `-`. Text
+limits count UTF-16 code units.
+
+| Type | `props` | `children` |
+|---|---|---|
+| `Card` | `title`: optional, up to 150 | Any type except `Card`, `Button` and `LinkButton` |
+| `Heading` | `text`: 1 to 150 | None |
+| `Text` | `text`: Markdown, 1 to 12,000 | None |
+| `Fields` | `fields`: 1 to 10 of `{ label, value }`, `label` 1 to 100, `value` 1 to 1,900 | None |
+| `Table` | `columns`: 1 to 20 strings. `rows`: 1 to 99 rows, each a list of one string per column | None |
+| `Chart` | `kind`: `bar`, `line`, `area` or `pie`. `title`: 1 to 50. `xLabel`, `yLabel`: optional, up to 50. `categories`: 1 to 20 strings, each 1 to 20 and unique. `series`: 1 to 12 of `{ name, values }`, `name` 1 to 20 and unique, `values` one number per category | None |
+| `Comparison` | `rows`: 1 to 99 row labels. `options`: 2 to 4 of `{ title, values }`, `title` 1 to 100, `values` one string per row | None |
+| `Checklist` | `items`: 1 to 50 of `{ text, done }`, `text` 1 to 300, `done` a boolean | None |
+| `Image` | `attachment`: `attachment:<id>`, one of the message's own attachments. `alt`: 1 to 2,000 | None |
+| `Note` | `text`: 1 to 300 | None |
+| `Divider` | None | None |
+| `Actions` | None | 1 to 5, each a `Button` or a `LinkButton` |
+| `LinkButton` | `label`: 1 to 75. `url`: an `https` URL, up to 3,000 | None |
+| `Button` | `label`: 1 to 75. `style`: optional, `primary` or `danger` | None |
+
+- A `Chart` of kind `pie` has one series, at most 12 categories, and values greater
+  than 0. Bars are grouped, not stacked. Bar, line and area values may be negative.
+- A table cell, a field value and a comparison value are plain text. A `Text` is
+  Markdown.
+- A UI has at most 100 elements, at most one `Table` or `Comparison`, and at most
+  two charts. Its table cells, the header included, hold at most 10,000 characters
+  together.
+- Load an `Image` through the message's attachment, as for an inline image. Load
+  nothing from another host.
+
+### `content`
+
+`content` writes each element as plain text, in order: a heading or a card title as
+a line in bold, a table or a comparison as a Markdown table, a chart as its title
+followed by one line per category, a checklist as `- [x]` and `- [ ]` lines, an
+image as an inline image reference (`![alt](attachment:<id>)`), so the message's
+attachment is marked `inline`, a link button as its label and URL, and the buttons of an
+`Actions` as one line of labels.
+
+### `POST /agents/generated-ui/:id/press`
+
+The body is `{ "elementId": "keep" }`, the id of a `Button` in the block. The first
+press wins, and the button's label becomes one message from the person who
+pressed. A retry of a press that was taken answers 409 with the pressed block.
+
+| Status | Body | Meaning |
+|---|---|---|
+| 200 | `{ ui }` | The press was taken. |
+| 202 | `{ ui, replyPending: true }` | The press is stored, and the agent's reply starts after the runtime next restarts. |
+| 400 | `{ error }` | `elementId` is not a `Button` of this block. |
+| 404 | `{ error }` | No such block in a conversation this client can see. |
+| 409 | `{ error, ui }` | A button was already pressed. `ui` is the stored block, which the client shows. |
+| 503 | `{ error }` | The agent is still starting. |
+
 ## Reconnecting
 
 - Reconnect with a backoff. Reset the backoff only after a connection has stayed

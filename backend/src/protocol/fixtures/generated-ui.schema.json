@@ -1,0 +1,337 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "generated-ui.schema.json",
+  "title": "generated_ui block, version 1",
+  "description": "A block on an AGENT message: components the agent chose to show. docs/websocket-protocol.md is the contract; lengths there count UTF-16 code units.",
+  "type": "object",
+  "required": ["type", "version", "id", "root", "elements"],
+  "additionalProperties": false,
+  "properties": {
+    "type": { "const": "generated_ui" },
+    "version": { "const": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "root": { "$ref": "#/$defs/elementId" },
+    "elements": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 100,
+      "propertyNames": { "$ref": "#/$defs/elementId" },
+      "additionalProperties": { "$ref": "#/$defs/element" }
+    },
+    "pressed": {
+      "type": "object",
+      "required": ["elementId", "label", "by"],
+      "additionalProperties": false,
+      "properties": {
+        "elementId": { "$ref": "#/$defs/elementId" },
+        "label": { "type": "string" },
+        "by": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["id", "name"],
+              "additionalProperties": false,
+              "properties": { "id": { "type": "string" }, "name": { "type": "string" } }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "elementId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+    "children": { "type": "array", "items": { "$ref": "#/$defs/elementId" } },
+    "text": { "type": "string", "minLength": 1 },
+    "element": {
+      "oneOf": [
+        { "$ref": "#/$defs/Card" },
+        { "$ref": "#/$defs/Heading" },
+        { "$ref": "#/$defs/Text" },
+        { "$ref": "#/$defs/Fields" },
+        { "$ref": "#/$defs/Table" },
+        { "$ref": "#/$defs/Chart" },
+        { "$ref": "#/$defs/Comparison" },
+        { "$ref": "#/$defs/Checklist" },
+        { "$ref": "#/$defs/Image" },
+        { "$ref": "#/$defs/Note" },
+        { "$ref": "#/$defs/Divider" },
+        { "$ref": "#/$defs/Actions" },
+        { "$ref": "#/$defs/LinkButton" },
+        { "$ref": "#/$defs/Button" }
+      ]
+    },
+    "Card": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "Card" },
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 150 } }
+        },
+        "children": { "$ref": "#/$defs/children", "minItems": 1 }
+      }
+    },
+    "Heading": {
+      "type": "object",
+      "required": ["type", "props"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "Heading" },
+        "props": {
+          "type": "object",
+          "required": ["text"],
+          "additionalProperties": false,
+          "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 150 } }
+        }
+      }
+    },
+    "Text": {
+      "type": "object",
+      "required": ["type", "props"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "Text" },
+        "props": {
+          "type": "object",
+          "required": ["text"],
+          "additionalProperties": false,
+          "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 12000 } }
+        }
+      }
+    },
+    "Fields": {
+      "type": "object",
+      "required": ["type", "props"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "Fields" },
+        "props": {
+          "type": "object",
+          "required": ["fields"],
+          "additionalProperties": false,
+          "properties": {
+            "fields": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 10,
+              "items": {
+                "type": "object",
+                "required": ["label", "value"],
+                "additionalProperties": false,
+                "properties": {
+                  "label": { "type": "string", "minLength": 1, "maxLength": 100 },
+                  "value": { "type": "string", "minLength": 1, "maxLength": 1900 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Table": {
+      "type": "object",
+      "required": ["type", "props"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "Table" },
+        "props": {
+          "type": "object",
+          "required": ["columns", "rows"],
+          "additionalProperties": false,
+          "properties": {
+            "columns": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string" } },
+            "rows": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 99,
+              "items": { "type": "array", "maxItems": 20, "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "Chart": {
+      "type": "object",
+      "required": ["type", "props"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "Chart" },
+        "props": {
+          "type": "object",
+          "required": ["kind", "title", "categories", "series"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "enum": ["bar", "line", "area", "pie"] },
+            "title": { "type": "string", "minLength": 1, "maxLength": 50 },
+            "xLabel": { "type": "string", "minLength": 1, "maxLength": 50 },
+            "yLabel": { "type": "string", "minLength": 1, "maxLength": 50 },
+            "categories": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1, "maxLength": 20 }
+            },
+            "series": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 12,
+              "items": {
+                "type": "object",
+                "required": ["name", "values"],
+                "additionalProperties": false,
+                "properties": {
+                  "name": { "type": "string", "minLength": 1, "maxLength": 20 },
+                  "values": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "number" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Comparison": {
+      "type": "object",
+      "required": ["type", "props"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "Comparison" },
+        "props": {
+          "type": "object",
+          "required": ["rows", "options"],
+          "additionalProperties": false,
+          "properties": {
+            "rows": { "type": "array", "minItems": 1, "maxItems": 99, "items": { "type": "string" } },
+            "options": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 4,
+              "items": {
+                "type": "object",
+                "required": ["title", "values"],
+                "additionalProperties": false,
+                "properties": {
+                  "title": { "type": "string", "minLength": 1, "maxLength": 100 },
+                  "values": { "type": "array", "maxItems": 99, "items": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Checklist": {
+      "type": "object",
+      "required": ["type", "props"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "Checklist" },
+        "props": {
+          "type": "object",
+          "required": ["items"],
+          "additionalProperties": false,
+          "properties": {
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "required": ["text", "done"],
+                "additionalProperties": false,
+                "properties": {
+                  "text": { "type": "string", "minLength": 1, "maxLength": 300 },
+                  "done": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Image": {
+      "type": "object",
+      "required": ["type", "props"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "Image" },
+        "props": {
+          "type": "object",
+          "required": ["attachment", "alt"],
+          "additionalProperties": false,
+          "properties": {
+            "attachment": { "type": "string", "pattern": "^attachment:[0-9a-fA-F-]{36}$" },
+            "alt": { "type": "string", "minLength": 1, "maxLength": 2000 }
+          }
+        }
+      }
+    },
+    "Note": {
+      "type": "object",
+      "required": ["type", "props"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "Note" },
+        "props": {
+          "type": "object",
+          "required": ["text"],
+          "additionalProperties": false,
+          "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 300 } }
+        }
+      }
+    },
+    "Divider": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": { "type": { "const": "Divider" } }
+    },
+    "Actions": {
+      "type": "object",
+      "required": ["type", "children"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "Actions" },
+        "children": { "$ref": "#/$defs/children", "minItems": 1, "maxItems": 5 }
+      }
+    },
+    "LinkButton": {
+      "type": "object",
+      "required": ["type", "props"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "LinkButton" },
+        "props": {
+          "type": "object",
+          "required": ["label", "url"],
+          "additionalProperties": false,
+          "properties": {
+            "label": { "type": "string", "minLength": 1, "maxLength": 75 },
+            "url": { "type": "string", "pattern": "^https://", "maxLength": 3000 }
+          }
+        }
+      }
+    },
+    "Button": {
+      "type": "object",
+      "required": ["type", "props"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "Button" },
+        "props": {
+          "type": "object",
+          "required": ["label"],
+          "additionalProperties": false,
+          "properties": {
+            "label": { "type": "string", "minLength": 1, "maxLength": 75 },
+            "style": { "enum": ["primary", "danger"] }
+          }
+        }
+      }
+    }
+  }
+}

@@ -76,6 +76,8 @@ fn api_routes() -> Router {
         .merge(routes::computers::router())
         // Answers to the agent's question cards (/agents/question-cards)
         .merge(routes::question_cards::router())
+        // Presses on the agent's generated UI (/agents/generated-ui)
+        .merge(routes::generated_ui::router())
         // Locked-in mode (PATCH /agents/locked-in)
         .merge(routes::locked_in::router())
         // Agent guide editing (PATCH /agents/agent-guide)

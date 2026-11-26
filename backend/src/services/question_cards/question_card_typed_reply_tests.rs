@@ -275,6 +275,7 @@ async fn an_answer_message_that_the_next_boot_stores_leaves_a_newer_waiting_card
             agent_message: message.agent_message,
             runtime_written: message.runtime_written,
             task_notification: None,
+            generated_ui_press: message.generated_ui_press,
         },
         &work.thread_id,
         Some("answer-1"),

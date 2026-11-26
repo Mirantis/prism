@@ -33,6 +33,7 @@ import type {
   PluginSummary,
   QuestionCardAnswer,
   QuestionCardBlock,
+  GeneratedUiBlock,
   Goal,
   WebhookReceiver,
   WebhookSubscription,
@@ -94,6 +95,12 @@ export const runtimeApi = {
     request<{ card: QuestionCardBlock; replyPending?: true }>(`/agents/question-cards/${encodeURIComponent(id)}/answer`, {
       method: 'POST',
       body: JSON.stringify({ answers }),
+    }),
+
+  pressGeneratedUiButton: (id: string, elementId: string) =>
+    request<{ ui: GeneratedUiBlock; replyPending?: true }>(`/agents/generated-ui/${encodeURIComponent(id)}/press`, {
+      method: 'POST',
+      body: JSON.stringify({ elementId }),
     }),
 
   // Single-agent identity

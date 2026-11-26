@@ -21,6 +21,7 @@ pub mod delivery_target_service;
 pub mod document_revision_service;
 pub mod embedding_service;
 pub mod event_stream_service;
+pub mod generated_ui;
 pub mod goal_service;
 pub mod heartbeat_schedule;
 pub mod heartbeat_service;

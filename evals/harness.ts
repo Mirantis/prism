@@ -41,6 +41,10 @@ export interface BackendTexts {
   defaultHeartbeatMd: string;
   /** What `ask_questions` answers once the card is posted. */
   askQuestionsResult: Record<string, unknown>;
+  /** What `show_ui` answers once the UI passed every check. */
+  showUiResult: Record<string, unknown>;
+  /** The component reference `ui_reference` returns. */
+  uiReference: string;
   /** What `coding_agent` tells the agent to do after it starts a task in a chat conversation. */
   notifiedTaskNext: string;
   monitorNext: string;

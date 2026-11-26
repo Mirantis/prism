@@ -869,3 +869,150 @@ export function codingAgentSignInBlocks(message: ConversationMessage): CodingAge
       block.type === 'coding_agent_sign_in',
   ) ?? [];
 }
+
+export type GeneratedUiChartKind = 'bar' | 'line' | 'area' | 'pie';
+
+export interface GeneratedUiChart {
+  kind: GeneratedUiChartKind;
+  title: string;
+  xLabel?: string;
+  yLabel?: string;
+  categories: string[];
+  /** Each series has one value per category. */
+  series: { name: string; values: number[] }[];
+}
+
+export type GeneratedUiButtonStyle = 'primary' | 'danger';
+
+export type GeneratedUiElement =
+  | { type: 'Card'; props?: { title?: string }; children: string[] }
+  | { type: 'Heading'; props: { text: string } }
+  | { type: 'Text'; props: { text: string } }
+  | { type: 'Fields'; props: { fields: { label: string; value: string }[] } }
+  | { type: 'Table'; props: { columns: string[]; rows: string[][] } }
+  | { type: 'Chart'; props: GeneratedUiChart }
+  | { type: 'Comparison'; props: { rows: string[]; options: { title: string; values: string[] }[] } }
+  | { type: 'Checklist'; props: { items: { text: string; done: boolean }[] } }
+  | { type: 'Image'; props: { attachment: string; alt: string } }
+  | { type: 'Note'; props: { text: string } }
+  | { type: 'Divider' }
+  | { type: 'Actions'; children: string[] }
+  | { type: 'LinkButton'; props: { label: string; url: string } }
+  | { type: 'Button'; props: { label: string; style?: GeneratedUiButtonStyle } };
+
+export type GeneratedUiElementType = GeneratedUiElement['type'];
+
+export interface GeneratedUiPress {
+  elementId: string;
+  label: string;
+  by: { id: string; name: string } | null;
+}
+
+/** A chat message block: components the agent chose to show. */
+export interface GeneratedUiBlock {
+  type: 'generated_ui';
+  version: 1;
+  id: string;
+  root: string;
+  /** An element of a type this client does not know stays in the map and is drawn as nothing. */
+  elements: Record<string, GeneratedUiElement>;
+  pressed?: GeneratedUiPress;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+const isString = (value: unknown): value is string => typeof value === 'string';
+const isStrings = (value: unknown): value is string[] => Array.isArray(value) && value.every(isString);
+const isListOf = (value: unknown, item: (entry: Record<string, unknown>) => boolean) =>
+  Array.isArray(value) && value.every((entry) => isRecord(entry) && item(entry));
+
+function isHttpsUrl(value: unknown): boolean {
+  if (!isString(value)) return false;
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function isChart(props: Record<string, unknown>): boolean {
+  const { categories } = props;
+  return (
+    ['bar', 'line', 'area', 'pie'].includes(props.kind as string) &&
+    isString(props.title) &&
+    isOptionalString(props.xLabel) &&
+    isOptionalString(props.yLabel) &&
+    isStrings(categories) &&
+    categories.length > 0 &&
+    Array.isArray(props.series) &&
+    props.series.length > 0 &&
+    isListOf(
+      props.series,
+      (series) =>
+        isString(series.name) &&
+        Array.isArray(series.values) &&
+        series.values.length === categories.length &&
+        series.values.every(Number.isFinite),
+    )
+  );
+}
+
+const PROPS_CHECKS: Record<GeneratedUiElementType, (props: Record<string, unknown>) => boolean> = {
+  Card: (props) => isOptionalString(props.title),
+  Heading: (props) => isString(props.text),
+  Text: (props) => isString(props.text),
+  Fields: (props) => isListOf(props.fields, (field) => isString(field.label) && isString(field.value)),
+  Table: (props) =>
+    isStrings(props.columns) &&
+    Array.isArray(props.rows) &&
+    props.rows.every((row) => isStrings(row) && row.length === (props.columns as string[]).length),
+  Chart: isChart,
+  Comparison: (props) =>
+    isStrings(props.rows) &&
+    isListOf(
+      props.options,
+      (option) => isString(option.title) && isStrings(option.values) && option.values.length === (props.rows as string[]).length,
+    ),
+  Checklist: (props) => isListOf(props.items, (item) => isString(item.text) && typeof item.done === 'boolean'),
+  Image: (props) => isString(props.attachment) && isString(props.alt),
+  Note: (props) => isString(props.text),
+  Divider: () => true,
+  Actions: () => true,
+  LinkButton: (props) => isString(props.label) && isHttpsUrl(props.url),
+  Button: (props) => isString(props.label) && [undefined, 'primary', 'danger'].includes(props.style as string | undefined),
+};
+
+const PARENT_TYPES: ReadonlySet<string> = new Set<GeneratedUiElementType>(['Card', 'Actions']);
+
+/** Every element drawn from `root` exists, has the props of its type and is drawn once. */
+function isElementTree(elements: Record<string, unknown>, root: string): boolean {
+  const seen = new Set<string>();
+  const visit = (id: string): boolean => {
+    const element = Object.hasOwn(elements, id) ? elements[id] : undefined;
+    if (seen.has(id) || !isRecord(element) || !isString(element.type)) return false;
+    seen.add(id);
+    if (!Object.hasOwn(PROPS_CHECKS, element.type)) return true;
+    const props = element.props ?? {};
+    if (!isRecord(props) || !PROPS_CHECKS[element.type as GeneratedUiElementType](props)) return false;
+    if (!PARENT_TYPES.has(element.type)) return true;
+    return isStrings(element.children) && element.children.every(visit);
+  };
+  return visit(root);
+}
+
+function isPress(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!isRecord(value) || !isString(value.elementId) || !isString(value.label)) return false;
+  return value.by === null || (isRecord(value.by) && isString(value.by.id) && isString(value.by.name));
+}
+
+/** The whole tree is checked, so a malformed block or another version falls back to the message text. */
+export function isGeneratedUi(value: unknown): value is GeneratedUiBlock {
+  if (!isRecord(value) || value.type !== 'generated_ui' || value.version !== 1) return false;
+  if (!isString(value.id) || !isString(value.root) || !isRecord(value.elements)) return false;
+  return isPress(value.pressed) && isElementTree(value.elements, value.root);
+}
+
+export function generatedUiBlocks(message: ConversationMessage): GeneratedUiBlock[] {
+  return message.blocks?.filter(isGeneratedUi) ?? [];
+}
