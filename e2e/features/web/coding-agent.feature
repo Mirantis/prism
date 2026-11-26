@@ -50,7 +50,7 @@ Feature: Coding sub-agent
   Scenario: The coding sub-agent calls an MCP tool from the workspace's .mcp.json
     Given the workspace's .mcp.json has a server "workspace-probe" that answers "WORKSPACE_MCP_TOOL_OK"
     When I navigate to the agent chat page
-    And I type "Use the coding_agent tool exactly once, with maxTurns 5, giving it this prompt: Call the MCP tool mcp__workspace-probe__plugin_mcp_probe and reply with exactly what it returns and nothing else. Then call coding_agent_status with waitMs 30000 until completed is true. Call no other tool. Reply with one line only: RESULT=<the result>." in the chat input
+    And I type "Use the coding_agent tool exactly once, with agent claude-code and maxTurns 5, giving it this prompt: Call the MCP tool mcp__workspace-probe__plugin_mcp_probe and reply with exactly what it returns and nothing else. Then call coding_agent_status with waitMs 30000 until completed is true. Call no other tool. Reply with one line only: RESULT=<the result>." in the chat input
     And I send the message
     Then the agent reply contains "WORKSPACE_MCP_TOOL_OK"
     And no reply is an error

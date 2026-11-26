@@ -49,7 +49,7 @@ Given(
     const config = path.join(E2E_WORKSPACE, '.mcp.json');
     written.push(config);
     fs.writeFileSync(config, JSON.stringify({
-      mcpServers: { [name]: { type: 'stdio', command: 'node', args: [server, marker] } },
+      mcpServers: { [name]: { type: 'stdio', command: 'node', args: [server, [...marker].reverse().join('')] } },
     }));
   },
 );
