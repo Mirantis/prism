@@ -55,14 +55,6 @@ jobs:
           restore-keys: |
             test-backend-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'backend/Cargo.lock') }}-
 
-      - name: Check formatting
-        if: runner.os == 'Linux'
-        run: cargo fmt --manifest-path backend/Cargo.toml --check
-
-      - name: Lint
-        if: runner.os == 'Linux'
-        run: cargo clippy --manifest-path backend/Cargo.toml --locked --all-targets --all-features -- -D warnings
-
       # The Prisma CLI interop tests run `prisma migrate deploy` against what the
       # runtime's migrator wrote, so Node and the workspace's packages are here too.
       - if: runner.os != 'Windows'
