@@ -357,7 +357,7 @@ mod tests {
         assert_eq!(tools.len(), 1);
         assert_eq!(
             tool.description.as_deref(),
-            Some("Returns a fixed marker proving the plugin MCP server ran.")
+            Some("Returns a marker that only this server knows.")
         );
         assert_eq!(
             crate::ai::json::js_stringify(tool.input_schema.json_schema()),

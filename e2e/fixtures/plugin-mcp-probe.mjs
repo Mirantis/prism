@@ -1,10 +1,11 @@
 // The demo plugin's stdio MCP server: one tool that answers a marker, the first
-// argument or `PLUGIN_MCP_TOOL_OK`.
+// argument reversed or `PLUGIN_MCP_TOOL_OK`. The scenario's `.mcp.json` holds the
+// argument reversed, so the marker it asserts comes from a call to the tool.
 //
 // Hand-rolled JSON-RPC rather than the MCP SDK: the plugin is copied to a temp
 // dir with no `node_modules` above it, so an import would not resolve. A client
 // needs three methods.
-const marker = process.argv[2] ?? 'PLUGIN_MCP_TOOL_OK';
+const marker = process.argv[2] ? [...process.argv[2]].reverse().join('') : 'PLUGIN_MCP_TOOL_OK';
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 
 const handle = (message) => {
@@ -26,7 +27,7 @@ const handle = (message) => {
         tools: [
           {
             name: 'plugin_mcp_probe',
-            description: 'Returns the marker it was started with.',
+            description: 'Returns a marker that only this server knows.',
             inputSchema: { type: 'object', properties: {} },
           },
         ],
