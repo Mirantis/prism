@@ -33,6 +33,41 @@ jobs:
       - name: Build the web UI
         run: npm run build:web
 
+  # The terminal UI ships on every platform the release builds, so its tests run on each.
+  cli:
+    name: cli (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - id: cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            cli/target
+          key: test-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'cli/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            test-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'cli/Cargo.lock') }}-
+
+      - name: Run tests
+        run: cargo test --manifest-path cli/Cargo.toml --locked
+
+      - if: github.event_name == 'push'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            cli/target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
   backend:
     name: backend (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

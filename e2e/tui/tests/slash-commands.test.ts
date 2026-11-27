@@ -2,17 +2,13 @@
  * Slash-command UI: popup visibility on '/', and dispatch via typing the full
  * command name and pressing Enter twice — the first Enter completes the
  * highlighted row and closes the popup, the second runs the command. None of
- * these scenarios call the LLM — slash commands run locally inside prism-cli.
- *
- * Tab autocomplete and arrow-key navigation are exercised manually via
- * `npm run dev --workspace=prism-cli` — under the test PTY they run into Ink
- * keystroke parsing quirks that aren't worth chasing here, and the main
- * regression risk (a Ctrl+O chord leaking into the composer) is covered by
- * tool-calls.feature.
+ * these scenarios call the LLM — slash commands run locally inside `prism`.
+ * A Ctrl+O chord leaking into the composer is covered by tool-calls.feature.
  */
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { expect } from 'vitest';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
 import { BOOT_FRAME_TIMEOUT_MS, startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, type RuntimeTestEnv } from '../setup';
@@ -66,6 +62,43 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
     Then('I see the "no message to copy" notice', async () => {
       await session.waitForFrame(/No message to copy yet/, 5_000);
+    });
+  });
+
+  Scenario('The arrow keys move the highlight and Tab completes the command', ({ When, Then }) => {
+    When('I type "/he" and press the down arrow', async () => {
+      session.send('/he');
+      await session.waitForFrame(/▸\s*\/heartbeat-model/, 5_000);
+      session.send(KEYS.DOWN);
+    });
+    Then('the second matching command is highlighted', async () => {
+      // "/heartbeat-model", "/heartbeat" and "/help" match "/he", in that order.
+      await expect.poll(() => session.screen(), { timeout: 5_000 }).toMatch(/▸\s*\/heartbeat\s+Control the heartbeat/);
+    });
+    When('I press Tab and then Enter', async () => {
+      session.send(KEYS.TAB);
+      // Tab leaves "/heartbeat " in the composer, whose trailing space closes the popup.
+      await expect.poll(() => session.screen(), { timeout: 5_000 }).toMatch(/› \/heartbeat\s/);
+      session.send(KEYS.ENTER);
+    });
+    Then('I see the "/heartbeat" usage notice', async () => {
+      await session.waitForFrame('Usage: /heartbeat <status|start|stop|trigger|every Nm|Nh>.', 5_000);
+    });
+  });
+
+  Scenario('The up arrow recalls the last line I submitted', ({ Given, When, Then }) => {
+    Given('I ran the "/help" command', async () => {
+      session.send('/help ');
+      await session.waitForFrame(/›\s*\/help/, 5_000);
+      session.send(KEYS.ENTER);
+      await session.waitForFrame('/exit — Shut down the TUI', 5_000);
+      await expect.poll(() => session.screen(), { timeout: 5_000 }).toMatch(/│ ›\s+│/);
+    });
+    When('I press the up arrow in the empty composer', () => {
+      session.send(KEYS.UP);
+    });
+    Then('the composer holds "/help" again', async () => {
+      await expect.poll(() => session.screen(), { timeout: 5_000 }).toMatch(/│ › \/help/);
     });
   });
 });

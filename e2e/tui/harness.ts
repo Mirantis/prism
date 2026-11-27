@@ -4,25 +4,21 @@
  * Two processes per session:
  *  - `agent-runtime` as a plain background server (no PTY — it's just
  *    an HTTP+WS endpoint).
- *  - `prism-cli` under a real PTY pointed at the runtime over WebSocket.
- *    Ink requires raw-mode stdin, which only a TTY (or PTY) provides.
+ *  - `prism`, the terminal UI binary, under a real PTY pointed at the runtime
+ *    over WebSocket. The TUI requires raw-mode stdin, which only a TTY (or PTY) provides.
  */
 
 import http from 'node:http';
 import path from 'node:path';
-import { createRequire } from 'node:module';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as pty from 'node-pty';
 import stripAnsi from 'strip-ansi';
-import { PRISM_SERVER_BIN, assertRuntimeBuilt, llmCacheEnv } from '../support/runtime-command';
+import { PRISM_CLI_BIN, PRISM_SERVER_BIN, assertCliBuilt, assertRuntimeBuilt, llmCacheEnv } from '../support/runtime-command';
+import { Screen } from './screen';
 
 const AGENT_RUNTIME_DIR = path.resolve(import.meta.dirname, '../..');
+/** The directory the CLI starts in unless a test names another: the CLI's own crate. */
 export const PRISM_CLI_DIR = path.resolve(import.meta.dirname, '../../cli');
-// Spawn `node <tsx-cli.mjs> <entry>` instead of the .bin/tsx shim.
-// macOS's posix_spawnp doesn't follow `#!/usr/bin/env node` reliably from
-// node-pty when the env's PATH has been substituted, so we point at
-// the node binary that's already running this process.
-const TSX_CLI = createRequire(import.meta.url).resolve('tsx/cli');
 
 /**
  * Budget for a CLI's *first* frame — the `waitForFrame(/Prism/, …)` every spec
@@ -218,7 +214,7 @@ export interface StartPrismOptions {
 }
 
 /**
- * What a terminal answers to the CLI's start-up probe (`cli/src/images/terminal-graphics.ts`).
+ * What a terminal answers to the CLI's start-up probe (`cli/src/images/graphics.rs`).
  * Every terminal answers the device attributes, which ends the CLI's wait.
  */
 const PROBE_ANSWERS = {
@@ -235,16 +231,22 @@ const PROBE_ANSWERS = {
 export interface TuiSession {
   /** Snapshot of stdout so far, with ANSI escape sequences stripped. */
   output(): string;
+  /** The terminal screen as it stands: the visible rows, as a terminal draws the output. */
+  screen(): string;
   /** Raw stdout with ANSI escapes intact (debug only). */
   rawOutput(): string;
   /** Write raw bytes to the child's stdin. */
   send(input: string): void;
-  /** Wait until the stripped output matches the given string or regex. */
+  /**
+   * Wait until the given string or regex matches the stripped output or the screen.
+   * The output keeps what scrolled away; the screen holds a frame the TUI drew in
+   * pieces, such as a message whose picture arrived after its text.
+   */
   waitForFrame(matcher: string | RegExp, timeoutMs?: number): Promise<void>;
   /**
    * Send input and wait for its visible effect, resending when it never
-   * shows. A keystroke sent right as an Ink screen mounts is occasionally
-   * lost under CI load (nothing is subscribed to stdin yet), and a lost key
+   * shows. A keystroke sent right as a screen opens can be lost under CI
+   * load, and a lost key
    * strands screens that only advance on input — the --resume picker sat
    * on screen for a full 120s timeout this way. Only safe for input whose
    * repeat is a no-op in the current screen: ENTER on a picker row, or an
@@ -264,13 +266,12 @@ export interface TuiSession {
   stop(): Promise<number>;
 }
 
-/** Spawn `tsx src/index.tsx` from prism-cli under a PTY. */
+/** Spawn the `prism` binary under a PTY. */
 export function startPrism(opts: StartPrismOptions): TuiSession {
+  assertCliBuilt();
   const child = pty.spawn(
-    process.execPath,
-    // Absolute entry path so `cwd` can be an arbitrary repo dir (the CLI sends
-    // its cwd as the thread's workspaceRoot) without breaking entry resolution.
-    [TSX_CLI, path.join(PRISM_CLI_DIR, 'src/index.tsx'), ...(opts.args ?? [])],
+    PRISM_CLI_BIN,
+    opts.args ?? [],
     {
       name: 'xterm-256color',
       cols: opts.cols ?? 120,
@@ -286,10 +287,12 @@ export function startPrism(opts: StartPrismOptions): TuiSession {
   let buffer = '';
   let exitCode: number | null = null;
   let exitSignal: number | null = null;
+  const screen = new Screen(opts.cols ?? 120, opts.rows ?? 32);
 
   let probeAnswered = false;
   child.onData((data) => {
     buffer += data;
+    screen.write(data);
     if (!probeAnswered && buffer.includes('\x1b[c')) {
       probeAnswered = true;
       child.write(PROBE_ANSWERS[opts.terminal ?? 'plain']);
@@ -306,6 +309,7 @@ export function startPrism(opts: StartPrismOptions): TuiSession {
 
   const session: TuiSession = {
     output: () => stripAnsi(buffer),
+    screen: () => screen.text(),
     rawOutput: () => buffer,
     send: (input) => child.write(input),
 
@@ -314,7 +318,7 @@ export function startPrism(opts: StartPrismOptions): TuiSession {
         typeof matcher === 'string' ? s.includes(matcher) : matcher.test(s);
       const start = Date.now();
       while (Date.now() - start < timeoutMs) {
-        if (matches(stripAnsi(buffer))) return;
+        if (matches(stripAnsi(buffer)) || matches(screen.text())) return;
         if (exitCode !== null) {
           const msg =
             `prism-cli exited (code ${exitCode}, signal ${exitSignal}) before frame matched ${matcher}.\n` +

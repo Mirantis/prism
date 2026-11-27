@@ -1,11 +1,11 @@
 /**
  * Workspace root is the CLI's cwd.
  *
- * The CLI sends `process.cwd()` as the new thread's workspaceRoot when it opens
- * (see tui-adapter `startNewSession`). The harness spawns prism-cli with its
- * cwd set to the cli/ package dir (PRISM_CLI_DIR), so the runtime must persist
- * exactly that path on the freshly created thread. We assert against the real
- * (symlink-resolved) path because `process.cwd()` returns the canonical form.
+ * The CLI sends its working directory as the new thread's workspaceRoot when it
+ * opens. The harness starts `prism` with its cwd set to the cli/ crate dir
+ * (PRISM_CLI_DIR), so the runtime must persist exactly that path on the freshly
+ * created thread. We assert against the real (symlink-resolved) path because the
+ * working directory is the canonical form.
  */
 
 import { readFileSync, realpathSync } from 'node:fs';
@@ -53,7 +53,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     await env.cleanup();
   });
   BeforeEachScenario(async () => {
-    // Default cwd is PRISM_CLI_DIR (the cli/ package), which becomes the CLI's
+    // Default cwd is PRISM_CLI_DIR (the cli/ crate), which becomes the CLI's
     // process.cwd() and thus the new thread's workspaceRoot.
     session = startPrism({ env: env.prismEnv, runtime: env.runtime });
     await session.waitForFrame(/Prism/, BOOT_FRAME_TIMEOUT_MS);

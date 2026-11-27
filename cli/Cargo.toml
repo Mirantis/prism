@@ -1,0 +1,49 @@
+[package]
+name = "prism-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "prism"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "signal", "io-util", "io-std", "fs"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+uuid = { version = "1", features = ["v4"] }
+crossterm = "0.28"
+unicode-width = "0.2"
+unicode-segmentation = "1"
+pulldown-cmark = { version = "0.13", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+flate2 = "1"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+regex = "1"
+url = "2"
+rand = "0.8"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.clippy]
+# The same allowances as the runtime crate: event enums whose variants hold what
+# each event carries, and cache types spelled where they are used.
+type_complexity = "allow"
+large_enum_variant = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true

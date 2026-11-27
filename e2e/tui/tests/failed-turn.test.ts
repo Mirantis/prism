@@ -42,7 +42,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     When('I send a prompt to an agent whose model credential is rejected', async () => {
       // A prompt no other scenario sends, so the e2e LLM cache cannot answer it.
       session!.send('Reply with exactly one word: FAILEDTURN9. No other text.');
-      // Let ink-text-input commit the appended chars before Enter.
+      // Send Enter as its own keystroke, after the text.
       await new Promise((resolve) => setTimeout(resolve, 200));
       session!.send(KEYS.ENTER);
     });

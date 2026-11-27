@@ -8,8 +8,8 @@
  * TUI renders.
  *
  * We can't reliably *count* rendered bubbles: `session.output()` is the whole
- * accumulated PTY stream and the message list isn't an Ink <Static>, so a single
- * delivered bubble's `▌ Prism` prefix repeats across every re-render. Instead we
+ * accumulated PTY stream, so a single delivered bubble's `▌ Prism` prefix can
+ * repeat across repaints. Instead we
  * key off the *intermediate narration*: read the first (intermediate) AGENT row
  * the model actually produced from the DB, then assert its text is ABSENT from
  * the terminal in concise mode and PRESENT in verbose mode. Presence/absence is

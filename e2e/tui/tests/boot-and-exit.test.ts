@@ -1,6 +1,6 @@
 /**
- * Boot + shutdown lifecycle for prism-cli. No Bedrock interaction required —
- * these scenarios exercise the Ink render path, the /exit slash command, and
+ * Boot + shutdown lifecycle for `prism`. No Bedrock interaction required —
+ * these scenarios exercise the render path, the /exit slash command, and
  * the Ctrl+C → SIGINT shutdown bridge against a running agent-runtime.
  */
 

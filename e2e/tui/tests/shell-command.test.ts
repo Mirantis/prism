@@ -2,7 +2,7 @@
  * E2E: `! <command>` in the composer.
  *
  * The command runs under the PTY the harness gives the CLI, which is the real
- * hand-over: Ink releases the terminal, `script` records the command, and the
+ * hand-over: the TUI releases the terminal, `script` records the command, and the
  * record goes to the runtime as the user's message, which starts a turn.
  */
 

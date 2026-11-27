@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 #
-# Build the distributable `prism` (terminal UI, a Node SEA) and `prism-server`
-# (the Rust runtime) binaries for the host platform and (unless SKIP_ARCHIVE is set) package an archive ready for the
-# GitHub Releases upload. `.github/workflows/create-binary.yml` wraps this
-# script so the build pipeline lives in one place.
+# Build the distributable `prism` (the terminal UI) and `prism-server` (the
+# runtime) binaries, both Rust, for the host platform and (unless SKIP_ARCHIVE is
+# set) package an archive ready for the GitHub Releases upload.
+# `.github/workflows/create-binary.yml` wraps this script so the build pipeline
+# lives in one place.
 #
 # Env:
 #   VERSION        version string used in the archive filename (default: dev)
-#   SKIP_SMOKE     skip scripts/smoke-sea.mjs when non-empty
+#   SKIP_SMOKE     skip scripts/smoke-binaries.mjs when non-empty
 #   SKIP_ARCHIVE   stop before packaging (no tar/zip) when non-empty
 #
 # Output:
@@ -30,20 +31,22 @@ OS_ARCH=$(node -e 'process.stdout.write(`${process.platform}-${process.arch}`)')
 PLATFORM=$(node -e 'process.stdout.write(process.platform)')
 
 npm run build:web
-node scripts/build-sea.mjs prism
 
-# The runtime reports this version (`prism-server --version`) and, because it is
+# Both binaries report this version (`--version`), and the runtime, because it is
 # set, applies the standalone install's defaults. A non-release VERSION builds
-# as the package version, as the terminal UI does.
+# as the package version.
 if [[ "$VERSION" =~ ^v[0-9]{4}\.[0-9]{1,2}\.[0-9]+$ ]]; then
   PRISM_VERSION="$VERSION"
 else
   PRISM_VERSION=$(node -p 'require("./package.json").version')
 fi
 PRISM_VERSION="$PRISM_VERSION" cargo build --release --locked --manifest-path backend/Cargo.toml --bin prism-server
+PRISM_VERSION="$PRISM_VERSION" cargo build --release --locked --manifest-path cli/Cargo.toml --bin prism
 EXE=""
 [ "$PLATFORM" = "win32" ] && EXE=".exe"
+mkdir -p "dist-sea/$OS_ARCH"
 cp "backend/target/release/prism-server$EXE" "dist-sea/$OS_ARCH/prism-server$EXE"
+cp "cli/target/release/prism$EXE" "dist-sea/$OS_ARCH/prism$EXE"
 rm -rf "dist-sea/$OS_ARCH/web"
 cp -R web/dist "dist-sea/$OS_ARCH/web"
 
@@ -63,7 +66,7 @@ echo "Prism needs nothing in this directory. Releases keep it so an older instal
 cp LICENSE NOTICE THIRD_PARTY_NOTICES "dist-sea/$OS_ARCH/"
 
 if [ -z "${SKIP_SMOKE:-}" ]; then
-  node scripts/smoke-sea.mjs
+  node scripts/smoke-binaries.mjs
 fi
 
 if [ -n "${SKIP_ARCHIVE:-}" ]; then

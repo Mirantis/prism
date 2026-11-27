@@ -48,7 +48,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The runtime binary every suite starts, built once per run.
+  # The runtime binary every suite starts, and the terminal UI binary the TUI suite
+  # drives, built once per run.
   backend:
     name: backend binary
     runs-on: ubuntu-latest
@@ -63,12 +64,16 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             backend/target
-          key: e2e-backend-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'backend/Cargo.lock') }}-${{ github.sha }}
+            cli/target
+          key: e2e-backend-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'backend/Cargo.lock', 'cli/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            e2e-backend-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'backend/Cargo.lock') }}-
+            e2e-backend-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'backend/Cargo.lock', 'cli/Cargo.lock') }}-
 
       - name: Build the runtime
         run: cargo build --release --locked --manifest-path backend/Cargo.toml --bin prism-server --features e2e-llm-cache
+
+      - name: Build the terminal UI
+        run: cargo build --release --locked --manifest-path cli/Cargo.toml --bin prism
 
       - if: github.event_name == 'push'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -77,12 +82,20 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             backend/target
+            cli/target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: prism-server
           path: backend/target/release/prism-server
+          if-no-files-found: error
+          retention-days: 3
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: prism
+          path: cli/target/release/prism
           if-no-files-found: error
           retention-days: 3
 

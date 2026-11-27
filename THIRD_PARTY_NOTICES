@@ -8,19 +8,18 @@ copyright holder, the files it covers, and the upstream license text verbatim.
 Entries are ordered alphabetically by project name.
 
 ======================================================================
-1. cli-spinners
+1. chalk
 ======================================================================
 
-Project:    cli-spinners
-Version:    2.9.2
-Homepage:   https://github.com/sindresorhus/cli-spinners
+Project:    chalk
+Version:    5.6.2
+Homepage:   https://github.com/chalk/chalk
 License:    MIT
 Copyright:  Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 Files in this repository:
-  cli/src/components/Spinner.tsx        the `dots` spinner's frames and its 80 ms
-                                        interval
-  cli/src/components/Spinner.test.tsx   the same frames
+  cli/src/term/ansi.rs   `paint`: how a style wraps text, reopens after a nested
+                         close, and closes and reopens around each line break
 
 License text, verbatim:
 
@@ -35,7 +34,32 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ======================================================================
-2. Contributor Covenant
+2. cli-spinners
+======================================================================
+
+Project:    cli-spinners
+Version:    2.9.2
+Homepage:   https://github.com/sindresorhus/cli-spinners
+License:    MIT
+Copyright:  Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
+
+Files in this repository:
+  cli/src/ui/spinner.rs   the `dots` spinner's frames and its 80 ms interval
+
+License text, verbatim:
+
+MIT License
+
+Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+======================================================================
+3. Contributor Covenant
 ======================================================================
 
 Project:    Contributor Covenant Code of Conduct
@@ -449,7 +473,34 @@ public licenses.
 Creative Commons may be contacted at creativecommons.org.
 
 ======================================================================
-3. ink-text-input
+4. Ink
+======================================================================
+
+Project:    Ink
+Version:    8.0.0
+Homepage:   https://github.com/vadimdemedes/ink
+License:    MIT
+Copyright:  Copyright (c) Vadym Demedes <vadimdemedes@hey.com> (https://github.com/vadimdemedes)
+
+Files in this repository:
+  cli/src/term/input.rs   the input parser and the key names of `useInput`,
+                          ported to Rust
+
+License text, verbatim:
+
+MIT License
+
+Copyright (c) Vadym Demedes <vadimdemedes@hey.com> (https://github.com/vadimdemedes)
+Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+======================================================================
+5. ink-text-input
 ======================================================================
 
 Project:    ink-text-input
@@ -459,8 +510,8 @@ License:    MIT
 Copyright:  Copyright (c) Vadym Demedes <vadimdemedes@hey.com> (github.com/vadimdemedes)
 
 Files in this repository:
-  cli/src/components/TextInput.tsx   A fork, transcribed to TSX. One behaviour
-                                     change, and four unused features dropped.
+  cli/src/ui/text_input.rs   Its key handling and block cursor, ported to Rust.
+                             A key carrying Ctrl and a lone Escape are not typed.
 
 License text, verbatim:
 
@@ -475,7 +526,45 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ======================================================================
-4. models.dev
+6. marked-terminal
+======================================================================
+
+Project:    marked-terminal
+Version:    7.3.0
+Homepage:   https://github.com/mikaelbr/marked-terminal
+License:    MIT
+Copyright:  Copyright (c) 2017 Mikael Brevik
+
+Files in this repository:
+  cli/src/markdown.rs   the block rendering, text reflow, list layout and
+                        default styles, ported to Rust
+
+License text, verbatim:
+
+MIT License
+
+Copyright (c) 2017 Mikael Brevik
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+======================================================================
+7. models.dev
 ======================================================================
 
 Project:    models.dev model registry
@@ -517,7 +606,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ======================================================================
-5. Playwright
+8. Playwright
 ======================================================================
 
 Project:    Playwright
@@ -746,7 +835,7 @@ This software contains code derived from the Puppeteer project (https://github.c
 available under the Apache 2.0 license (https://github.com/puppeteer/puppeteer/blob/master/LICENSE).
 
 ======================================================================
-6. shadcn/ui
+9. shadcn/ui
 ======================================================================
 
 Project:    shadcn/ui
@@ -796,7 +885,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ======================================================================
-7. turndown
+10. turndown
 ======================================================================
 
 Project:    turndown
@@ -834,7 +923,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ======================================================================
-8. turndown-plugin-gfm
+11. turndown-plugin-gfm
 ======================================================================
 
 Project:    turndown-plugin-gfm
@@ -872,7 +961,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ======================================================================
-9. Vercel AI SDK
+12. Vercel AI SDK
 ======================================================================
 
 Project:    Vercel AI SDK
@@ -904,3 +993,29 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+======================================================================
+13. wrap-ansi
+======================================================================
+
+Project:    wrap-ansi
+Version:    10.0.2
+Homepage:   https://github.com/chalk/wrap-ansi
+License:    MIT
+Copyright:  Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
+
+Files in this repository:
+  cli/src/term/text.rs   `wrap_line`: the word wrapping with `{ trim: false,
+                         hard: true }`, ported to Rust
+
+License text, verbatim:
+
+MIT License
+
+Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

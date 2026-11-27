@@ -25,8 +25,8 @@ The e2e suites live in `e2e/`:
   definitions in `e2e/steps/`, driving the SPA against a real agent-runtime.
   Run via `npm run test --workspace=prism-agent-e2e`.
 - **CLI/TUI**: Gherkin `.feature` files in `e2e/tui/features/` bound with
-  `@amiceli/vitest-cucumber` in `e2e/tui/tests/`, driving `prism-cli` under a
-  PTY against a real runtime. Run via
+  `@amiceli/vitest-cucumber` in `e2e/tui/tests/`, driving the `prism` binary
+  under a PTY against a real runtime. Run via
   `npm run test:e2e:tui --workspace=prism-agent-e2e`.
 
 A feature that spans both web and CLI needs e2e coverage on **both**. Assert on
