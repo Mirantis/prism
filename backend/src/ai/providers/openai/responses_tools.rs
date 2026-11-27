@@ -1,6 +1,5 @@
 //! The tools and tool choice of a Responses API request (`prepareResponsesTools`),
-//! and the mapping between the names the caller gives provider tools and the names
-//! OpenAI gives them (`createToolNameMapping`).
+//! and the OpenAI name of each provider tool (`PROVIDER_TOOL_NAMES`).
 
 use std::collections::HashSet;
 
@@ -13,6 +12,7 @@ use crate::ai::errors::{TypeValidationError, UnsupportedFunctionalityError};
 use crate::ai::provider::{
     LanguageModelV4FunctionTool, LanguageModelV4Tool, LanguageModelV4ToolChoice, Warning,
 };
+use crate::ai::providers::provider_utils::ToolNameMapping;
 
 /// The OpenAI tool name of each provider tool id.
 pub(super) const PROVIDER_TOOL_NAMES: &[(&str, &str)] = &[
@@ -36,8 +36,6 @@ pub(super) const PROVIDER_TOOL_NAMES: &[(&str, &str)] = &[
 /// The provider tools whose requests this port builds. The others are hosted tools
 /// the runtime never declares.
 const PORTED_PROVIDER_TOOLS: &[&str] = &[TOOL_SEARCH_ID];
-
-pub use crate::ai::providers::provider_utils::ToolNameMapping;
 
 /// What `prepareResponsesTools` gives the request.
 #[derive(Debug, Default)]

@@ -32,7 +32,6 @@ pub use model::{
     PreparedRequest, SupportedUrlsFunction, TransformRequestBodyFunction, get_model_capabilities,
     has_dynamic_filtering_web_tool_without_code_execution, sanitize_json_schema,
 };
-pub use tools::ToolNameMapping;
 
 /// The `@ai-sdk/anthropic` version this module follows; the request's `user-agent`
 /// names it.

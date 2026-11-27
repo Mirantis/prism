@@ -8,9 +8,9 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use super::prompt::object;
-use super::tools::ToolNameMapping;
 use crate::ai::json::js_stringify;
 use crate::ai::provider::FinishReason;
+use crate::ai::providers::provider_utils::ToolNameMapping;
 use crate::ai::{
     JsonObject, LanguageModelV4Content, LanguageModelV4InputTokens, LanguageModelV4OutputTokens,
     LanguageModelV4Source, LanguageModelV4Usage, ProviderMetadata,

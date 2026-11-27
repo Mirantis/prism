@@ -37,6 +37,11 @@ pub fn combine_headers(parts: &[Option<&Headers>]) -> Headers {
     combined
 }
 
+/// `withoutTrailingSlash`.
+pub fn without_trailing_slash(url: &str) -> String {
+    url.strip_suffix('/').unwrap_or(url).to_string()
+}
+
 /// The innermost message of an error chain: undici's `cause.message`.
 pub fn innermost_message(err: &(dyn std::error::Error + 'static)) -> String {
     let mut current = err;

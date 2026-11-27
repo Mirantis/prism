@@ -22,7 +22,6 @@ use super::responses::{
     optional, prepare_request, required, string, timestamp_of,
 };
 use super::responses_input::is_truthy;
-use super::responses_tools::ToolNameMapping;
 use crate::ai::errors::{ApiCallError, JsonParseError, TypeValidationError};
 use crate::ai::json::{js_stringify, secure_json_parse};
 use crate::ai::mcp::EventSourceParser;
@@ -32,6 +31,7 @@ use crate::ai::provider::{
     LanguageModelV4StreamError, LanguageModelV4StreamPart, LanguageModelV4StreamResult,
     LanguageModelV4Tool, ProviderMetadata,
 };
+use crate::ai::providers::provider_utils::ToolNameMapping;
 
 /// `doStream`.
 pub(super) async fn do_stream(

@@ -20,9 +20,10 @@ use super::response::{
     CitationDocument, ContentContext, convert_anthropic_usage, map_anthropic_stop_reason,
     map_content, parse_response, response_metadata,
 };
-use super::tools::{PROVIDER_TOOL_NAMES, PrepareToolsInput, ToolNameMapping, prepare_tools};
+use super::tools::{PROVIDER_TOOL_NAMES, PrepareToolsInput, prepare_tools};
 use crate::ai::generate_text::generate_id;
 use crate::ai::json::js_number_text;
+use crate::ai::providers::provider_utils::ToolNameMapping;
 use crate::ai::{
     Headers, InvalidArgumentError, LanguageModel, LanguageModelV4CallOptions,
     LanguageModelV4FinishReason, LanguageModelV4FunctionTool, LanguageModelV4GenerateResult,
