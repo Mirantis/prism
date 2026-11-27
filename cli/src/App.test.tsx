@@ -910,7 +910,7 @@ describe('App', () => {
       ]);
     });
     const { lastFrame, stdin, unmount } = render(
-      <App {...baseProps} thread={{ id: 'thread-beta' }} />,
+      <App {...baseProps} thread={{ id: 'thread-beta', contextUsage: null }} />,
     );
     try {
       await settle();
@@ -927,6 +927,18 @@ describe('App', () => {
       expect(adapterStub.submitUserMessage).toHaveBeenCalledWith(
         expect.objectContaining({ text: 'next question' }),
       );
+    } finally {
+      unmount();
+    }
+  });
+
+  it('seeds the status bar from the context reading of the thread the launch named', async () => {
+    const { lastFrame, unmount } = render(
+      <App {...baseProps} thread={{ id: 'thread-alpha', contextUsage: resumeSessions[0]!.contextUsage }} />,
+    );
+    try {
+      await settle();
+      expect(lastFrame() ?? '').toContain('| context 30%');
     } finally {
       unmount();
     }

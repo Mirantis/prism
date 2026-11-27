@@ -418,7 +418,7 @@ class TuiAdapter {
     if (mode === undefined) return undefined;
     if (mode === 'multi') return this.startNewSession();
     // `GET /threads` lists the one conversation alone, with its context reading.
-    const [conversation] = await this.listSessions();
+    const [conversation] = (await this.listSessions()) ?? [];
     if (!conversation) return undefined;
     if (conversation.contextUsage) this.events.emit('contextUsage', conversation.contextUsage);
     await this.resumeThread(conversation.id);
@@ -467,24 +467,25 @@ class TuiAdapter {
   }
 
   /**
-   * List resumable conversation threads (most-recent first) for the
-   * `--resume` picker. Calls `GET /threads`; returns an empty list on any
-   * error so the CLI degrades to "no sessions to resume" instead of crashing.
+   * List resumable conversation threads (most-recent first) with `GET /threads`,
+   * only those started in `workspaceRoot` when it is given. Undefined when the
+   * runtime did not answer.
    */
-  async listSessions(): Promise<ThreadSummary[]> {
+  async listSessions(workspaceRoot?: string): Promise<ThreadSummary[] | undefined> {
     try {
+      const query = workspaceRoot ? `?${new URLSearchParams({ workspaceRoot }).toString()}` : '';
       // Time-boxed: `--resume` blocks on this before rendering anything at all.
-      const res = await fetch(`${this.httpUrl}/threads`, {
+      const res = await fetch(`${this.httpUrl}/threads${query}`, {
         signal: AbortSignal.timeout(15_000),
       });
-      if (!res.ok) return [];
+      if (!res.ok) return undefined;
       const body = (await res.json()) as unknown;
-      if (!Array.isArray(body)) return [];
+      if (!Array.isArray(body)) return undefined;
       return body
         .map(coerceThreadSummary)
         .filter((t): t is ThreadSummary => t !== null);
     } catch {
-      return [];
+      return undefined;
     }
   }
 

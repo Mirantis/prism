@@ -57,7 +57,7 @@ export interface AppProps {
    * it; `cwd` is the launch directory, shown for context.
    */
   resume?: { sessions: ThreadSummary[]; cwd: string };
-  /** The conversation the launch flags named (`--resume <id>`), opened with no picker. */
+  /** The conversation the launch flags named (`--resume <id>`, `--continue`), opened with no picker. */
   thread?: OpenThread;
 }
 
@@ -227,6 +227,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   useEffect(() => {
     if (!thread) return;
     setActiveThreadId(thread.id);
+    setContextUsage(thread.contextUsage);
     void tuiAdapterService.resumeThread(thread.id);
   }, [thread]);
 
