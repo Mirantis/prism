@@ -38,12 +38,9 @@ export interface ResumeReporting {
  * A command that a terminal cannot accept becomes a `clear`, so that an earlier
  * command does not resume in its place.
  */
-export function programResumeSequence(
-  record: ResumeRecord,
-  token: string,
-  pid = process.pid,
-  time = Math.floor(Date.now() / 1000),
-): string {
+export function programResumeSequence(record: ResumeRecord, token: string): string {
+  const pid = process.pid;
+  const time = Math.floor(Date.now() / 1000);
   const report = 'argv' in record ? commandSequence(record, token, pid, time) : undefined;
   return report ?? signedSequence(`pid=${pid}:time=${time}:clear=1`, token);
 }
@@ -78,9 +75,9 @@ function base64(text: string): string {
  * The terminal's token, removed from this process's environment so that no
  * process `prism` starts inherits it. Undefined when the terminal set none.
  */
-export function takeResumeToken(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const token = env[RESUME_TOKEN_VAR];
-  delete env[RESUME_TOKEN_VAR];
+export function takeResumeToken(): string | undefined {
+  const token = process.env[RESUME_TOKEN_VAR];
+  delete process.env[RESUME_TOKEN_VAR];
   return token || undefined;
 }
 
