@@ -154,7 +154,9 @@ fall back to defaults, and a malformed file is ignored.
 | `hideCursor` | Hide the input cursor (accessibility) | `false` |
 | `hideStatusBar` | Hide the bottom status bar (accessibility) | `false` |
 
-`PRISM_HTTP_URL` overrides `httpUrl` when set. The runtime (sharing `~/.prism/`)
-reads `modelId`, `heartbeatModelId`, and `cronModelId` from this file only when
-it **first creates an agent** — see
+`PRISM_HTTP_URL` overrides `httpUrl` when set. A terminal that resumes `prism`
+after a restart does so only when `PRISM_HTTP_URL` is unset or names the same
+address as `httpUrl`. The runtime
+(sharing `~/.prism/`) reads `modelId`, `heartbeatModelId`, and `cronModelId`
+from this file only when it **first creates an agent** — see
 [Configuration → Bootstrap model defaults](configuration.md#bootstrap-model-defaults-prismsettingsjson).
