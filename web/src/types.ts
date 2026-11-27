@@ -400,7 +400,7 @@ export interface WebhookSubscription {
   slackChannelIds: string[];
   deliverOnly: boolean;
   isActive: boolean;
-  /** Seconds after an agent-mode delivery in which later deliveries join its run; null = one run per delivery. */
+  /** Seconds an agent run waits after its first delivery, taking the deliveries until it starts; null = one run per delivery. */
   coalesceSeconds: number | null;
   authType: WebhookAuthType;
   /** Header carrying the token/signature; null when authType is 'none'. */

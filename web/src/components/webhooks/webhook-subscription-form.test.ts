@@ -83,9 +83,15 @@ describe('slackChannelsToSave', () => {
 
 describe('coalesceSecondsToSave', () => {
   it('saves the typed seconds, and an empty field as one run per event', () => {
-    const values = subscriptionFormValues(stored);
+    const values = { ...subscriptionFormValues(stored), deliverOnly: false };
     expect(coalesceSecondsToSave(values)).toBe(30);
     expect(coalesceSecondsToSave({ ...values, coalesceSeconds: ' ' })).toBeNull();
+  });
+
+  it('saves no window in Deliver only mode, where the field is hidden', () => {
+    const values = { ...subscriptionFormValues(stored), coalesceSeconds: '700' };
+    expect(values.deliverOnly).toBe(true);
+    expect(coalesceSecondsToSave(values)).toBeNull();
   });
 });
 
