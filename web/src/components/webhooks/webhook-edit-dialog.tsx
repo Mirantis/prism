@@ -6,6 +6,7 @@ import { useFormErrors } from '@/hooks/use-form-errors';
 import { isWebhookAuthComplete } from './webhook-auth-fields';
 import { WebhookSubscriptionFields } from './webhook-subscription-fields';
 import {
+  coalesceSecondsToSave,
   slackChannelsToSave,
   subscriptionFormValues,
   type WebhookSubscriptionFormValues,
@@ -45,6 +46,7 @@ export function WebhookEditDialog({ subscription, onClose }: WebhookEditDialogPr
         deliverTo: values.deliverTo,
         slackChannelIds: slackChannelsToSave(values),
         deliverOnly: values.deliverOnly,
+        coalesceSeconds: coalesceSecondsToSave(values),
         authType: values.authType,
         authHeader: values.authHeader.trim() || null,
         authPrefix: values.authPrefix || null,

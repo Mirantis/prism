@@ -35,6 +35,7 @@ import { isWebhookAuthComplete } from '@/components/webhooks/webhook-auth-fields
 import { WebhookSubscriptionFields } from '@/components/webhooks/webhook-subscription-fields';
 import {
   EMPTY_WEBHOOK_SUBSCRIPTION_FORM,
+  coalesceSecondsToSave,
   slackChannelsToSave,
   type WebhookSubscriptionFormValues,
 } from '@/components/webhooks/webhook-subscription-form';
@@ -85,6 +86,7 @@ function WebhooksPage() {
         deliverTo: input.deliverTo,
         slackChannelIds: slackChannelsToSave(input),
         deliverOnly: input.deliverOnly,
+        coalesceSeconds: coalesceSecondsToSave(input),
         ...(input.authType !== 'none'
           ? {
               authType: input.authType,

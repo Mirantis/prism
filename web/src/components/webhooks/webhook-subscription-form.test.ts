@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SlackChannelMapping, WebhookSubscription } from '@/types';
 import { slackChannelNames } from '@/lib/delivery-labels';
-import { slackChannelsToSave, subscriptionFormValues } from './webhook-subscription-form';
+import { coalesceSecondsToSave, slackChannelsToSave, subscriptionFormValues } from './webhook-subscription-form';
 
 const stored: WebhookSubscription = {
   id: 'wh-1',
@@ -14,6 +14,7 @@ const stored: WebhookSubscription = {
   slackChannelIds: ['C_REL'],
   deliverOnly: true,
   isActive: false,
+  coalesceSeconds: 30,
   authType: 'hmac',
   authHeader: 'X-Hub-Signature-256',
   authPrefix: 'sha256=',
@@ -34,6 +35,7 @@ describe('subscriptionFormValues', () => {
       deliverTo: 'slack',
       slackChannelIds: ['C_REL'],
       deliverOnly: true,
+      coalesceSeconds: '30',
       prompt: 'Alert: {status}',
       authType: 'hmac',
       authHeader: 'X-Hub-Signature-256',
@@ -56,8 +58,10 @@ describe('subscriptionFormValues', () => {
       authPrefix: null,
       authSignedUrl: null,
       hasSecret: false,
+      coalesceSeconds: null,
     });
     expect(values).toMatchObject({
+      coalesceSeconds: '',
       description: '',
       events: '',
       prompt: '',
@@ -74,6 +78,14 @@ describe('slackChannelsToSave', () => {
     const values = subscriptionFormValues(stored);
     expect(slackChannelsToSave(values)).toEqual(['C_REL']);
     expect(slackChannelsToSave({ ...values, deliverTo: 'chat' })).toEqual([]);
+  });
+});
+
+describe('coalesceSecondsToSave', () => {
+  it('saves the typed seconds, and an empty field as one run per event', () => {
+    const values = subscriptionFormValues(stored);
+    expect(coalesceSecondsToSave(values)).toBe(30);
+    expect(coalesceSecondsToSave({ ...values, coalesceSeconds: ' ' })).toBeNull();
   });
 });
 

@@ -4,6 +4,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import ChatMarkdown from '@/components/chat/ChatMarkdown';
 import ToolCallCard from '@/components/chat/tool-call-card';
 import { runtimeApi } from '@/api/runtime-client';
+import { formatRelativeTime } from '@/lib/format';
 import type { WebhookRunSummary } from '@/types';
 
 function formatDuration(ms: number): string {
@@ -22,14 +23,16 @@ function Label({ children }: { children: string }) {
 
 /**
  * What a finished run delivered: the message, a link to its conversation when
- * that is a web chat, and the tool calls the message stored.
+ * that is a web chat, and the tool calls the message stored. An event handled by
+ * an earlier event's run shows that run.
  */
 export function WebhookRunDetails({ run }: { run: WebhookRunSummary }) {
   const pending = run.status === 'queued' || run.status === 'running';
+  const runId = run.coalescedInto ?? run.id;
   // Keyed on the status, so a run that finishes while open is read again.
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['webhook-run', run.id, run.status],
-    queryFn: () => runtimeApi.getWebhookRun(run.id),
+    queryKey: ['webhook-run', runId, run.status],
+    queryFn: () => runtimeApi.getWebhookRun(runId),
     enabled: !pending,
   });
 
@@ -53,6 +56,12 @@ export function WebhookRunDetails({ run }: { run: WebhookRunSummary }) {
 
   return (
     <div className={frame} data-testid="activity-webhook-run-details">
+      {run.coalescedInto && (
+        <p className="text-muted-foreground">
+          Handled in one run with the {data.event === 'unknown' ? data.name : data.event} event from{' '}
+          <span title={new Date(data.createdAt).toLocaleString()}>{formatRelativeTime(data.createdAt)}</span>.
+        </p>
+      )}
       {data.finishedAt && (
         <p className="text-muted-foreground">
           Took {formatDuration(new Date(data.finishedAt).getTime() - new Date(data.createdAt).getTime())}
