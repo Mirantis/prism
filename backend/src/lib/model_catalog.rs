@@ -131,7 +131,7 @@ pub struct CatalogEntry {
     pub cost: Option<ModelPrice>,
 }
 
-/// Provider (`bedrock` | `azure` | `openai` | `anthropic`) -> model ID -> limits.
+/// Provider (`bedrock` | `azure` | `openai` | `anthropic` | `google`) -> model ID -> limits.
 pub type ModelCatalog = IndexMap<String, IndexMap<String, CatalogEntry>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,28 +161,32 @@ impl CatalogState {
     }
 }
 
-/// models.dev provider id -> the `LLM_PROVIDER` value it serves. Shared with the
+/// models.dev provider id -> the catalog bucket it serves. Shared with the
 /// generator so the two can't drift on which providers are in scope.
-pub const REGISTRY_PROVIDERS: [(&str, &str); 4] = [
+pub const REGISTRY_PROVIDERS: [(&str, &str); 5] = [
     ("amazon-bedrock", "bedrock"),
     ("azure", "azure"),
     ("openai", "openai"),
     ("anthropic", "anthropic"),
+    ("google", "google"),
 ];
 
 /// The model family each registry provider contributes, scoped per provider: on
 /// the Claude-serving vendors only Claude models reach `invoke_stream()`, and
 /// azure's registry entry lists plenty of GPT models that would be noise in that
 /// bucket — while the `openai` bucket exists precisely for GPT (and
-/// o-series/codex) ids and would find no Claude there.
+/// o-series/codex) ids and `google` exists for Gemini ids (used by OpenRouter
+/// and the Antigravity CLI coding agent).
 static CLAUDE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)claude|fable|mythos").unwrap());
 static OPENAI_FAMILY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^gpt|^o\d|^codex").unwrap());
+static GEMINI_FAMILY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^gemini").unwrap());
 
 fn registry_family(registry_id: &str) -> Option<&'static Regex> {
     match registry_id {
         "amazon-bedrock" | "azure" | "anthropic" => Some(&CLAUDE),
         "openai" => Some(&OPENAI_FAMILY),
+        "google" => Some(&GEMINI_FAMILY),
         _ => None,
     }
 }
@@ -317,7 +321,12 @@ static SIZE_MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[^\]]*\]$"
 static VENDOR_PATH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z0-9-]+/").unwrap());
 
 static VENDOR_SEGMENT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(?:anthropic|openai)\.").unwrap());
+    LazyLock::new(|| Regex::new(r"^(?:anthropic|openai|google)\.").unwrap());
+
+/// A reasoning-effort suffix that coding-agent CLIs such as `agy` append to
+/// reported model IDs (`gemini-3.8-flash-low`, `gemini-4-neon-xhigh`).
+static EFFORT_SUFFIX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"-(?:low|medium|high|xhigh|max)$").unwrap());
 
 /// The catalog entry for `model_id`, or `None` when no spelling of it is listed.
 ///
@@ -364,6 +373,7 @@ fn id_candidates(model_id: &str) -> Vec<String> {
     // `anthropic.` vendor segment; try across that boundary too. Bedrock names
     // OpenAI's models `openai.gpt-…`, which the `openai` provider lists bare.
     let without_vendor = VENDOR_SEGMENT.replace(&bare, "").into_owned();
+    let without_effort = EFFORT_SUFFIX.replace(&without_vendor, "").into_owned();
 
     for id in [
         model_id.to_string(),
@@ -373,6 +383,8 @@ fn id_candidates(model_id: &str) -> Vec<String> {
         VERSION_SUFFIX.replace(&bare, "").into_owned(),
         without_vendor.clone(),
         VERSION_SUFFIX.replace(&without_vendor, "").into_owned(),
+        without_effort.clone(),
+        VERSION_SUFFIX.replace(&without_effort, "").into_owned(),
     ] {
         if !id.is_empty() {
             seen.insert(id);
@@ -895,6 +907,36 @@ mod tests {
                 &json!({ "limit": { "context": 200_000 } }),
                 "openai"
             ));
+        }
+    }
+
+    #[test]
+    fn keeps_gemini_models_in_the_google_bucket_and_resolves_effort_suffixed_ids() {
+        for id in ["gemini-3.8-flash", "gemini-4-carbon", "gemini-4-neon"] {
+            assert!(is_usable_registry_entry(
+                id,
+                &json!({ "limit": { "context": 1_048_576 } }),
+                "google"
+            ));
+        }
+        assert!(!is_usable_registry_entry(
+            "gemma-3-27b",
+            &json!({ "limit": { "context": 128_000 } }),
+            "google"
+        ));
+
+        for id in [
+            "gemini-3.8-flash-low",
+            "gemini-4-carbon-medium",
+            "gemini-4-neon-high",
+            "gemini-4-neon-xhigh",
+            "google/gemini-3.8-flash",
+        ] {
+            let hit = find_catalog_entry(id).unwrap_or_else(|| panic!("missing price for {id}"));
+            assert!(
+                hit.cost.is_some(),
+                "expected bundled catalog price for {id}"
+            );
         }
     }
 

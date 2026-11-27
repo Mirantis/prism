@@ -6,8 +6,9 @@ conversation, and per message you sent. It works with nothing configured.
 
 The estimate is token counts times the model's list price from
 [models.dev](https://models.dev). Your bill can differ: it can include discounts,
-a gateway's markup or tax. A coding agent that runs on a Claude or ChatGPT
-subscription costs nothing here, since the subscription is not billed per token.
+a gateway's markup or tax. A coding agent that runs on a Claude, ChatGPT, or
+Google account subscription costs nothing here, since the subscription is not
+billed per token.
 
 ## Read it
 
