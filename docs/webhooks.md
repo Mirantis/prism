@@ -93,6 +93,7 @@ pathological floods. Deliver-only requests are not queued or limited — they
 cost no LLM tokens. A queued or running event survives a restart, and runs when
 the runtime is back. A run posts where the subscription allows when the run
 starts, so a change to **May post to** applies to the events that still wait.
+Deleting the subscription fails the events that still wait.
 
 With a **Coalescing window**, the first event's run starts when the window ends,
 or when the previous run ends if that is later. The events that arrive until the
