@@ -1948,8 +1948,8 @@ pub struct WebhookSubscription {
     pub slack_channel_ids: Option<String>,
     pub deliver_only: bool,
     pub is_active: bool,
-    /// Seconds after an agent-mode delivery in which later deliveries join its run;
-    /// null = one run per delivery.
+    /// Seconds an agent run waits after its first delivery; the deliveries that arrive
+    /// until it starts join it, up to 10. null = one run per delivery.
     pub coalesce_seconds: Option<i64>,
     pub auth_type: WebhookAuthType,
     /// header carrying the token/signature

@@ -746,7 +746,8 @@ model WebhookSubscription {
   slackChannelIds String?
   deliverOnly Boolean @default(false)
   isActive    Boolean @default(true)
-  // Seconds after an agent-mode delivery in which later deliveries join its run; null = one run per delivery.
+  // Seconds an agent run waits after its first delivery; the deliveries that arrive
+  // until it starts join it, up to 10. null = one run per delivery.
   coalesceSeconds Int?
 
   authType      WebhookAuthType      @default(token)
