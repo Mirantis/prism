@@ -44,7 +44,7 @@ binary frames. A frame is at most 1 MB.
 3. The server answers `welcome`:
 
    ```json
-   {"type":"welcome","payload":{"protocol":2,"streamId":"…","seq":57,"resumed":true,"you":{"id":"ada@example.com","name":"ada@example.com"},"threadMode":"multi","snapshot":{"turns":[{"threadId":"…","state":"running"}],"computer":{}}}}
+   {"type":"welcome","payload":{"protocol":2,"streamId":"…","seq":57,"resumed":true,"you":{"id":"ada@example.com","name":"ada@example.com"},"threadMode":"multi","snapshot":{"turns":[{"threadId":"…","state":"running","step":{"index":14,"tool":"web_search"}}],"computer":{},"questionCards":[{"id":"…","threadId":"…"}]}}}
    ```
 
    - `streamId` and `seq` together are your cursor. Keep the `seq` of the last
@@ -58,7 +58,12 @@ binary frames. A frame is at most 1 MB.
      way to start or switch a conversation: `GET /threads` lists that one alone, and
      `POST /threads` returns it. A runtime that sends no `threadMode` keeps many.
    - `snapshot.turns` lists every conversation that is working (`running`) or
-     waiting (`queued`). A conversation that is not listed is idle.
+     waiting (`queued`). A conversation that is not listed is idle. A running
+     conversation has `step` as in the `turn` event.
+   - `snapshot.questionCards` lists every [question card](#question-cards) that
+     waits for an answer, in every conversation a client can open, as
+     `{ id, threadId }`, oldest first. A card that closes later arrives as a
+     `message` event.
    - `you` is who the Mirantis Agent Platform sign-in says this connection is, or nulls when
      it did not say. Compare `you.id` with a message's `senderId` to tell your
      own messages from someone else's. Until the first `welcome`, draw every
@@ -100,8 +105,15 @@ see a gap, reconnect and resume from the last `seq` you applied.
     {"type":"message","payload":{"id":"6f1c2a3b-4d5e-4f60-8a71-92b3c4d5e6f7","threadId":"…","role":"USER","content":"Can you check whether CI is green on main?","triggeredBy":"AGENT_MESSAGE","toolCalls":null,"blocks":null,"isCompacted":false,"createdAt":"2026-10-21T12:00:00.000Z","attachments":null,"senderId":"<agent id>","senderName":"Researcher","agentMessageKind":"ask"},"seq":12}
     ```
 
-- **`turn`** `{ threadId, state, outcome?, error? }`: what a conversation is doing.
+- **`turn`** `{ threadId, state, outcome?, error?, step? }`: what a conversation is doing.
   - `state` is `queued`, `running` or `idle`.
+  - `step` `{ index, tool }` is the step a `running` turn is on. Each step that
+    calls a tool arrives as another `running` event: `index` counts the turn's
+    steps from 1, and `tool` names the tool the step called first. A turn that has
+    called no tool yet has no `step`.
+  - `step` arrives in concise mode too
+    ([chat verbosity](configuration.md#chat-verbosity)), where the text of the
+    turn's steps stays hidden.
   - `outcome` appears when a running conversation becomes idle: `completed`,
     `cancelled` or `failed`. A failure also has `error`, written for a person.
     A turn whose model call fails is `failed`, and its reply message describes

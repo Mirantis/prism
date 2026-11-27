@@ -3,7 +3,8 @@
 //! Owns what happens to a message a person sends over the chat socket: it is
 //! stored under the id the client chose, confirmed, and then answered — in the
 //! order messages arrived, one turn at a time for the agent. It also owns what
-//! every client is told about each conversation's work: queued, running or idle.
+//! every client is told about each conversation's work: queued, running with the
+//! step it is on, or idle.
 //!
 //! **Stored before anything else.** A message is written the moment it is
 //! accepted, and only then scheduled. The queue therefore holds rows that already
@@ -40,7 +41,8 @@ use crate::prompts::agent_message_prompt::{AgentMessageColumns, agent_message_or
 use crate::prompts::context_builder::with_sender_tag;
 use crate::prompts::task_notification_prompt::task_notification_origin;
 use crate::protocol::chat_protocol::{
-    NackCode, StreamEvent, TURN_FAILED, TurnEventPayload, TurnOutcome, TurnState, turn_error,
+    NackCode, StreamEvent, TURN_FAILED, TurnEventPayload, TurnOutcome, TurnState, TurnStep,
+    turn_error,
 };
 use crate::services::channel_adapter_interface::ChannelName;
 use crate::services::conversation_engine_service::{
@@ -295,6 +297,16 @@ pub struct TurnSummary {
     pub thread_id: String,
     /// `Queued` or `Running`; an idle conversation is not listed.
     pub state: TurnState,
+    /// The step of a running turn, once a tool call started one.
+    pub step: Option<TurnStep>,
+}
+
+/// What every client was last told about a thread.
+#[derive(Debug, Clone)]
+struct Announced {
+    state: TurnState,
+    /// Told only while `state` is `Running`.
+    step: Option<TurnStep>,
 }
 
 /// An acceptance in flight, which every other copy of one send waits for: the
@@ -323,7 +335,7 @@ pub struct InboundMessageService {
     /// How a thread's last turn ended, told once with the `idle` that follows it.
     outcomes: Mutex<HashMap<String, TurnEnding>>,
     /// The state each thread was last announced in. Idle threads are not kept.
-    announced: Mutex<IndexMap<String, TurnState>>,
+    announced: Mutex<IndexMap<String, Announced>>,
 }
 
 impl InboundMessageService {
@@ -341,6 +353,17 @@ impl InboundMessageService {
                 .lock()
                 .insert(ended.thread_id.clone(), outcome_of(ended));
         });
+        CONVERSATION_ENGINE_SERVICE
+            .events
+            .on_step_started(|started| {
+                INBOUND_MESSAGE_SERVICE.announce_step(
+                    &started.thread_id,
+                    TurnStep {
+                        index: started.index,
+                        tool: started.tool.clone(),
+                    },
+                );
+            });
         Self {
             accepting: Mutex::new(HashMap::new()),
             waiting: Mutex::new(VecDeque::new()),
@@ -460,9 +483,10 @@ impl InboundMessageService {
         self.announced
             .lock()
             .iter()
-            .map(|(thread_id, state)| TurnSummary {
+            .map(|(thread_id, announced)| TurnSummary {
                 thread_id: thread_id.clone(),
-                state: *state,
+                state: announced.state,
+                step: announced.step.clone(),
             })
             .collect()
     }
@@ -560,7 +584,11 @@ impl InboundMessageService {
 
         track_received(&inbound, true);
 
-        let mut queued = self.announced.lock().get(&inbound.thread_id) == Some(&TurnState::Queued);
+        let mut queued = self
+            .announced
+            .lock()
+            .get(&inbound.thread_id)
+            .is_some_and(|announced| announced.state == TurnState::Queued);
         if !self.has_work(&inbound.thread_id)
             && !self.has_answer(&existing).await?
             && self.turn_reads_thread(&existing).await?
@@ -829,14 +857,16 @@ impl InboundMessageService {
             let state = self.state_of(thread_id);
             let payload = {
                 let mut announced = self.announced.lock();
-                let before = announced.get(thread_id).copied().unwrap_or(TurnState::Idle);
+                let before = announced
+                    .get(thread_id)
+                    .map_or(TurnState::Idle, |announced| announced.state);
                 if state == before {
                     return;
                 }
                 if state == TurnState::Idle {
                     announced.shift_remove(thread_id);
                 } else {
-                    announced.insert(thread_id.to_string(), state);
+                    announced.insert(thread_id.to_string(), Announced { state, step: None });
                 }
 
                 let mut payload = TurnEventPayload {
@@ -844,6 +874,7 @@ impl InboundMessageService {
                     state,
                     outcome: None,
                     error: None,
+                    step: None,
                 };
                 let mut outcomes = self.outcomes.lock();
                 if state == TurnState::Idle && before == TurnState::Running {
@@ -860,6 +891,32 @@ impl InboundMessageService {
                 payload
             };
             EVENT_STREAM_SERVICE.publish(StreamEvent::Turn(payload));
+        });
+    }
+
+    /// Tell every client the step a running turn started, when the thread is announced running.
+    fn announce_step(&self, thread_id: &str, step: TurnStep) {
+        EVENT_STREAM_SERVICE.exclusive(|| {
+            {
+                let mut announced = self.announced.lock();
+                let Some(running) = announced
+                    .get_mut(thread_id)
+                    .filter(|announced| announced.state == TurnState::Running)
+                else {
+                    return;
+                };
+                if running.step.as_ref() == Some(&step) {
+                    return;
+                }
+                running.step = Some(step.clone());
+            }
+            EVENT_STREAM_SERVICE.publish(StreamEvent::Turn(TurnEventPayload {
+                thread_id: thread_id.to_string(),
+                state: TurnState::Running,
+                outcome: None,
+                error: None,
+                step: Some(step),
+            }));
         });
     }
 

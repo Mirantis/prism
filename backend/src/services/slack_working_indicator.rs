@@ -773,6 +773,7 @@ mod tests {
         let event = |kind, name: &str| ToolLifecycleEvent {
             kind,
             tool_name: name.to_string(),
+            step: 1,
         };
         listener(event(ToolLifecycleEventType::Started, "a"));
         listener(event(ToolLifecycleEventType::Started, "b"));

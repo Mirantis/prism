@@ -248,6 +248,7 @@ mod tests {
             state: TurnState::Running,
             outcome: None,
             error: None,
+            step: None,
         })
     }
 

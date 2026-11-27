@@ -5,7 +5,7 @@
 //! responses via the local `MessageDeliveryService`.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 
 use diesel::prelude::*;
@@ -28,7 +28,9 @@ use crate::lib::log_redaction::err_json;
 use crate::lib::model_call::{ModelCallMeta, call_model};
 use crate::lib::spend_context::{SpendContext, SpendSource, SpendSourceKind, with_spend_context};
 use crate::lib::telemetry::{is_telemetry_enabled, langfuse_telemetry, track_event};
-use crate::lib::tool_lifecycle::ToolLifecycleListener;
+use crate::lib::tool_lifecycle::{
+    ToolLifecycleEvent, ToolLifecycleEventType, ToolLifecycleListener,
+};
 use crate::prompts::agent_message_prompt::{agent_message_columns, render_agent_message};
 use crate::prompts::context_builder::{ConversationMessage as HistoryRow, SteeringMessage};
 use crate::prompts::resume_prompt::RESUMED_REPLY_NOTICE;
@@ -239,6 +241,16 @@ pub struct ChatTurnEnd {
     pub error: Option<InvokeError>,
 }
 
+/// A step of a chat turn started: its first tool call began. Emitted as `step_started`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatStepStarted {
+    pub thread_id: String,
+    /// The step's number in the turn, from 1.
+    pub index: usize,
+    /// The name of the tool call that started the step.
+    pub tool: String,
+}
+
 /// The message of chat work whose row is not stored yet.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -420,10 +432,15 @@ struct StreamTurnParams {
 /// Receives each `turn_ended` event.
 pub type TurnEndedListener = Arc<dyn Fn(&ChatTurnEnd) + Send + Sync>;
 
-/// The `turn_ended` events: an exchange on a thread ended.
+/// Receives each `step_started` event.
+pub type StepStartedListener = Arc<dyn Fn(&ChatStepStarted) + Send + Sync>;
+
+/// The `turn_ended` events, an exchange on a thread ended, and the `step_started`
+/// events, a step of a chat turn started.
 #[derive(Default)]
 pub struct ConversationEngineEvents {
     turn_ended: RwLock<Vec<TurnEndedListener>>,
+    step_started: RwLock<Vec<StepStartedListener>>,
 }
 
 impl ConversationEngineEvents {
@@ -439,6 +456,42 @@ impl ConversationEngineEvents {
             listener(ended);
         }
     }
+
+    /// Call `listener` with every step of a chat turn that starts from now on.
+    pub fn on_step_started(&self, listener: impl Fn(&ChatStepStarted) + Send + Sync + 'static) {
+        self.step_started.write().push(Arc::new(listener));
+    }
+
+    /// Hand `started` to every listener, synchronously and in subscription order.
+    pub fn emit_step_started(&self, started: &ChatStepStarted) {
+        let listeners = self.step_started.read().clone();
+        for listener in listeners {
+            listener(started);
+        }
+    }
+}
+
+/// The turn's tool listener: `caller`'s, and a `step_started` event at the first
+/// tool call of each step. The parallel calls of a step report it once.
+fn step_reporter(thread_id: &str, caller: Option<ToolLifecycleListener>) -> ToolLifecycleListener {
+    let thread_id = thread_id.to_string();
+    let reported = AtomicUsize::new(0);
+    Arc::new(move |event: ToolLifecycleEvent| {
+        if event.kind == ToolLifecycleEventType::Started
+            && reported.fetch_max(event.step, Ordering::SeqCst) < event.step
+        {
+            CONVERSATION_ENGINE_SERVICE
+                .events
+                .emit_step_started(&ChatStepStarted {
+                    thread_id: thread_id.clone(),
+                    index: event.step,
+                    tool: event.tool_name.clone(),
+                });
+        }
+        if let Some(caller) = &caller {
+            caller(event);
+        }
+    })
 }
 
 // ============================================================================
@@ -1529,7 +1582,7 @@ impl ConversationEngineService {
             origin_channel_id: metadata.as_ref().and_then(|m| m.channel_id.clone()),
             runtime_notices: params.runtime_notices.clone(),
             abort_signal: params.abort_signal.clone(),
-            on_tool_event: params.on_tool_event.clone(),
+            on_tool_event: Some(step_reporter(thread_id, params.on_tool_event.clone())),
             steering: Some(Arc::clone(&params.steering)),
             on_history_read: Some(Arc::clone(&params.on_history_read)),
             ..InvokeRequest::default()

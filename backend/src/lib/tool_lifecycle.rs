@@ -8,6 +8,7 @@
 use crate::ai::{Tool, ToolExecuteFunction, ToolSet};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Which edge of a tool's execution an event reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +33,8 @@ pub struct ToolLifecycleEvent {
     #[serde(rename = "type")]
     pub kind: ToolLifecycleEventType,
     pub tool_name: String,
+    /// The turn's step the call runs in, counted from 1.
+    pub step: usize,
 }
 
 /// Called around every tool execution.
@@ -39,11 +42,13 @@ pub type ToolLifecycleListener = Arc<dyn Fn(ToolLifecycleEvent) + Send + Sync>;
 
 /// Wrap every executable tool so `on_tool_event` fires around its execution.
 /// `completed` fires however the call ends — a tool that fails still reports, so a
-/// progress UI never sticks on a failed tool. Without a listener the tools
-/// are returned untouched.
+/// progress UI never sticks on a failed tool. Each event names the step the call
+/// runs in, one after the `steps_finished` steps that ended before it. Without a
+/// listener the tools are returned untouched.
 pub fn with_tool_lifecycle_events(
     tools: ToolSet,
     on_tool_event: Option<ToolLifecycleListener>,
+    steps_finished: Arc<AtomicUsize>,
 ) -> ToolSet {
     let Some(on_tool_event) = on_tool_event else {
         return tools;
@@ -56,22 +61,26 @@ pub fn with_tool_lifecycle_events(
             };
             let listener = on_tool_event.clone();
             let tool_name = name.clone();
+            let steps_finished = steps_finished.clone();
             let wrapped: ToolExecuteFunction = Arc::new(move |args, options| {
                 let execute = execute.clone();
                 let listener = listener.clone();
                 let tool_name = tool_name.clone();
+                let step = steps_finished.load(Ordering::SeqCst) + 1;
                 Box::pin(async move {
                     notify(
                         &listener,
                         ToolLifecycleEvent {
                             kind: ToolLifecycleEventType::Started,
                             tool_name: tool_name.clone(),
+                            step,
                         },
                     );
                     // `completed` on every path, a cancelled future included.
                     let _completed = CompletedGuard {
                         listener,
                         tool_name,
+                        step,
                     };
                     execute(args, options).await
                 })
@@ -92,6 +101,7 @@ pub fn with_tool_lifecycle_events(
 struct CompletedGuard {
     listener: ToolLifecycleListener,
     tool_name: String,
+    step: usize,
 }
 
 impl Drop for CompletedGuard {
@@ -101,6 +111,7 @@ impl Drop for CompletedGuard {
             ToolLifecycleEvent {
                 kind: ToolLifecycleEventType::Completed,
                 tool_name: std::mem::take(&mut self.tool_name),
+                step: self.step,
             },
         );
     }
@@ -155,7 +166,7 @@ mod tests {
             make_tool(Ok(json!("ok")), Default::default()),
         );
         let execute = tools["kubectl"].execute.clone().unwrap();
-        let wrapped = with_tool_lifecycle_events(tools, None);
+        let wrapped = with_tool_lifecycle_events(tools, None, Default::default());
         assert!(Arc::ptr_eq(
             &execute,
             wrapped["kubectl"].execute.as_ref().unwrap()
@@ -171,7 +182,7 @@ mod tests {
             make_tool(Ok(json!("result")), order.clone()),
         );
         let (listener, events) = recorder(order.clone());
-        let wrapped = with_tool_lifecycle_events(tools, Some(listener));
+        let wrapped = with_tool_lifecycle_events(tools, Some(listener), Default::default());
 
         let execute = wrapped["kubectl"].execute.clone().unwrap();
         let result = execute(json!({ "ns": "default" }), ToolExecutionOptions::default())
@@ -183,8 +194,8 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&*events.lock()).unwrap(),
             json!([
-                { "type": "started", "toolName": "kubectl" },
-                { "type": "completed", "toolName": "kubectl" },
+                { "type": "started", "toolName": "kubectl", "step": 1 },
+                { "type": "completed", "toolName": "kubectl", "step": 1 },
             ])
         );
     }
@@ -198,7 +209,7 @@ mod tests {
             make_tool(Err(anyhow::anyhow!("tool exploded")), order.clone()),
         );
         let (listener, events) = recorder(order);
-        let wrapped = with_tool_lifecycle_events(tools, Some(listener));
+        let wrapped = with_tool_lifecycle_events(tools, Some(listener), Default::default());
 
         let execute = wrapped["broken"].execute.clone().unwrap();
         let error = execute(json!({}), ToolExecutionOptions::default())
@@ -224,13 +235,39 @@ mod tests {
             make_tool(Ok(json!("ok")), Default::default()),
         );
         let listener: ToolLifecycleListener = Arc::new(|_| panic!("listener bug"));
-        let wrapped = with_tool_lifecycle_events(tools, Some(listener));
+        let wrapped = with_tool_lifecycle_events(tools, Some(listener), Default::default());
 
         let execute = wrapped["kubectl"].execute.clone().unwrap();
         let result = execute(json!({}), ToolExecutionOptions::default())
             .await
             .unwrap();
         assert_eq!(result, json!("ok"));
+    }
+
+    #[tokio::test]
+    async fn names_the_step_each_call_runs_in() {
+        let mut tools = ToolSet::new();
+        tools.insert(
+            "web_search".into(),
+            make_tool(Ok(json!("ok")), Default::default()),
+        );
+        let (listener, events) = recorder(Default::default());
+        let steps_finished = Arc::new(AtomicUsize::new(13));
+        let wrapped = with_tool_lifecycle_events(tools, Some(listener), steps_finished.clone());
+
+        let execute = wrapped["web_search"].execute.clone().unwrap();
+        execute(json!({}), ToolExecutionOptions::default())
+            .await
+            .unwrap();
+
+        let steps: Vec<_> = events.lock().iter().map(|e| (e.kind, e.step)).collect();
+        assert_eq!(
+            steps,
+            [
+                (ToolLifecycleEventType::Started, 14),
+                (ToolLifecycleEventType::Completed, 14),
+            ]
+        );
     }
 
     #[test]
@@ -244,7 +281,7 @@ mod tests {
             },
         );
         let (listener, _) = recorder(Default::default());
-        let wrapped = with_tool_lifecycle_events(tools, Some(listener));
+        let wrapped = with_tool_lifecycle_events(tools, Some(listener), Default::default());
         assert!(wrapped["passive"].execute.is_none());
         assert_eq!(wrapped["passive"].description.as_deref(), Some("a tool"));
     }

@@ -836,7 +836,8 @@ struct Turn {
     /// the service's tracked entry, so these are the only post-turn copies.
     last_snapshot: Mutex<Option<ContextUsageSnapshot>>,
     last_measured_tokens: Mutex<Option<i64>>,
-    steps_finished: AtomicUsize,
+    /// Shared with the tools, whose events name the step a call runs in.
+    steps_finished: Arc<AtomicUsize>,
     retried_in_full: AtomicBool,
     refused_deferral: AtomicBool,
     was_canceled: AtomicBool,
@@ -1467,7 +1468,12 @@ async fn run_invocation(
     //
     // The gate sits outside the capture too: a rejected call produces no result, so
     // there is nothing to cut or save.
-    let observed_tools = with_tool_lifecycle_events(collected.tools, request.on_tool_event.clone());
+    let steps_finished = Arc::new(AtomicUsize::new(0));
+    let observed_tools = with_tool_lifecycle_events(
+        collected.tools,
+        request.on_tool_event.clone(),
+        steps_finished.clone(),
+    );
     let limited_tools = with_tool_output_capture(
         observed_tools,
         ToolOutputCaptureOptions {
@@ -1590,7 +1596,7 @@ async fn run_invocation(
         pending_file_writes,
         last_snapshot: Mutex::new(None),
         last_measured_tokens: Mutex::new(None),
-        steps_finished: AtomicUsize::new(0),
+        steps_finished,
         retried_in_full: AtomicBool::new(false),
         refused_deferral: AtomicBool::new(false),
         was_canceled: AtomicBool::new(false),
