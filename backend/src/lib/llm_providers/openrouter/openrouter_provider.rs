@@ -25,12 +25,17 @@
 //!    bare ids that are correct against api.openai.com are not ones OpenRouter can
 //!    route.
 //!
+//!  - **App attribution.** Every request names the app OpenRouter credits the
+//!    usage to (`open_router_attribution_headers`). The gateway forwards these
+//!    headers, so they arrive on both paths.
+//!
 //! Auth: `OPENROUTER_API_KEY`, sent as a bearer header, read verbatim so it may be
 //! a `__nexus_cred:<uuid>__` sentinel the MITM proxy rewrites on the wire. An
 //! endpoint on the gateway needs no local key — the gateway holds the OpenRouter
 //! credential and injects it on the outbound leg — but the SDK insists on one, so
 //! fall back to a decoy like the Azure/mantle factories do.
 
+use indexmap::IndexMap;
 use serde_json::json;
 
 use crate::config::{CONFIG, Config};
@@ -63,8 +68,28 @@ fn open_router_options(config: &Config, base_url: &str) -> OpenAiCompatibleOptio
             .or_else(|| gateway_serves_it.then(|| "nexus-managed".to_string())),
         base_url: Some(base_url.to_string()),
         fetch: None,
+        headers: Some(open_router_attribution_headers(config)),
         middleware: Vec::new(),
     }
+}
+
+/// OpenRouter's app attribution headers (openrouter.ai/docs/app-attribution).
+/// The referer is the app's id; without it OpenRouter creates no app page.
+pub fn open_router_attribution_headers(config: &Config) -> IndexMap<String, String> {
+    IndexMap::from([
+        (
+            "HTTP-Referer".to_string(),
+            config.openrouter_app_url.clone(),
+        ),
+        (
+            "X-OpenRouter-Title".to_string(),
+            config.openrouter_app_title.clone(),
+        ),
+        (
+            "X-OpenRouter-Categories".to_string(),
+            "personal-agent".to_string(),
+        ),
+    ])
 }
 
 /// The settings OpenRouter still needs, by variable name; empty when it can serve
@@ -123,6 +148,35 @@ mod tests {
             OPENROUTER_DIRECT,
         );
         assert_eq!(options.api_key.as_deref(), Some(sentinel));
+    }
+
+    #[test]
+    fn names_prism_as_the_app_by_default() {
+        let options = open_router_options(&with_key(), OPENROUTER_DIRECT);
+        assert_eq!(
+            options.headers,
+            Some(IndexMap::from([
+                (
+                    "HTTP-Referer".to_string(),
+                    "https://github.com/Mirantis/prism".to_string()
+                ),
+                ("X-OpenRouter-Title".to_string(), "Prism".to_string()),
+                (
+                    "X-OpenRouter-Categories".to_string(),
+                    "personal-agent".to_string()
+                ),
+            ]))
+        );
+    }
+
+    #[test]
+    fn a_product_running_prism_names_its_own_app() {
+        let headers = open_router_attribution_headers(&config(&[
+            ("OPENROUTER_APP_URL", "https://example-product.example"),
+            ("OPENROUTER_APP_TITLE", "Example Product"),
+        ]));
+        assert_eq!(headers["HTTP-Referer"], "https://example-product.example");
+        assert_eq!(headers["X-OpenRouter-Title"], "Example Product");
     }
 
     #[test]

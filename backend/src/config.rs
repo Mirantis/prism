@@ -543,6 +543,10 @@ pub struct Config {
     pub openrouter_endpoint: String,
     pub openrouter_api_key: Option<String>,
     pub nexus_openrouter_base_url: Option<String>,
+    /// The app OpenRouter attributes this deployment's usage to: its URL is the
+    /// app's id, its title the name in OpenRouter's rankings.
+    pub openrouter_app_url: String,
+    pub openrouter_app_title: String,
 
     /// Anthropic (used when LLM_PROVIDER=anthropic): direct to api.anthropic.com
     /// (or `anthropic_base_url`), the one vendor with no gateway mount, so
@@ -1091,6 +1095,9 @@ impl Config {
         let openrouter_embedding_model_id = e.get_or("OPENROUTER_EMBEDDING_MODEL_ID", "");
         let openrouter_override = e.or("OPENROUTER_BASE_URL").map(str::to_string);
         let openrouter_api_key = e.get("OPENROUTER_API_KEY").map(str::to_string);
+        let openrouter_app_url =
+            e.or_default("OPENROUTER_APP_URL", "https://github.com/Mirantis/prism");
+        let openrouter_app_title = e.or_default("OPENROUTER_APP_TITLE", "Prism");
         // Must serve the Responses API. Does not move the Realtime WebSocket.
         let openai_override = e.or("OPENAI_BASE_URL").map(str::to_string);
 
@@ -1669,6 +1676,8 @@ impl Config {
             openrouter_endpoint,
             openrouter_api_key,
             nexus_openrouter_base_url,
+            openrouter_app_url,
+            openrouter_app_title,
             anthropic_api_key,
             anthropic_model_id,
             anthropic_classification_model_id,

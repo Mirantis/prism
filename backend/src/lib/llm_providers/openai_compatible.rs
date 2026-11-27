@@ -28,6 +28,7 @@
 
 use std::sync::Arc;
 
+use indexmap::IndexMap;
 use serde_json::json;
 
 use crate::ai::providers::openai::api::FetchFunction;
@@ -48,6 +49,8 @@ pub struct OpenAiCompatibleOptions {
     pub base_url: Option<String>,
     /// The `fetch` requests go through, for a bearer token that changes per request.
     pub fetch: Option<FetchFunction>,
+    /// Headers sent on every request, beside the credential.
+    pub headers: Option<IndexMap<String, String>>,
     /// For an endpoint that accepts only some request shapes, such as a
     /// subscription's. The first one is outermost.
     pub middleware: Vec<Arc<dyn LanguageModelMiddleware>>,
@@ -58,6 +61,7 @@ pub fn create_open_ai_compatible_provider(options: OpenAiCompatibleOptions) -> L
         api_key: options.api_key,
         base_url: options.base_url,
         fetch: options.fetch,
+        headers: options.headers,
         ..Default::default()
     }));
     let middleware = options.middleware;
