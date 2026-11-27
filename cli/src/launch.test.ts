@@ -1,6 +1,18 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { ThreadSummary } from './tui-adapter.js';
 import { latestUpdated, parseLaunchArgs, resolveContinueLaunch, resolveThreadLaunch, untilAnswered } from './launch.js';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+/** The answer of a launch that waits for the runtime, with the waits between its questions run at once. */
+async function answeredAfterWaits<T>(launch: () => Promise<T>): Promise<T> {
+  vi.useFakeTimers({ toFake: ['setTimeout'] });
+  const answer = launch();
+  await vi.runAllTimersAsync();
+  return answer;
+}
 
 describe('parseLaunchArgs', () => {
   it('starts a new conversation without a launch flag', () => {
@@ -38,14 +50,14 @@ describe('untilAnswered', () => {
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce('answer');
     const onWait = vi.fn();
-    await expect(untilAnswered(ask, onWait, 0)).resolves.toBe('answer');
+    await expect(answeredAfterWaits(() => untilAnswered(ask, onWait))).resolves.toBe('answer');
     expect(ask).toHaveBeenCalledTimes(3);
     expect(onWait).toHaveBeenCalledTimes(1);
   });
 
   it('does not wait when the first answer comes', async () => {
     const onWait = vi.fn();
-    await expect(untilAnswered(async () => 'answer', onWait, 0)).resolves.toBe('answer');
+    await expect(untilAnswered(async () => 'answer', onWait)).resolves.toBe('answer');
     expect(onWait).not.toHaveBeenCalled();
   });
 });
@@ -59,7 +71,7 @@ describe('resolveThreadLaunch', () => {
 
   it('opens a conversation the runtime has', async () => {
     const runtime = runtimeWith('multi', 'found');
-    await expect(resolveThreadLaunch('thread-1', runtime, vi.fn(), 0)).resolves.toEqual({
+    await expect(resolveThreadLaunch('thread-1', runtime, vi.fn())).resolves.toEqual({
       kind: 'thread',
       id: 'thread-1',
       contextUsage: null,
@@ -68,7 +80,7 @@ describe('resolveThreadLaunch', () => {
   });
 
   it('exits with an error for an id the runtime does not have', async () => {
-    await expect(resolveThreadLaunch('nope', runtimeWith('multi', 'missing'), vi.fn(), 0)).resolves.toEqual({
+    await expect(resolveThreadLaunch('nope', runtimeWith('multi', 'missing'), vi.fn())).resolves.toEqual({
       kind: 'exit',
       message: 'No conversation with id nope.',
     });
@@ -76,7 +88,7 @@ describe('resolveThreadLaunch', () => {
 
   it("opens the agent's one conversation in single-thread mode, whatever the id", async () => {
     const runtime = runtimeWith('single', 'found');
-    await expect(resolveThreadLaunch('thread-1', runtime, vi.fn(), 0)).resolves.toEqual({ kind: 'session' });
+    await expect(resolveThreadLaunch('thread-1', runtime, vi.fn())).resolves.toEqual({ kind: 'session' });
     expect(runtime.threadStatus).not.toHaveBeenCalled();
   });
 
@@ -87,7 +99,7 @@ describe('resolveThreadLaunch', () => {
       listSessions: vi.fn(),
     };
     const onWait = vi.fn();
-    await expect(resolveThreadLaunch('thread-1', runtime, onWait, 0)).resolves.toMatchObject({
+    await expect(answeredAfterWaits(() => resolveThreadLaunch('thread-1', runtime, onWait))).resolves.toMatchObject({
       kind: 'thread',
     });
     expect(onWait).toHaveBeenCalledTimes(1);
@@ -129,7 +141,7 @@ describe('resolveContinueLaunch', () => {
         { ...summary('b', '2026-11-27T09:00:00.000Z'), contextUsage: usage },
       ]),
     };
-    await expect(resolveContinueLaunch('/work/repo', runtime, vi.fn(), 0)).resolves.toEqual({
+    await expect(resolveContinueLaunch('/work/repo', runtime, vi.fn())).resolves.toEqual({
       kind: 'thread',
       id: 'b',
       contextUsage: usage,
@@ -143,7 +155,7 @@ describe('resolveContinueLaunch', () => {
       threadStatus: vi.fn(),
       listSessions: vi.fn().mockResolvedValue([]),
     };
-    await expect(resolveContinueLaunch('/work/empty', runtime, vi.fn(), 0)).resolves.toEqual({
+    await expect(resolveContinueLaunch('/work/empty', runtime, vi.fn())).resolves.toEqual({
       kind: 'exit',
       message: 'No conversation to continue in /work/empty.',
     });
@@ -158,12 +170,12 @@ describe('resolveContinueLaunch', () => {
         summary('here', '2026-11-27T08:00:00.000Z'),
       ]),
     };
-    await expect(resolveContinueLaunch('/work/repo', runtime, vi.fn(), 0)).resolves.toMatchObject({ id: 'here' });
+    await expect(resolveContinueLaunch('/work/repo', runtime, vi.fn())).resolves.toMatchObject({ id: 'here' });
   });
 
   it("opens the agent's one conversation in single-thread mode", async () => {
     const runtime = { threadMode: vi.fn().mockResolvedValue('single'), threadStatus: vi.fn(), listSessions: vi.fn() };
-    await expect(resolveContinueLaunch('/work/repo', runtime, vi.fn(), 0)).resolves.toEqual({ kind: 'session' });
+    await expect(resolveContinueLaunch('/work/repo', runtime, vi.fn())).resolves.toEqual({ kind: 'session' });
     expect(runtime.listSessions).not.toHaveBeenCalled();
   });
 
@@ -174,7 +186,7 @@ describe('resolveContinueLaunch', () => {
       listSessions: vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce([summary('a', '2026-11-27T08:00:00.000Z')]),
     };
     const onWait = vi.fn();
-    await expect(resolveContinueLaunch('/work/repo', runtime, onWait, 0)).resolves.toMatchObject({ id: 'a' });
+    await expect(answeredAfterWaits(() => resolveContinueLaunch('/work/repo', runtime, onWait))).resolves.toMatchObject({ id: 'a' });
     expect(onWait).toHaveBeenCalledTimes(1);
   });
 });
