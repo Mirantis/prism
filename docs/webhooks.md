@@ -34,7 +34,7 @@ Click **New subscription** on the Webhooks page. **Delivery** and
 | Delivery | **May post to** | Where the run may post: **All channels** (default — web chat, Slack and Teams, like heartbeat alerts), **Chat** (web chat only), **Slack** (Slack only), **Microsoft Teams** (Teams only), or **None** (nowhere) — see [Delivery targets & storage](#delivery-targets--storage). |
 | Delivery | **Slack channels** | Shown when **May post to** is **Slack**: the linked channels to post to. With none checked, the message goes to your DM, else the main channel. |
 | Delivery | **Deliver only** | Skip the agent: the rendered prompt template is posted directly as the message. Zero LLM cost — useful for plain notifications. |
-| Delivery | **Coalescing window (seconds)** | Hidden in **Deliver only** mode. Events that arrive within this many seconds (1–600) of the first one get one agent run, whose prompt holds every event. Empty (the default) = one run per event. |
+| Delivery | **Coalescing window (seconds)** | Hidden in **Deliver only** mode. If several events arrive within this many seconds (1–600), the agent handles them in one run. Empty (the default): one run per event. |
 | Delivery | **Prompt** / **Message template** | Instructions for the agent, or the message sent in **Deliver only** mode. Supports payload substitution — see below. |
 | Authentication | **Scheme** | How the sender proves itself: **Shared token in a header** (default), **HMAC signature of the body**, or **None**. |
 | Authentication | **Header** / **Prefix** / **Secret** (+ **Algorithm** / **Encoding** / **Signed URL**) | Where the credential arrives and what it's compared against; shown once Scheme isn't None. See [Authentication](#authentication). |
