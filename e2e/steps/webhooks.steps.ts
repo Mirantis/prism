@@ -98,6 +98,13 @@ When(
 );
 
 When(
+  'I create a webhook subscription named {string} with a {int} second coalescing window and prompt {string}',
+  async ({ page }, name: string, coalesceSeconds: number, prompt: string) => {
+    await new WebhooksPage(page).createSubscription({ name, prompt, coalesceSeconds });
+  },
+);
+
+When(
   'I fill in a webhook subscription named {string} delivered to {string} with prompt {string}',
   async ({ page }, name: string, deliverTo: string, prompt: string) => {
     await new WebhooksPage(page).fillSubscription({ name, prompt, deliverTo });
@@ -298,6 +305,16 @@ Then('a HEAD request to webhook {string} answers {int}', async ({ page }, name: 
   const res = await page.request.head(`http://localhost:${WEBHOOK_PORT}/agents/webhooks/${name}`);
   expect(res.status()).toBe(status);
 });
+
+When(
+  'I POST the payload {string} to webhook {string} {int} times',
+  async ({ page }, payload: string, name: string, times: number) => {
+    const statuses: number[] = [];
+    for (let i = 0; i < times; i++) statuses.push(await postWebhookBody(page, name, payload));
+    // Each delivery answers on its own; the step reports a single status only when all agree.
+    lastWebhookStatus = statuses.every((s) => s === statuses[0]) ? statuses[0] : null;
+  },
+);
 
 Then('the webhook response status is {int}', async ({}, status: number) => {
   expect(lastWebhookStatus).toBe(status);

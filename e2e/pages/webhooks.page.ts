@@ -17,6 +17,8 @@ export interface NewSubscriptionInput {
   /** The Deliver to option's label; omit to keep the default (All channels). */
   deliverTo?: string;
   deliverOnly?: boolean;
+  /** The coalescing window in seconds; omit to leave it off. */
+  coalesceSeconds?: number;
   /** Linked Slack channel names to check; needs `deliverTo: 'Slack'`. */
   slackChannels?: string[];
   /** Omit to explicitly select None for unsigned-delivery scenarios. */
@@ -84,6 +86,9 @@ export class WebhooksPage extends BasePage {
     }
     if (input.deliverOnly) {
       await this.deliverOnlyCheckbox.click();
+    }
+    if (input.coalesceSeconds !== undefined) {
+      await this.page.getByLabel('Coalescing window (seconds)').fill(String(input.coalesceSeconds));
     }
     for (const channel of input.slackChannels ?? []) {
       await this.slackChannelCheckbox(channel).click();

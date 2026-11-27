@@ -224,6 +224,16 @@ Then(
   },
 );
 
+Then(
+  '{int} runs of webhook {string} are handled with an earlier event',
+  async ({ page }, count: number, name: string) => {
+    const runs = new ActivityPage(page).webhookRuns.filter({ hasText: name });
+    const handled = runs.filter({ has: page.getByTestId('activity-webhook-run-coalesced') });
+    await expect(handled).toHaveCount(count, { timeout: 120_000 });
+    await expect(runs).toHaveCount(count + 1);
+  },
+);
+
 Then('its delivered message contains {string}', async ({ page }, text: string) => {
   await expect(new ActivityPage(page).webhookRunMessage).toContainText(text, { timeout: 15_000 });
 });
