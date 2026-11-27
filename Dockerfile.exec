@@ -49,7 +49,7 @@ ENV MISE_DATA_DIR=/opt/mise \
     MISE_INSTALL_PATH=/usr/local/bin/mise \
     PATH=/opt/mise/shims:$PATH
 
-ARG MISE_VERSION=v2026.7.12
+ARG MISE_VERSION=v2026.11.14
 # The same split the runtime image makes: ripgrep and jq come from apt above
 # because mise's aqua backend has no linux/arm64 ripgrep build, and everything
 # below is a first-class mise tool on both arches.
