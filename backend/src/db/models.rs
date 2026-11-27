@@ -1948,6 +1948,9 @@ pub struct WebhookSubscription {
     pub slack_channel_ids: Option<String>,
     pub deliver_only: bool,
     pub is_active: bool,
+    /// Seconds after an agent-mode delivery in which later deliveries join its run;
+    /// null = one run per delivery.
+    pub coalesce_seconds: Option<i64>,
     pub auth_type: WebhookAuthType,
     /// header carrying the token/signature
     pub auth_header: Option<String>,
@@ -1982,6 +1985,7 @@ pub struct NewWebhookSubscription {
     pub slack_channel_ids: Option<String>,
     pub deliver_only: bool,
     pub is_active: bool,
+    pub coalesce_seconds: Option<i64>,
     pub auth_type: WebhookAuthType,
     pub auth_header: Option<String>,
     pub auth_prefix: Option<String>,
@@ -2007,6 +2011,7 @@ impl NewWebhookSubscription {
             slack_channel_ids: None,
             deliver_only: false,
             is_active: true,
+            coalesce_seconds: None,
             auth_type: WebhookAuthType::Token,
             auth_header: None,
             auth_prefix: None,
@@ -2035,6 +2040,7 @@ pub struct WebhookSubscriptionChangeset {
     pub slack_channel_ids: Option<Option<String>>,
     pub deliver_only: Option<bool>,
     pub is_active: Option<bool>,
+    pub coalesce_seconds: Option<Option<i64>>,
     pub auth_type: Option<WebhookAuthType>,
     pub auth_header: Option<Option<String>>,
     pub auth_prefix: Option<Option<String>>,
@@ -2058,6 +2064,7 @@ impl Default for WebhookSubscriptionChangeset {
             slack_channel_ids: None,
             deliver_only: None,
             is_active: None,
+            coalesce_seconds: None,
             auth_type: None,
             auth_header: None,
             auth_prefix: None,
@@ -2091,6 +2098,9 @@ pub struct WebhookRun {
     pub error: Option<String>,
     /// The message the run delivered, if it delivered one.
     pub message_id: Option<String>,
+    /// The id of the earlier event whose agent run also handled this one; null when the
+    /// event led its own run.
+    pub coalesced_into: Option<String>,
     #[serde(with = "crate::support::serde_iso")]
     pub created_at: DateTime<Utc>,
     #[serde(with = "crate::support::serde_iso::option")]
@@ -2109,6 +2119,7 @@ pub struct NewWebhookRun {
     pub status: String,
     pub error: Option<String>,
     pub message_id: Option<String>,
+    pub coalesced_into: Option<String>,
     pub created_at: DbDateTime,
     pub finished_at: Option<DateTime<Utc>>,
 }
@@ -2130,6 +2141,7 @@ impl NewWebhookRun {
             status: status.into(),
             error: None,
             message_id: None,
+            coalesced_into: None,
             created_at: now.into(),
             finished_at: None,
         }
@@ -2147,6 +2159,7 @@ pub struct WebhookRunChangeset {
     pub status: Option<String>,
     pub error: Option<Option<String>>,
     pub message_id: Option<Option<String>>,
+    pub coalesced_into: Option<Option<String>>,
     pub created_at: Option<DbDateTime>,
     pub finished_at: Option<Option<DateTime<Utc>>>,
 }

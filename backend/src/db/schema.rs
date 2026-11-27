@@ -538,6 +538,8 @@ diesel::table! {
         deliver_only -> Bool,
         #[sql_name = "isActive"]
         is_active -> Bool,
+        #[sql_name = "coalesceSeconds"]
+        coalesce_seconds -> Nullable<BigInt>,
         #[sql_name = "authType"]
         auth_type -> Text,
         #[sql_name = "authHeader"]
@@ -572,6 +574,8 @@ diesel::table! {
         error -> Nullable<Text>,
         #[sql_name = "messageId"]
         message_id -> Nullable<Text>,
+        #[sql_name = "coalescedInto"]
+        coalesced_into -> Nullable<Text>,
         #[sql_name = "createdAt"]
         created_at -> PrismaDateTime,
         #[sql_name = "finishedAt"]
