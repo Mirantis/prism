@@ -204,6 +204,7 @@ impl CodingAgent for ClaudeCodeAgent {
                                 parse_line: Box::new(move |line| {
                                     parse_line(line, &parse_task, &parse_settings, subscription)
                                 }),
+                                flush: None,
                             },
                             Some(launch_target),
                         )

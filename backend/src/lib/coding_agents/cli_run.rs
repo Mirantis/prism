@@ -42,6 +42,10 @@ const STDERR_DRAIN_MS: u64 = 100;
 /// it cannot read, which is logged (`[AgentTask] unreadable output line`) and skipped.
 pub type ParseLine = Box<dyn FnMut(&str) -> anyhow::Result<Vec<CodingAgentEvent>> + Send>;
 
+/// Optional callback invoked when stdout closes so a parser that buffers
+/// partial stream deltas can flush them before the closing result is emitted.
+pub type FlushEvents = Box<dyn FnMut() -> Vec<CodingAgentEvent> + Send>;
+
 pub struct CliRunSpec {
     pub task_id: String,
     /// Names the agent in the closing message of a run that never got to report.
@@ -51,6 +55,7 @@ pub struct CliRunSpec {
     pub cwd: Option<String>,
     pub env: ProcessEnv,
     pub parse_line: ParseLine,
+    pub flush: Option<FlushEvents>,
 }
 
 /// Start the CLI with `stdin: Pipe`, closing stdin at once (prompts are argv
@@ -76,6 +81,7 @@ pub fn run_cli(
         cwd,
         env,
         parse_line,
+        flush,
     } = spec;
     let proc = environment.run_program(
         &command,
@@ -95,7 +101,16 @@ pub fn run_cli(
     tokio::spawn(async move {
         // Logged here because nothing awaits the pump: the consumer reads the
         // channel, which a failed pump would otherwise leave open forever.
-        if let Err(err) = pump(pump_proc, &pump_task_id, &display_name, parse_line, &tx).await {
+        if let Err(err) = pump(
+            pump_proc,
+            &pump_task_id,
+            &display_name,
+            parse_line,
+            flush,
+            &tx,
+        )
+        .await
+        {
             log_error!(
                 json!({ "err": err_json(&err), "taskId": pump_task_id }),
                 "[AgentTask] output pump failed"
@@ -116,6 +131,7 @@ async fn pump(
     task_id: &str,
     display_name: &str,
     mut parse_line: ParseLine,
+    flush: Option<FlushEvents>,
     events: &mpsc::UnboundedSender<CodingAgentEvent>,
 ) -> anyhow::Result<()> {
     let stderr_chunks = Arc::new(parking_lot::Mutex::new((Vec::<String>::new(), 0usize)));
@@ -164,6 +180,14 @@ async fn pump(
             }
         })
         .await?;
+    }
+    if let Some(mut flush) = flush {
+        for event in flush() {
+            if matches!(event, CodingAgentEvent::Result { .. }) {
+                reported = true;
+            }
+            let _ = events.send(event);
+        }
     }
 
     // Wait for the process to actually exit (stdout closing doesn't always
@@ -324,6 +348,7 @@ mod tests {
             cwd: None,
             env: ProcessEnv::new(),
             parse_line: Box::new(parse),
+            flush: None,
         }
     }
 

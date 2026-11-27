@@ -144,7 +144,7 @@ async fn parses_stream_json_session_deltas_usage_and_result() {
         &json!({
             "event": "step_update",
             "step_update": {
-                "step_index": 3,
+                "step_index": 1,
                 "state": "DONE",
                 "step_type": "agent_response",
                 "text_delta": "lo\n",
@@ -297,7 +297,7 @@ async fn keeps_split_deltas_together_through_task_manager_and_flushes_unclosed_d
     child.emit_line(
         &json!({
             "event": "step_update",
-            "step_update": { "step_index": 3, "state": "DONE", "step_type": "agent_response", "text_delta": "lo\n" }
+            "step_update": { "step_index": 1, "state": "DONE", "step_type": "agent_response", "text_delta": "lo\n" }
         })
         .to_string(),
     );
@@ -329,6 +329,85 @@ async fn keeps_split_deltas_together_through_task_manager_and_flushes_unclosed_d
     let status = final_status.expect("agy task did not complete");
     assert_eq!(status.stop_reason, Some(TaskStopReason::EndTurn));
     assert_eq!(status.result.as_deref(), Some("hello\n"));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn flushes_active_delta_when_child_exits_or_stops_without_result() {
+    use crate::tools::shell::agent_task_manager::{
+        AgentTaskManager, AgentTaskParams, TaskStopReason,
+    };
+
+    // Child exits after a single ACTIVE delta and no DONE or result.
+    let child = FakeChild::new();
+    let (environment, _) = spawning(child.clone());
+    let run = create_agy_agent(Some(environment.arc())).run(task());
+    child.emit_line(
+        &json!({
+            "event": "step_update",
+            "step_update": {
+                "step_index": 1,
+                "state": "ACTIVE",
+                "step_type": "agent_response",
+                "text_delta": "in progress"
+            }
+        })
+        .to_string(),
+    );
+    child.finish(Some(143));
+
+    assert_eq!(
+        collect(&run).await,
+        vec![
+            CodingAgentEvent::Text {
+                text: "in progress".to_string(),
+            },
+            CodingAgentEvent::Result {
+                stop_reason: CodingAgentStopReason::Error,
+                turns: 0,
+                message: "Antigravity CLI exited with code 143 and no result".to_string(),
+                refusals: None,
+            },
+        ]
+    );
+
+    // Stopping via AgentTaskManager after an ACTIVE delta keeps the buffered text.
+    let _db = crate::db::testing::test_db();
+    let child = FakeChild::new();
+    let (environment, _) = spawning(child.clone());
+    let agent = create_agy_agent(Some(environment.arc()));
+    let manager = Arc::new(AgentTaskManager::new(Some(Arc::new(move |_| {
+        Ok(agent.clone())
+    }))));
+
+    let started = manager
+        .start_task(AgentTaskParams {
+            agent: Some(CodingAgentName::Agy),
+            prompt: "work".to_string(),
+            workdir: Some("/work".to_string()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    child.emit_line(
+        &json!({
+            "event": "step_update",
+            "step_update": {
+                "step_index": 1,
+                "state": "ACTIVE",
+                "step_type": "agent_response",
+                "text_delta": "partial answer"
+            }
+        })
+        .to_string(),
+    );
+    // Let the pump read the ACTIVE line before stop_task signals the child.
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    let stopped = manager.stop_task(&started.task_id).await.unwrap();
+    assert_eq!(stopped.stop_reason, Some(TaskStopReason::Stopped));
+    assert_eq!(stopped.result.as_deref(), Some("partial answer"));
 }
 
 #[tokio::test]

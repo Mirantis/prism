@@ -133,6 +133,7 @@ impl CodingAgent for CodexAgent {
                                 .unwrap_or_else(|| UNNAMED_MODEL.to_string()),
                             subscription,
                         ),
+                        flush: None,
                     },
                     Some(run_in),
                 )
