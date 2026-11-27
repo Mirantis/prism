@@ -36,7 +36,7 @@ pub fn install_tls_provider() {
 
 /// The variable a terminal sets so that a program can ask it to resume the program
 /// after a restart (OSC 7577).
-pub const TERMINAL_RESUME_TOKEN: &str = "OSC7577_TOKEN";
+const TERMINAL_RESUME_TOKEN: &str = "OSC7577_TOKEN";
 
 /// Remove the terminal's resume token from this process's environment, so that no
 /// process the runtime starts can register a command that the terminal runs later.
