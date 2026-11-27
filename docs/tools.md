@@ -68,8 +68,8 @@ returned only in a search of one conversation. The agent also reads with it the
 earlier part of a conversation that a [compaction](compaction.md) summary
 replaced. Who is in the run decides what it reaches: a run on your own surfaces
 searches every conversation, a run a channel started searches that channel's
-conversations and its own, and a voice meeting or a webhook run searches only
-its own conversation.
+conversations and its own, and a voice meeting, a webhook run or a heartbeat
+run that channel messages triggered searches only its own conversation.
 
 ## Self-management
 

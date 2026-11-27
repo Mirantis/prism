@@ -14,7 +14,7 @@ use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;
-use diesel::sql_types::{Nullable, Text};
+use diesel::sql_types::{Bool, Nullable, Text};
 use diesel::sqlite::{Sqlite, SqliteConnection};
 use indexmap::IndexMap;
 use serde_json::Value;
@@ -23,8 +23,8 @@ use crate::db::models::{ChannelMessage, ConversationMessage, MessageRole, NewCha
 use crate::db::schema::channel_messages::dsl as c;
 use crate::db::schema::conversation_messages::dsl as m;
 use crate::db::schema::conversation_threads::dsl as t;
-use crate::db::sql_types::{DbDateTime, PrismaDateTime, PrismaJson};
-use crate::lib::message_search_index::{self, Count, IndexHit, IndexQuery, fts_query, query_words};
+use crate::db::sql_types::DbDateTime;
+use crate::lib::message_search_index::{self, IndexHit, IndexQuery, fts_query, query_words};
 use crate::lib::telemetry::track_event;
 use crate::services::generated_ui::generated_ui_service::PRESS_TRIGGER_NAME;
 use crate::support::js::stringify;
@@ -673,15 +673,20 @@ async fn stored_with_position(
         else {
             return Ok(None);
         };
-        let before = diesel::sql_query(
-            r#"SELECT count(*) AS n FROM "conversation_messages" o
-JOIN "conversation_messages" target ON target."id" = ? AND o."threadId" = target."threadId"
-WHERE o."role" IN ('USER', 'AGENT')
-  AND (o."createdAt" < target."createdAt" OR (o."createdAt" = target."createdAt" AND o."id" < target."id"))"#,
-        )
-        .bind::<Text, _>(&id)
-        .get_result::<Count>(conn)?
-        .n;
+        let target = diesel::alias!(crate::db::schema::conversation_messages as target);
+        let before = m::conversation_messages
+            .inner_join(target.on(target.field(m::thread_id).eq(m::thread_id)))
+            .filter(target.field(m::id).eq(&id))
+            .filter(m::role.eq_any(READ_ROLES))
+            .filter(
+                m::created_at
+                    .lt(target.field(m::created_at))
+                    .or(m::created_at
+                        .eq(target.field(m::created_at))
+                        .and(m::id.lt(target.field(m::id)))),
+            )
+            .count()
+            .get_result::<i64>(conn)?;
         Ok(Some(from_stored(row, before)))
     })
     .await
@@ -702,16 +707,8 @@ async fn read_stored(
         .collect())
 }
 
-/// A stored message whose tool calls a search of one conversation reads.
-#[derive(QueryableByName)]
-struct ToolCallRow {
-    #[diesel(sql_type = Text)]
-    id: String,
-    #[diesel(sql_type = PrismaDateTime, column_name = "createdAt")]
-    created_at: DateTime<Utc>,
-    #[diesel(sql_type = Nullable<PrismaJson>, column_name = "toolCalls")]
-    tool_calls: Option<Value>,
-}
+/// The candidates a search of one conversation reads tool results from at a time.
+const OUTPUT_PAGE: i64 = 50;
 
 /// The characters of a tool-result excerpt before and after the match.
 const OUTPUT_EXCERPT_BEFORE: usize = 80;
@@ -750,50 +747,99 @@ async fn add_output_hits(
             format!("%{escaped}%")
         })
         .collect();
-    let joiner = if any_word { " OR " } else { " AND " };
-    let like = vec![r#""toolCalls" LIKE ? ESCAPE '\'"#; patterns.len()].join(joiner);
-    let sql = format!(
-        r#"SELECT "id", "createdAt", "toolCalls" FROM "conversation_messages"
-WHERE "threadId" = ? AND "role" = 'AGENT' AND "toolCalls" IS NOT NULL AND ({like})
-ORDER BY "createdAt" DESC, "id" DESC"#
-    );
-    let rows = crate::db::read(move |conn| {
-        let mut query = diesel::sql_query(sql)
-            .into_boxed::<Sqlite>()
-            .bind::<Text, _>(thread_id);
-        for pattern in patterns {
-            query = query.bind::<Text, _>(pattern);
-        }
-        Ok(query.load::<ToolCallRow>(conn)?)
-    })
-    .await?;
+    let after = options.after_ms.and_then(DateTime::from_timestamp_millis);
+    let before = options.before_ms.and_then(DateTime::from_timestamp_millis);
     let lowered: Vec<Vec<char>> = words.iter().map(|word| lower_chars(word)).collect();
-    for row in rows {
-        if hits.len() >= usize::try_from(options.limit).unwrap_or(0) {
-            break;
+    let mut offset = 0;
+    loop {
+        let (thread, patterns) = (thread_id.clone(), patterns.clone());
+        let rows = crate::db::read(move |conn| {
+            Ok(tool_call_candidates(
+                conn, &thread, &patterns, any_word, after, before, offset,
+            )?)
+        })
+        .await?;
+        let last_page = (rows.len() as i64) < OUTPUT_PAGE;
+        for (id, created_at, tool_calls) in rows {
+            if hits.len() >= usize::try_from(options.limit).unwrap_or(0) {
+                return Ok(());
+            }
+            if found.contains(&id) {
+                continue;
+            }
+            let Some(excerpt) =
+                output_excerpt(&tool_results(tool_calls.as_ref()), &lowered, any_word)
+            else {
+                continue;
+            };
+            hits.push(IndexHit {
+                message_id: Some(id),
+                channel_message_id: None,
+                thread_id: thread_id.clone(),
+                created_at_ms: created_at.timestamp_millis(),
+                automated: false,
+                excerpt,
+            });
         }
-        let at = row.created_at.timestamp_millis();
-        if found.contains(&row.id)
-            || options.after_ms.is_some_and(|after| at < after)
-            || options.before_ms.is_some_and(|before| at >= before)
-        {
-            continue;
+        if last_page {
+            return Ok(());
         }
-        let Some(excerpt) =
-            output_excerpt(&tool_results(row.tool_calls.as_ref()), &lowered, any_word)
-        else {
-            continue;
-        };
-        hits.push(IndexHit {
-            message_id: Some(row.id),
-            channel_message_id: None,
-            thread_id: options.thread_id.clone().unwrap_or_default(),
-            created_at_ms: at,
-            automated: false,
-            excerpt,
-        });
+        offset += OUTPUT_PAGE;
     }
-    Ok(())
+}
+
+/// One page, newest first, of a conversation's agent messages in the time bounds
+/// whose stored tool calls hold the patterns (any of them with `any_word`): a cheap
+/// first pass on the JSON text before the results are read.
+fn tool_call_candidates(
+    conn: &mut SqliteConnection,
+    thread_id: &str,
+    patterns: &[String],
+    any_word: bool,
+    after: Option<DateTime<Utc>>,
+    before: Option<DateTime<Utc>>,
+    offset: i64,
+) -> QueryResult<Vec<(String, DateTime<Utc>, Option<Value>)>> {
+    type Condition =
+        Box<dyn BoxableExpression<m::conversation_messages, Sqlite, SqlType = Nullable<Bool>>>;
+    let like = |pattern: &String| -> Condition {
+        Box::new(
+            m::tool_calls
+                .cast::<Nullable<Text>>()
+                .like(pattern.clone())
+                .escape('\\'),
+        )
+    };
+    let mut query = m::conversation_messages
+        .filter(m::thread_id.eq(thread_id))
+        .filter(m::role.eq(MessageRole::Agent))
+        .filter(m::tool_calls.is_not_null())
+        .into_boxed();
+    if any_word {
+        if let Some(matched) = patterns
+            .iter()
+            .map(like)
+            .reduce(|either, other| Box::new(either.or(other)))
+        {
+            query = query.filter(matched);
+        }
+    } else {
+        for pattern in patterns {
+            query = query.filter(like(pattern));
+        }
+    }
+    if let Some(after) = after {
+        query = query.filter(m::created_at.ge(DbDateTime(after)));
+    }
+    if let Some(before) = before {
+        query = query.filter(m::created_at.lt(DbDateTime(before)));
+    }
+    query
+        .order((m::created_at.desc(), m::id.desc()))
+        .offset(offset)
+        .limit(OUTPUT_PAGE)
+        .select((m::id, m::created_at, m::tool_calls))
+        .load(conn)
 }
 
 /// The results of a message's tool calls, one after another.

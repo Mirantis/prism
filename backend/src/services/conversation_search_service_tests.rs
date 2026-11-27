@@ -601,6 +601,63 @@ async fn a_search_of_one_conversation_also_matches_its_tool_results() {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn a_tool_result_search_reads_past_a_page_of_near_misses_within_its_time_bounds() {
+    let _db = crate::db::testing::test_db();
+    seed(&[("web", AGENT, None)]).await;
+    stored("web", "old", 1, MessageRole::Agent, "Rotated.", |row| {
+        row.tool_calls = Some(json!([{
+            "tool": "shell_exec",
+            "input": { "command": "./rotate.sh" },
+            "output": "kubectl: secret rotated"
+        }]));
+    })
+    .await;
+    // Newer rows hold both words in their stored JSON, but not both in a result,
+    // so the first pass takes them and the match turns each away.
+    for i in 0..(OUTPUT_PAGE + 10) {
+        stored(
+            "web",
+            &format!("near-{i}"),
+            2,
+            MessageRole::Agent,
+            "Applied.",
+            move |row| {
+                row.created_at = DbDateTime(at(2) + chrono::Duration::seconds(i));
+                row.tool_calls = Some(json!([{
+                    "tool": "shell_exec",
+                    "input": { "command": "kubectl apply -f cm.yaml" },
+                    "output": "configmap rotated"
+                }]));
+            },
+        )
+        .await;
+    }
+
+    let mut search = options("kubectl rotated");
+    search.thread_id = Some("web".into());
+    let found = CONVERSATION_SEARCH_SERVICE
+        .search(search.clone())
+        .await
+        .unwrap();
+    assert!(!found.any_word);
+    assert_eq!(found.matches.len(), 1);
+    assert_eq!(found.matches[0].message.id, "old");
+
+    search.before_ms = Some(at(2).timestamp_millis());
+    let found = CONVERSATION_SEARCH_SERVICE
+        .search(search.clone())
+        .await
+        .unwrap();
+    assert_eq!(ids(&found), [("old".to_string(), 0)]);
+
+    search.after_ms = Some(at(2).timestamp_millis());
+    search.before_ms = None;
+    let found = CONVERSATION_SEARCH_SERVICE.search(search).await.unwrap();
+    assert!(found.matches.iter().all(|hit| hit.message.id != "old"));
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn a_run_reaches_only_the_conversations_its_scope_allows() {
     let _db = crate::db::testing::test_db();
     seed(&[

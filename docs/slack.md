@@ -113,7 +113,9 @@ switching to a DM link, and vice-versa.
   from before it joined. It keeps a copy of the messages it reads there, so it
   can find them later with [conversation search](tools.md#conversation-search),
   and drops a copy's text when a later read no longer finds the message. A run
-  that a channel started searches only that channel's conversations and its own.
+  that a channel started searches only that channel's conversations and its own,
+  and a heartbeat run that channel messages triggered searches only its own
+  conversation, since any member of the channel writes those messages.
 - **Working cue.** While the agent works on your message it shows a live
   status in the reply thread: "is thinking…" while the model reasons, and the
   running tools while any are in flight — "is running kubectl…", or "is

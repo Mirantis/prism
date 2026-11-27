@@ -74,6 +74,10 @@ pub struct CollectToolsInput {
     pub origin_channel: Option<ChannelName>,
     pub origin_channel_id: Option<String>,
     pub posting_ceiling: Option<PostingCeiling>,
+    /// A heartbeat run that channel messages triggered. Any member of the channel
+    /// writes those messages, and they are in the run's prompt, so the run searches
+    /// only its own conversation (see `conversation_search_scope`).
+    pub heartbeat_triggered: bool,
     pub workspace_root: Option<String>,
     /// Runs a subagent Task; injected so this module never imports `invoke.rs`.
     pub task_invoker: Invoker,
@@ -276,8 +280,14 @@ pub async fn collect_tools(input: CollectToolsInput) -> anyhow::Result<Collected
             user_id: input.user_id.clone(),
             thread_id: thread_id.map(str::to_string),
             workspace_root: workspace_root.map(str::to_string),
-            scope: conversation_search_scope(mode, thread_id, origin_channel, origin_channel_id)
-                .await?,
+            scope: conversation_search_scope(
+                mode,
+                input.heartbeat_triggered,
+                thread_id,
+                origin_channel,
+                origin_channel_id,
+            )
+            .await?,
         },
     ));
     // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md body on
@@ -521,17 +531,21 @@ fn omit(tools: ToolSet, names: &HashSet<&str>) -> ToolSet {
 }
 
 /// The conversations a run may search: the audience of the run sees what it finds.
-/// A voice meeting, where anyone with the link can speak, and a webhook run, whose
-/// payload anyone can write, reach only their own conversation. A run in a channel's
+/// A voice meeting, where anyone with the link can speak, a webhook run, whose
+/// payload anyone can write, and a heartbeat run that channel messages triggered,
+/// whose prompt holds what any member of the channel wrote, reach only their own
+/// conversation (a heartbeat has none, so the tool says so). A timer heartbeat with
+/// no trigger messages follows only the owner's checks. A run in a channel's
 /// conversation, or one a channel started, reaches that channel's conversations and
 /// its own. A run on the owner's own surfaces reaches every conversation.
 async fn conversation_search_scope(
     mode: &str,
+    heartbeat_triggered: bool,
     thread_id: Option<&str>,
     origin_channel: ChannelName,
     origin_channel_id: Option<&str>,
 ) -> anyhow::Result<SearchScope> {
-    if mode == "meeting" || mode == "webhook" {
+    if mode == "meeting" || mode == "webhook" || (mode == "heartbeat" && heartbeat_triggered) {
         return Ok(SearchScope::Current);
     }
     let held_in = match thread_id {
@@ -683,25 +697,32 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn a_meeting_and_a_webhook_search_only_their_own_conversation() {
+    async fn a_meeting_a_webhook_and_a_triggered_heartbeat_search_only_their_own_conversation() {
+        let scope = |mode: &'static str, triggered: bool, channel: ChannelName| async move {
+            conversation_search_scope(mode, triggered, None, channel, Some("C1"))
+                .await
+                .unwrap()
+        };
         for mode in ["meeting", "webhook"] {
             assert_eq!(
-                conversation_search_scope(mode, None, ChannelName::Slack, Some("C1"))
-                    .await
-                    .unwrap(),
+                scope(mode, false, ChannelName::Slack).await,
                 SearchScope::Current
             );
         }
         assert_eq!(
-            conversation_search_scope("chat", None, ChannelName::Slack, Some("C1"))
-                .await
-                .unwrap(),
+            scope("heartbeat", true, ChannelName::Websocket).await,
+            SearchScope::Current
+        );
+        assert_eq!(
+            scope("heartbeat", false, ChannelName::Websocket).await,
+            SearchScope::All
+        );
+        assert_eq!(
+            scope("chat", false, ChannelName::Slack).await,
             SearchScope::Channel("C1".into())
         );
         assert_eq!(
-            conversation_search_scope("chat", None, ChannelName::Websocket, Some("C1"))
-                .await
-                .unwrap(),
+            scope("chat", false, ChannelName::Websocket).await,
             SearchScope::All
         );
     }

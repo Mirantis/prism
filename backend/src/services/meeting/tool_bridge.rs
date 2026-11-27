@@ -84,6 +84,7 @@ pub async fn prepare_meeting_tools(input: MeetingToolBridgeInput) -> anyhow::Res
         origin_channel: None,
         origin_channel_id: None,
         posting_ceiling: None,
+        heartbeat_triggered: false,
         // A meeting has no workspace: it is not launched from a repo checkout, so only
         // global skills apply — the same position autonomous runs are in.
         workspace_root: None,

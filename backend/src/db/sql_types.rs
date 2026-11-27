@@ -35,6 +35,11 @@ pub struct PrismaDateTime;
 #[diesel(sqlite_type(name = "Text"))]
 pub struct PrismaJson;
 
+/// The stored JSON text unchanged, so a query can match it with `LIKE`:
+/// `tool_calls.cast::<Nullable<Text>>().like(pattern)`.
+impl diesel::expression::FallibleCastsTo<diesel::sql_types::Text> for PrismaJson {}
+impl diesel::expression::CastsTo<diesel::sql_types::Text> for PrismaJson {}
+
 // ---------------------------------------------------------------- DateTime
 
 impl ToSql<PrismaDateTime, Sqlite> for DateTime<Utc> {

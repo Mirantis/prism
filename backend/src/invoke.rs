@@ -1446,6 +1446,7 @@ async fn run_invocation(
         origin_channel: request.origin_channel,
         origin_channel_id: request.origin_channel_id.clone(),
         posting_ceiling: request.posting_ceiling.clone(),
+        heartbeat_triggered: request.heartbeat_triggers.is_some(),
         workspace_root: request.workspace_root.clone(),
         task_invoker,
         register_attachment_injection: Some(Arc::new(move |message| {
