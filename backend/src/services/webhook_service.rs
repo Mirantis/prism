@@ -2194,6 +2194,41 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
+    async fn keeps_one_run_when_a_restart_stops_the_boot_that_rebuilds_it() {
+        let fixture = fixture(true).await;
+        let id = subscribe(&fixture, |row| row.coalesce_seconds = Some(5)).await;
+        hold(&id);
+        for run_id in ["a1", "a2"] {
+            deliver(run_id).await;
+        }
+        forget(&id);
+        WEBHOOK_RUN_SERVICE
+            .start(&["a1".to_string(), "a2".to_string()])
+            .await;
+        // A boot reads a1, and the process stops before it reads a2.
+        let a1 = AcceptedEvent {
+            id: "a1".into(),
+            agent_id: fixture.agent_id.clone(),
+            name: "alerts".into(),
+            event: "unknown".into(),
+        };
+        WEBHOOK_RUN_SERVICE.requeue(&a1).await.unwrap();
+
+        let items = PENDING_WORK_SERVICE
+            .rows(PendingWorkKind::Webhook)
+            .await
+            .unwrap();
+        hold(&id);
+        WEBHOOK_SERVICE.resume(items).await.unwrap();
+        assert_eq!(queue_of(&id), (1, 0));
+        for run_id in ["a1", "a2"] {
+            assert_eq!(run_row(run_id).await.0, "running", "{run_id}");
+        }
+        forget(&id);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
     async fn fails_the_events_a_restart_finds_beyond_the_run_queue() {
         let fixture = fixture(true).await;
         let id = subscribe(&fixture, |row| row.coalesce_seconds = Some(600)).await;
