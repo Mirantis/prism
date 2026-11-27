@@ -212,6 +212,7 @@ async fn parses_stream_json_session_deltas_usage_and_result() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn keeps_split_deltas_together_through_task_manager_and_flushes_unclosed_deltas() {
     use crate::tools::shell::agent_task_manager::{
         AgentTaskManager, AgentTaskParams, TaskStopReason,
