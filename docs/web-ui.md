@@ -352,7 +352,8 @@ What the agent has spent, and what it has done.
   Expand a run to see the message it delivered and the tool calls it made. When
   it delivered to web chat, **Open conversation** opens that chat. An event that
   a webhook's coalescing window gave to an earlier event's run reads **Handled
-  with an earlier event**, and expands to that run. The 1,000 newest finished
+  with an earlier event**, or shows a stack icon on a narrow screen, and expands to
+  that run. The 1,000 newest finished
   runs are kept.
 
 - **Tool calls.** The tool calls the agent has stored, newest turn first, across
