@@ -341,7 +341,8 @@ impl WebhookRunService {
     }
 
     /// Mark the events of one agent run `running`. The first id leads the run, and
-    /// every other event names it in `coalescedInto`.
+    /// every other event names it in `coalescedInto`, which replaces the lead an event
+    /// had before a restart.
     pub async fn start(&self, ids: &[String]) {
         let ids = ids.to_vec();
         let log_id = ids.first().cloned().unwrap_or_default();
@@ -351,7 +352,10 @@ impl WebhookRunService {
                     return Err(anyhow!("Record to update not found."));
                 };
                 let updated = diesel::update(wr::webhook_runs.filter(wr::id.eq_any(&ids)))
-                    .set(wr::status.eq(WebhookRunStatus::Running.as_str()))
+                    .set((
+                        wr::status.eq(WebhookRunStatus::Running.as_str()),
+                        wr::coalesced_into.eq(None::<String>),
+                    ))
                     .execute(conn)?;
                 if updated == 0 {
                     return Err(anyhow!("Record to update not found."));
@@ -378,14 +382,17 @@ impl WebhookRunService {
     pub async fn finish(&self, ids: &[String], result: &WebhookRunResult) {
         let ids = ids.to_vec();
         let log_id = ids.first().cloned().unwrap_or_default();
+        // The lead is stated again, since a run can end without `start`.
         let ended = WebhookRunChangeset {
             status: Some(result.status.as_str().to_string()),
             error: Some(cap_error(result.error.as_deref())),
             finished_at: Some(Some(Utc::now())),
+            coalesced_into: Some(ids.first().cloned()),
             ..WebhookRunChangeset::default()
         };
         let lead_changes = WebhookRunChangeset {
             message_id: Some(result.message_id.clone()),
+            coalesced_into: Some(None),
             ..ended.clone()
         };
         let finished = crate::db::run(move |conn| {
@@ -416,31 +423,19 @@ impl WebhookRunService {
         }
     }
 
-    /// Put a run a restart interrupted back in the queue, and record one the restart
-    /// cut off before its row was written. `None` when the run already finished, so
-    /// there is nothing to run again.
+    /// Where the run of an event a restart interrupted stood, recording an event the
+    /// restart cut off before its row was written. The row keeps its status and lead
+    /// until its run starts again, so a restart during the boot reads the same runs.
+    /// `None` when the run already finished, so there is nothing to run again.
     pub async fn requeue(&self, event: &AcceptedEvent) -> anyhow::Result<Option<Interrupted>> {
         let run_id = event.id.clone();
         let found = crate::db::run(move |conn| {
-            conn.transaction(|conn| {
-                let row: Option<(String, Option<String>)> = wr::webhook_runs
-                    .filter(wr::id.eq(&run_id))
-                    .select((wr::status, wr::coalesced_into))
-                    .first(conn)
-                    .optional()?;
-                if row
-                    .as_ref()
-                    .is_some_and(|(status, _)| unfinished().contains(&status.as_str()))
-                {
-                    diesel::update(wr::webhook_runs.filter(wr::id.eq(&run_id)))
-                        .set((
-                            wr::status.eq(WebhookRunStatus::Queued.as_str()),
-                            wr::coalesced_into.eq(None::<String>),
-                        ))
-                        .execute(conn)?;
-                }
-                Ok(row)
-            })
+            let row: Option<(String, Option<String>)> = wr::webhook_runs
+                .filter(wr::id.eq(&run_id))
+                .select((wr::status, wr::coalesced_into))
+                .first(conn)
+                .optional()?;
+            Ok(row)
         })
         .await?;
         let Some((status, coalesced_into)) = found else {
@@ -601,10 +596,14 @@ impl WebhookRunService {
                     return Ok(());
                 }
 
-                // A run's other events go with its first one, so every kept event can
-                // show the run that handled it.
-                diesel::delete(wr::webhook_runs.filter(wr::coalesced_into.eq_any(&over_bound)))
-                    .execute(conn)?;
+                // A run's other finished events go with its first one, so every kept
+                // event can show the run that handled it.
+                diesel::delete(
+                    wr::webhook_runs
+                        .filter(wr::coalesced_into.eq_any(&over_bound))
+                        .filter(wr::status.ne_all(unfinished())),
+                )
+                .execute(conn)?;
                 diesel::delete(wr::webhook_runs.filter(wr::id.eq_any(&over_bound)))
                     .execute(conn)?;
                 Ok(())
@@ -838,7 +837,7 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn requeues_an_event_without_the_run_that_handled_it() {
+    async fn keeps_the_run_of_an_interrupted_event_until_it_starts_again() {
         let fixture = fixture().await;
         for id in ["lead", "second"] {
             WEBHOOK_RUN_SERVICE
@@ -856,9 +855,44 @@ mod tests {
                 lead: "lead".into()
             })
         );
-        let requeued = run("second").await.unwrap();
-        assert_eq!(requeued.status, "queued");
-        assert_eq!(requeued.coalesced_into, None);
+        let kept = run("second").await.unwrap();
+        assert_eq!(kept.status, "running");
+        assert_eq!(kept.coalesced_into.as_deref(), Some("lead"));
+
+        // Rebuilt without its first event, the run is led by this one.
+        WEBHOOK_RUN_SERVICE.start(&ids(&["second"])).await;
+        assert_eq!(run("second").await.unwrap().coalesced_into, None);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn names_the_lead_when_a_run_ends_without_starting() {
+        let fixture = fixture().await;
+        for id in ["old-lead", "second", "third"] {
+            WEBHOOK_RUN_SERVICE
+                .accept(&event(&fixture, id), WebhookRunStatus::Queued)
+                .await
+                .unwrap();
+        }
+        WEBHOOK_RUN_SERVICE
+            .start(&ids(&["old-lead", "second", "third"]))
+            .await;
+        // Rebuilt after a restart without its first event, the run fails before it starts.
+        WEBHOOK_RUN_SERVICE
+            .finish(
+                &ids(&["second", "third"]),
+                &WebhookRunResult {
+                    status: WebhookRunResultStatus::Failed,
+                    error: Some("gone".into()),
+                    message_id: None,
+                },
+            )
+            .await;
+        assert_eq!(run("second").await.unwrap().coalesced_into, None);
+        assert_eq!(
+            run("third").await.unwrap().coalesced_into.as_deref(),
+            Some("second")
+        );
     }
 
     #[tokio::test]
@@ -1000,7 +1034,7 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn requeues_an_unfinished_run_and_records_one_with_no_row() {
+    async fn reads_an_unfinished_run_and_records_one_with_no_row() {
         let fixture = fixture().await;
         WEBHOOK_RUN_SERVICE
             .accept(&event(&fixture, "run-3"), WebhookRunStatus::Running)
@@ -1030,13 +1064,16 @@ mod tests {
                 lead: "run-3".into()
             })
         );
-        assert_eq!(run("run-3").await.unwrap().status, "queued");
+        // A second boot reads the same run.
+        assert_eq!(run("run-3").await.unwrap().status, "running");
         assert_eq!(
             WEBHOOK_RUN_SERVICE
                 .requeue(&event(&fixture, "run-3"))
                 .await
                 .unwrap(),
-            Some(Interrupted::Queued)
+            Some(Interrupted::Started {
+                lead: "run-3".into()
+            })
         );
         assert_eq!(
             WEBHOOK_RUN_SERVICE
