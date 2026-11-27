@@ -1370,11 +1370,17 @@ frontmatter with required `name` + `description`, optional `scripts/`/
     `get_skill_body` take an optional `workspaceRoot`; the `# Skills` section labels
     workspace vs installed groups. `<workspaceRoot>/.claude/skills` is also seen
     natively by Claude Code (its cwd = workspaceRoot).
-- **Shared with the coding sub-agent.** At startup the configured
-  `CodingAgent`'s `prepare_home()` gives it a home inside the data dir that reads
-  the same skills. For Claude Code that is `CLAUDE_CONFIG_DIR=<DATA>/.claude` with
-  `<DATA>/.claude/skills` → `<DATA>/skills` symlinked, so the `coding_agent` tool
-  discovers the same skills — without touching the user's real `~/.claude`.
+- **Shared with the coding sub-agent.** At startup each available
+  `CodingAgent`'s `prepare_home()` shares the runtime's skills directory with
+  the CLI. Claude Code and Codex get a runtime-owned home inside the data dir
+  (`<DATA>/.claude/skills` and `<DATA>/.codex/skills` → `<DATA>/skills`),
+  leaving the user's real `~/.claude` and `~/.codex` untouched (and leaving an
+  operator-set `CLAUDE_CONFIG_DIR` or `CODEX_HOME` untouched). Antigravity CLI
+  (`agy`) has no setting to relocate `~/.gemini` away from `$HOME`, so its
+  `prepare_home()` links `<home>/.gemini/config/skills` → `<DATA>/skills` only
+  when nothing exists at that path, and otherwise leaves any existing directory,
+  file, or symlink untouched and reports whether it already points at
+  `<DATA>/skills`.
 - **Progressive disclosure.** `skill_catalog_service` (mtime-cached) parses only
   `name` + `description` for the `# Skills` system-prompt section; the `skill`
   tool (`backend/src/tools/skills/mod.rs`) loads a skill's full `SKILL.md` body on
