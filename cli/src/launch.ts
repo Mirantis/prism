@@ -45,23 +45,19 @@ export interface OpenThread {
 export type Launch = ({ kind: 'thread' } & OpenThread) | { kind: 'session' } | { kind: 'exit'; message: string };
 
 /** How long to wait before asking a runtime that did not answer again. */
-export const RUNTIME_RETRY_MS = 2_000;
+const RUNTIME_RETRY_MS = 2_000;
 
 /**
  * Ask until the runtime answers. A terminal that restores its tabs can start
  * `prism` before the runtime it connects to, so a missing answer is not an error.
  * `onWait` runs once, before the first wait.
  */
-export async function untilAnswered<T>(
-  ask: () => Promise<T | undefined>,
-  onWait: () => void,
-  retryMs = RUNTIME_RETRY_MS,
-): Promise<T> {
+export async function untilAnswered<T>(ask: () => Promise<T | undefined>, onWait: () => void): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     const answer = await ask();
     if (answer !== undefined) return answer;
     if (attempt === 0) onWait();
-    await new Promise((resolve) => setTimeout(resolve, retryMs));
+    await new Promise((resolve) => setTimeout(resolve, RUNTIME_RETRY_MS));
   }
 }
 
@@ -70,16 +66,11 @@ export async function untilAnswered<T>(
  * with that id. An agent in single-thread mode opens its one conversation, as a
  * bare `--resume` does.
  */
-export async function resolveThreadLaunch(
-  id: string,
-  runtime: LaunchRuntime,
-  onWait: () => void,
-  retryMs?: number,
-): Promise<Launch> {
+export async function resolveThreadLaunch(id: string, runtime: LaunchRuntime, onWait: () => void): Promise<Launch> {
   const wait = once(onWait);
-  const mode = await untilAnswered(() => runtime.threadMode(), wait, retryMs);
+  const mode = await untilAnswered(() => runtime.threadMode(), wait);
   if (mode === 'single') return { kind: 'session' };
-  const status = await untilAnswered(() => runtime.threadStatus(id), wait, retryMs);
+  const status = await untilAnswered(() => runtime.threadStatus(id), wait);
   if (status === 'missing') return { kind: 'exit', message: `No conversation with id ${id}.` };
   return { kind: 'thread', id, contextUsage: null };
 }
@@ -93,16 +84,11 @@ export async function resolveThreadLaunch(
  * directory with more than 50 can miss an older one updated since. That is the
  * trade for a lookup that needs no other runtime route.
  */
-export async function resolveContinueLaunch(
-  cwd: string,
-  runtime: LaunchRuntime,
-  onWait: () => void,
-  retryMs?: number,
-): Promise<Launch> {
+export async function resolveContinueLaunch(cwd: string, runtime: LaunchRuntime, onWait: () => void): Promise<Launch> {
   const wait = once(onWait);
-  const mode = await untilAnswered(() => runtime.threadMode(), wait, retryMs);
+  const mode = await untilAnswered(() => runtime.threadMode(), wait);
   if (mode === 'single') return { kind: 'session' };
-  const sessions = await untilAnswered(() => runtime.listSessions(cwd), wait, retryMs);
+  const sessions = await untilAnswered(() => runtime.listSessions(cwd), wait);
   // A runtime older than the `workspaceRoot` query lists every directory's threads.
   const latest = latestUpdated(sessions.filter((session) => session.workspaceRoot === cwd));
   if (!latest) return { kind: 'exit', message: `No conversation to continue in ${cwd}.` };
