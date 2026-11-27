@@ -15,6 +15,8 @@ mod images;
 mod markdown;
 mod panels;
 mod protocol;
+#[cfg(test)]
+mod protocol_contract;
 mod relative_time;
 mod shell_command;
 mod status_report;
@@ -93,9 +95,11 @@ async fn chat(resume: bool) -> i32 {
     if interactive {
         terminal::enable_raw();
         let default_hook = std::panic::take_hook();
+        // A panic in a spawned task would leave the TUI drawing with raw mode off, so any panic ends it.
         std::panic::set_hook(Box::new(move |info| {
             restore_terminal();
             default_hook(info);
+            std::process::exit(101);
         }));
     }
     #[cfg(unix)]

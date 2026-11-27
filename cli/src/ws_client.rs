@@ -228,7 +228,8 @@ impl Connection {
         }
         let hello_id = self.next_id("hello");
         let hello = json!({ "type": "hello", "id": hello_id, "payload": payload });
-        if sink.send(Message::text(hello.to_string())).await.is_err() {
+        let pong_deadline = Duration::from_millis(CLIENT_PONG_DEADLINE_MS);
+        if !write(&mut sink, &hello, Instant::now() + pong_deadline).await {
             return Ended::Closed(1006);
         }
         // A runtime that takes `hello` and never answers is as dead as one that stops answering pings.
@@ -367,13 +368,27 @@ impl Connection {
                     }
                 }
             }
+            // A write that stalls (a half-open socket with a full send buffer) is held to
+            // the pong deadline, so a dead socket still drops and reconnects.
+            let write_by = deadline.unwrap_or_else(|| Instant::now() + pong_deadline);
             for frame in outgoing {
-                if sink.send(Message::text(frame.to_string())).await.is_err() {
+                if !write(&mut sink, &frame, write_by).await {
                     return Ended::Closed(1006);
                 }
             }
         }
     }
+}
+
+/// Write `frame`, false when the write fails or is not done by `by`.
+async fn write<S>(sink: &mut S, frame: &Value, by: Instant) -> bool
+where
+    S: futures_util::Sink<Message> + Unpin,
+{
+    matches!(
+        tokio::time::timeout_at(by, sink.send(Message::text(frame.to_string()))).await,
+        Ok(Ok(()))
+    )
 }
 
 fn send_frame(message: &OutgoingMessage) -> Value {

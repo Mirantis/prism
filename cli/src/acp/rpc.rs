@@ -1,7 +1,7 @@
 //! JSON-RPC 2.0 over newline-delimited JSON on stdio, the ACP transport.
 
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone, Debug)]
 pub struct RpcError {
@@ -52,34 +52,47 @@ impl RpcError {
     }
 }
 
+enum Out {
+    Message(Value),
+    /// Answered once every message before it is written.
+    Flush(oneshot::Sender<()>),
+}
+
 /// Writes messages to the client, one line each, in the order they are sent.
 #[derive(Clone)]
 pub struct Outbox {
-    tx: mpsc::UnboundedSender<Value>,
+    tx: mpsc::UnboundedSender<Out>,
 }
 
 impl Outbox {
     pub fn start() -> Outbox {
-        let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
+        let (tx, mut rx) = mpsc::unbounded_channel::<Out>();
         tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
             let mut stdout = tokio::io::stdout();
-            while let Some(message) = rx.recv().await {
-                let mut line = message.to_string();
-                line.push('\n');
-                if stdout.write_all(line.as_bytes()).await.is_err() {
-                    return;
+            let mut broken = false;
+            while let Some(out) = rx.recv().await {
+                match out {
+                    Out::Message(_) if broken => {}
+                    Out::Message(message) => {
+                        let mut line = message.to_string();
+                        line.push('\n');
+                        broken = stdout.write_all(line.as_bytes()).await.is_err();
+                        let _ = stdout.flush().await;
+                    }
+                    Out::Flush(done) => {
+                        let _ = done.send(());
+                    }
                 }
-                let _ = stdout.flush().await;
             }
         });
         Outbox { tx }
     }
 
     pub fn notify(&self, method: &str, params: Value) {
-        let _ = self
-            .tx
-            .send(json!({ "jsonrpc": "2.0", "method": method, "params": params }));
+        let _ = self.tx.send(Out::Message(
+            json!({ "jsonrpc": "2.0", "method": method, "params": params }),
+        ));
     }
 
     pub fn respond(&self, id: Value, result: Result<Value, RpcError>) {
@@ -87,6 +100,14 @@ impl Outbox {
             Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
             Err(error) => json!({ "jsonrpc": "2.0", "id": id, "error": error.to_json() }),
         };
-        let _ = self.tx.send(message);
+        let _ = self.tx.send(Out::Message(message));
+    }
+
+    /// Wait until every message sent so far is written.
+    pub async fn flush(&self) {
+        let (done, wait) = oneshot::channel();
+        if self.tx.send(Out::Flush(done)).is_ok() {
+            let _ = wait.await;
+        }
     }
 }

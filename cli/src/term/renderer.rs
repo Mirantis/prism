@@ -4,8 +4,9 @@
 //! frame does. A frame of the same height rewrites only the lines that changed, so
 //! a spinner tick or a keystroke rewrites a line or two, not the whole
 //! conversation. A frame that grew or shrank rewrites the screen from its first
-//! changed line. A change above the visible rows clears the screen and writes the
-//! frame again, because those rows are in the scrollback where no cursor reaches.
+//! changed line. A change above the visible rows clears the screen and the
+//! scrollback and writes the frame again, because those rows are in the scrollback
+//! where no cursor reaches.
 //!
 //! The cursor rests at the end of the frame's last line, so a frame that fills
 //! the screen does not scroll it by one row.
@@ -53,8 +54,10 @@ impl Renderer {
         if old.len() == next.len() && first >= top_visible {
             self.rewrite_changed(&next, out);
         } else if first < top_visible || shrank_from_overflow {
-            // The change is in rows the terminal has scrolled away: clear the screen and write it all.
-            out.push_str("\x1b[H\x1b[J");
+            // The change is in rows the terminal has scrolled away: clear the screen and the
+            // scrollback, as Ink's full repaint did, and write it all. A frame taller than the
+            // screen scrolls its top into the scrollback again, so it holds one copy of it.
+            out.push_str("\x1b[3J\x1b[H\x1b[J");
             out.push_str(&next.join("\r\n"));
         } else if first == old.len() {
             // Only new lines after the last one.
@@ -170,7 +173,7 @@ mod tests {
         r.render(&lines(&["a", "b", "c", "d"]), 2, &mut out);
         out.clear();
         r.render(&lines(&["A", "b", "c", "d"]), 2, &mut out);
-        assert_eq!(out, "\x1b[H\x1b[JA\r\nb\r\nc\r\nd");
+        assert_eq!(out, "\x1b[3J\x1b[H\x1b[JA\r\nb\r\nc\r\nd");
     }
 
     #[test]
@@ -180,7 +183,7 @@ mod tests {
         r.render(&lines(&["a", "b", "c", "d"]), 3, &mut out);
         out.clear();
         r.render(&lines(&["a", "b", "x"]), 3, &mut out);
-        assert_eq!(out, "\x1b[H\x1b[Ja\r\nb\r\nx");
+        assert_eq!(out, "\x1b[3J\x1b[H\x1b[Ja\r\nb\r\nx");
     }
 
     #[test]

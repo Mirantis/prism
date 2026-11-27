@@ -66,26 +66,32 @@ struct Session {
     id: String,
     state: Mutex<SessionState>,
     jobs: mpsc::UnboundedSender<Job>,
-    /// The client's prompts go to the runtime in their order.
-    sends: tokio::sync::Mutex<()>,
+    /// The client's prompts, uploads and send each, go to the runtime one at a
+    /// time in the order the client sent them.
+    sends: mpsc::UnboundedSender<Job>,
+}
+
+/// A queue that runs its jobs one at a time, in the order they were queued.
+fn job_queue() -> mpsc::UnboundedSender<Job> {
+    let (jobs, mut rx) = mpsc::unbounded_channel::<Job>();
+    tokio::spawn(async move {
+        while let Some(job) = rx.recv().await {
+            job.await;
+        }
+    });
+    jobs
 }
 
 impl Session {
     fn new(id: &str, working: bool) -> Arc<Session> {
-        let (jobs, mut rx) = mpsc::unbounded_channel::<Job>();
-        tokio::spawn(async move {
-            while let Some(job) = rx.recv().await {
-                job.await;
-            }
-        });
         Arc::new(Session {
             id: id.to_string(),
             state: Mutex::new(SessionState {
                 working,
                 ..SessionState::default()
             }),
-            jobs,
-            sends: tokio::sync::Mutex::new(()),
+            jobs: job_queue(),
+            sends: job_queue(),
         })
     }
 
@@ -184,11 +190,14 @@ impl Bridge {
         Ok(json!({ "sessions": sessions }))
     }
 
-    pub async fn prompt(
+    /// Take a prompt at the moment the client's request is read: it waits from
+    /// now, so a `session/cancel` read right after it finds it, and its send is
+    /// queued behind the session's earlier prompts. The answer comes when its turn ends.
+    pub fn prompt(
         self: &Arc<Self>,
         session_id: &str,
         blocks: &[Value],
-    ) -> Result<Value, RpcError> {
+    ) -> Result<impl Future<Output = Result<Value, RpcError>> + Send + use<>, RpcError> {
         let session = self
             .session(session_id)
             .ok_or_else(|| RpcError::session_not_found(session_id))?;
@@ -209,8 +218,7 @@ impl Bridge {
         let bridge = self.clone();
         let s = session.clone();
         let id = message_id.clone();
-        tokio::spawn(async move {
-            let _order = s.sends.lock().await;
+        let _ = session.sends.send(Box::pin(async move {
             let mut attachment_ids = Vec::new();
             for image in content.images {
                 match bridge.runtime.upload(image.data, &image.filename).await {
@@ -228,11 +236,13 @@ impl Bridge {
                 content: content.text,
                 attachment_ids,
             });
-        });
-        let stop_reason = wait
-            .await
-            .unwrap_or_else(|_| Err(RpcError::internal("the session closed")))?;
-        Ok(json!({ "stopReason": stop_reason }))
+        }));
+        Ok(async move {
+            let stop_reason = wait
+                .await
+                .unwrap_or_else(|_| Err(RpcError::internal("the session closed")))?;
+            Ok(json!({ "stopReason": stop_reason }))
+        })
     }
 
     /// Stop the turn the session's prompts wait for. A prompt not sent yet starts

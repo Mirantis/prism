@@ -268,7 +268,7 @@ impl ApiClient {
     pub fn new(http_url: &str) -> ApiClient {
         ApiClient {
             base: crate::config::base_url(http_url),
-            http: reqwest::Client::new(),
+            http: crate::config::runtime_http_client(),
         }
     }
 

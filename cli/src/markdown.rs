@@ -26,8 +26,6 @@ const MARKER_OPEN: char = '\u{E000}';
 const MARKER_CLOSE: char = '\u{E001}';
 
 static MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new("\u{E000}(\\d+)\u{E001}").unwrap());
-static PLACED_IMAGE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"!\[([^\]]*)\]\((attachment:[^)\s]+)\)").unwrap());
 
 /// A piece of a rendered message: text, or an image the message places there.
 #[derive(Clone, Debug, PartialEq)]
@@ -124,6 +122,7 @@ fn render_with_markers(content: &str, width: usize) -> (String, Vec<(String, Str
     let mut r = Renderer {
         width: width.max(40),
         placed: Vec::new(),
+        in_cell: false,
     };
     let mut out = String::new();
     for block in &blocks {
@@ -171,8 +170,10 @@ struct Item {
     blocks: Vec<Block>,
     loose: bool,
     task: Option<bool>,
-    /// A tight item's text as written.
+    /// A tight item's text as written, with a marker in place of each image it places.
     text: Option<String>,
+    /// The `attachment:` images a tight item places, as (source range, href, alt).
+    images: Vec<(std::ops::Range<usize>, String, String)>,
 }
 
 enum Frame {
@@ -354,7 +355,8 @@ fn parse_blocks(source: &str) -> Vec<Block> {
                         if !item.loose
                             && let Some((s, e)) = range
                         {
-                            item.text = Some(item_text(&source[s..e]));
+                            item.text =
+                                Some(item_text(&with_image_markers(source, s..e, &item.images)));
                         }
                         if let Some(Frame::List { items, .. }) = stack.last_mut() {
                             items.push(item);
@@ -390,6 +392,12 @@ fn parse_blocks(source: &str) -> Vec<Block> {
                         push_inline(&mut stack, Inline::Link { href, children })
                     }
                     (TagEnd::Image, Frame::Image(href, alt)) => {
+                        // A tight item prints its source, so it keeps where each parsed image was.
+                        if href.starts_with("attachment:")
+                            && let Some(item) = tight_item(&mut stack)
+                        {
+                            item.images.push((range.clone(), href.clone(), alt.clone()));
+                        }
                         push_inline(&mut stack, Inline::Image { href, alt })
                     }
                     (_, Frame::Para(v)) => {
@@ -413,8 +421,12 @@ fn parse_blocks(source: &str) -> Vec<Block> {
             Event::SoftBreak => push_inline(&mut stack, Inline::SoftBreak),
             Event::HardBreak => push_inline(&mut stack, Inline::HardBreak),
             Event::Rule => push_block(&mut stack, Block::Rule),
+            // In a loose item the marker comes inside the item's first paragraph.
             Event::TaskListMarker(checked) => {
-                if let Some(Frame::Item { item, .. }) = stack.last_mut() {
+                if let Some(item) = stack.iter_mut().rev().find_map(|f| match f {
+                    Frame::Item { item, .. } => Some(item),
+                    _ => None,
+                }) {
                     item.task = Some(checked);
                 }
             }
@@ -425,6 +437,39 @@ fn parse_blocks(source: &str) -> Vec<Block> {
         Some(Frame::Blocks(v)) => v,
         _ => Vec::new(),
     }
+}
+
+/// The item whose inline content the innermost frames belong to, when that item
+/// is tight: no paragraph, heading or cell sits between them.
+fn tight_item(stack: &mut [Frame]) -> Option<&mut Item> {
+    for frame in stack.iter_mut().rev() {
+        match frame {
+            Frame::Item { item, .. } => return (!item.loose).then_some(item),
+            Frame::Strong(_) | Frame::Em(_) | Frame::Del(_) | Frame::Link(..) => continue,
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// `source[range]` with each image in `images` replaced by a marker holding its index.
+fn with_image_markers(
+    source: &str,
+    range: std::ops::Range<usize>,
+    images: &[(std::ops::Range<usize>, String, String)],
+) -> String {
+    let mut out = String::new();
+    let mut at = range.start;
+    for (i, (r, _, _)) in images.iter().enumerate() {
+        if r.start < at || r.end > range.end {
+            continue;
+        }
+        out.push_str(&source[at..r.start]);
+        out.push_str(&format!("{MARKER_OPEN}{i}{MARKER_CLOSE}"));
+        at = r.end;
+    }
+    out.push_str(&source[at..range.end]);
+    out
 }
 
 /// A tight item's source with each continuation line's indentation removed, as marked keeps it.
@@ -447,6 +492,8 @@ fn item_text(raw: &str) -> String {
 struct Renderer {
     width: usize,
     placed: Vec<(String, String)>,
+    /// Rendering a table cell, which cannot hold a picture.
+    in_cell: bool,
 }
 
 fn section(text: &str) -> String {
@@ -522,7 +569,11 @@ impl Renderer {
                 paint(&[BLUE], &out)
             }
             Inline::Image { href, alt } => {
-                if href.starts_with("attachment:") {
+                // A cell keeps the description, as marked-terminal's `describeImagesInCell` did.
+                if self.in_cell && href.starts_with("attachment:") {
+                    let alt = alt.trim();
+                    format!("[image: {}]", if alt.is_empty() { "image" } else { alt })
+                } else if href.starts_with("attachment:") {
                     self.mark(href, alt)
                 } else {
                     format!("![{alt}]({href})")
@@ -571,6 +622,7 @@ impl Renderer {
                 section(&paint(&[RESET], &rule))
             }
             Block::Table { head, rows } => {
+                self.in_cell = true;
                 let head: Vec<String> = head
                     .iter()
                     .map(|c| unescape_entities(&self.inlines(c)))
@@ -583,6 +635,7 @@ impl Renderer {
                             .collect()
                     })
                     .collect();
+                self.in_cell = false;
                 section(&paint(&[RESET], &table(&head, &rows)))
             }
             Block::Html(s) => paint(&[GRAY], s),
@@ -595,12 +648,17 @@ impl Renderer {
             text.push_str(&format!("[{}]  ", if checked { 'X' } else { ' ' }));
         }
         if let Some(raw) = &item.text {
-            // The text as written; an image it places still becomes a marker.
-            let raw = PLACED_IMAGE
+            // The text as written; an image the parser found in it still becomes a marker.
+            let raw = MARKER
                 .replace_all(raw, |caps: &regex::Captures| {
-                    let alt = caps[1].to_string();
-                    let href = caps[2].to_string();
-                    self.mark(&href, &alt)
+                    match caps[1]
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|i| item.images.get(i))
+                    {
+                        Some((_, href, alt)) => self.mark(href, alt),
+                        None => String::new(),
+                    }
                 })
                 .into_owned();
             text.push_str(&raw);
@@ -902,6 +960,42 @@ mod tests {
         assert_eq!(
             plain("- top\n  - inner\n- next", 40),
             vec!["    * top", "        * inner", "    * next"]
+        );
+    }
+
+    #[test]
+    fn describes_an_image_in_a_table_cell() {
+        let parts =
+            render_message_parts("| a | b |\n|---|---|\n| ![chart](attachment:x) | 2 |", 40);
+        assert_eq!(parts.len(), 1);
+        let MessagePart::Text(lines) = &parts[0] else {
+            panic!("a table cell placed a picture")
+        };
+        let text: Vec<String> = lines.iter().map(Line::text).collect();
+        assert_eq!(text[3], "│ [image: chart] │ 2 │");
+        assert_eq!(text[0].chars().count(), text[3].chars().count());
+    }
+
+    #[test]
+    fn places_only_the_images_a_tight_item_parses() {
+        assert_eq!(
+            plain("- `![chart](attachment:a)`", 40),
+            vec!["    * `![chart](attachment:a)`"]
+        );
+        let written = render_message_parts("- `![a](attachment:a)`\n- \\![b](attachment:b)", 40);
+        assert!(written.iter().all(|p| matches!(p, MessagePart::Text(_))));
+        let parts = render_message_parts("- see ![chart](attachment:a) here", 40);
+        assert!(parts.contains(&MessagePart::Image {
+            href: "attachment:a".into(),
+            alt: "chart".into()
+        }));
+    }
+
+    #[test]
+    fn keeps_a_loose_task_lists_checkboxes() {
+        assert_eq!(
+            plain("- [x] done\n\n- [ ] pending", 40),
+            vec!["    * [X]  done", "    * [ ]  pending"]
         );
     }
 

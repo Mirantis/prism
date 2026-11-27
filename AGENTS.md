@@ -434,9 +434,11 @@ somebody adds a caller.
 ## Code conventions
 
 - **One component per file.** Each React (`web/`) component and each
-  terminal UI (`cli/`) screen or component lives in its own file named for the component (kebab-case, e.g.
-  `model-field.tsx`), not several components sharing a module. A component's
-  small private helpers may stay in its file; shared ones move to a module.
+  terminal UI (`cli/`) screen or component lives in its own file named for the
+  component, not several components sharing a module: kebab-case in `web/`
+  (e.g. `model-field.tsx`), snake_case in `cli/` (e.g. `text_input.rs`). A
+  component's small private helpers may stay in its file; shared ones move to a
+  module.
 - **No Jira issue keys in code.** Never reference Jira tickets (e.g.
   `AGENT-96`) in source files, comments, or tests. Ticket references belong
   in commit messages and PR descriptions, where they stay linked to the
@@ -586,13 +588,9 @@ terminal UI, `prism`, is the Rust binary built from `cli/`, a crate of its own
 (`cargo build --release` in `cli/`). `scripts/build-binaries.sh` builds both for a
 release.
 
-The TUI draws its frame in place under the shell's history, and the frame is a
-pure function of the session's state (`cli/src/app/view.rs`). Its layout follows
-the flexbox rules the screens were designed with: text wraps at its box's width,
-a row child shrinks in proportion to its width, and each line is trimmed. A new
-frame rewrites only the lines that changed (`cli/src/term/renderer.rs`), so the
-PTY stream an e2e test reads holds each change, not each whole frame:
-`waitForFrame` matches the stream or the screen as a terminal draws it.
+A new TUI frame rewrites only the lines that changed, so the PTY stream an e2e
+test reads holds each change, not each whole frame: `waitForFrame` matches the
+stream or the screen as a terminal draws it.
 
 ## Local development
 

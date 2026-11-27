@@ -104,6 +104,16 @@ fn parse_config(raw: &str, path: &str) -> PrismConfig {
     }
 }
 
+/// The HTTP client for the runtime's REST API. It connects directly, as the chat
+/// socket does and as the Node CLI's `fetch` did: an `HTTP_PROXY` meant for the
+/// internet would otherwise take the calls to a local runtime.
+pub fn runtime_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap_or_default()
+}
+
 /// The agent-runtime base URL without a trailing slash.
 pub fn base_url(http_url: &str) -> String {
     http_url.strip_suffix('/').unwrap_or(http_url).to_string()

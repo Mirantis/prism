@@ -1,8 +1,9 @@
 //! The terminal UI's copy of the chat socket contract, `/api/ws`, version 2.
 //!
 //! The runtime's `backend/src/protocol/chat_protocol.rs` is the authority, and
-//! `docs/websocket-protocol.md` describes it. The recorded session in
-//! `backend/src/protocol/fixtures/` holds both copies to the same frames.
+//! `docs/websocket-protocol.md` describes it. `protocol_contract.rs` replays the
+//! session recorded in `backend/src/protocol/fixtures/v2-session.json` through this
+//! copy and the chat socket client, as the runtime's and the web UI's tests do.
 //! Payloads are read leniently: a field of the wrong type is dropped, never fatal.
 
 use serde::{Deserialize, Serialize};

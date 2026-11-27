@@ -141,7 +141,7 @@ impl Line {
     pub fn encode(&self, out: &mut String) {
         for span in &self.spans {
             span.style.open(out);
-            out.push_str(&span.text);
+            out.push_str(&super::ansi::drop_controls(&span.text));
             span.style.close(out);
         }
     }

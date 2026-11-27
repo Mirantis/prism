@@ -39,7 +39,7 @@ impl Runtime {
         );
         Runtime {
             http_url,
-            http: reqwest::Client::new(),
+            http: crate::config::runtime_http_client(),
             socket,
         }
     }

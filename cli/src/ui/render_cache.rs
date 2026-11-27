@@ -4,7 +4,9 @@
 //! A stored attachment never changes, so a decoded picture is kept for the next
 //! frame, most recently used last, until the cache passes its byte budget. Each
 //! attachment shown at one size is one kitty image, stored once and kept: its
-//! placeholders in the scrollback still show it after a redraw.
+//! placeholders in the scrollback still show it after a redraw. A picture already
+//! stored at the size a frame draws it needs only its dimensions, which are kept
+//! after the decoded pixels are evicted, so a picture on screen is never loaded again.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -24,6 +26,8 @@ const CACHE_BYTES: usize = 4 * 2048 * 2048 * 4;
 #[derive(Default)]
 struct ImageState {
     bitmaps: HashMap<String, Arc<Bitmap>>,
+    /// Each loaded picture's pixel size, kept after its pixels are evicted.
+    sizes: HashMap<String, (u32, u32)>,
     order: VecDeque<String>,
     bytes: usize,
     loading: HashSet<String>,
@@ -76,6 +80,7 @@ impl ImageStore {
             return;
         };
         s.bytes += bitmap.data.len();
+        s.sizes.insert(id.clone(), (bitmap.width, bitmap.height));
         s.order.push_back(id.clone());
         s.bitmaps.insert(id.clone(), bitmap);
         while s.bytes > CACHE_BYTES && s.order.len() > 1 {
@@ -104,7 +109,7 @@ impl ImageStore {
         max_rows: u32,
     ) -> Option<Vec<Line>> {
         let mut s = self.state.borrow_mut();
-        let Some(bitmap) = s.bitmaps.get(&attachment.id).cloned() else {
+        let want = |s: &mut ImageState| {
             let id = &attachment.id;
             if !s.loading.contains(id)
                 && !s.failed.contains(id)
@@ -112,10 +117,23 @@ impl ImageStore {
             {
                 s.wanted.push(attachment.clone());
             }
+        };
+        let Some((width, height)) = s.sizes.get(&attachment.id).copied() else {
+            want(&mut s);
             return None;
         };
-        let (cols, rows) = image_cells(bitmap.width, bitmap.height, cell, max_cols, max_rows);
+        let (cols, rows) = image_cells(width, height, cell, max_cols, max_rows);
         let key = (attachment.id.clone(), cols, rows);
+        if let Some(id) = s.ids.get(&key).copied()
+            && s.sent.contains(&id)
+        {
+            return Some(placeholder_lines(id, cols, rows));
+        }
+        // A new size needs the pixels again.
+        let Some(bitmap) = s.bitmaps.get(&attachment.id).cloned() else {
+            want(&mut s);
+            return None;
+        };
         let id = match s.ids.get(&key) {
             Some(id) => *id,
             None => {
@@ -183,5 +201,52 @@ impl MarkdownCache {
         cached(&self.parts, id, content, width, || {
             render_message_parts(content, width)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn attachment(id: &str) -> AttachmentMeta {
+        AttachmentMeta {
+            id: id.into(),
+            filename: format!("{id}.png"),
+            media_type: "image/png".into(),
+            size_bytes: 0.0,
+            category: "image".into(),
+            expired: false,
+            inline: true,
+        }
+    }
+
+    #[test]
+    fn a_picture_on_screen_is_not_loaded_again_after_eviction() {
+        let store = ImageStore::new();
+        let cell = Cell {
+            width: 10,
+            height: 20,
+        };
+        let side = 2048u32;
+        let big = |_: usize| {
+            Arc::new(Bitmap {
+                width: side,
+                height: side,
+                data: vec![0; (side * side * 4) as usize],
+            })
+        };
+        let ids: Vec<String> = (0..5).map(|i| format!("a{i}")).collect();
+        for (i, id) in ids.iter().enumerate() {
+            assert!(store.placeholder(&attachment(id), cell, 4, 2).is_none());
+            store.take_wanted();
+            store.loaded(id.clone(), Some(big(i)));
+            assert!(store.placeholder(&attachment(id), cell, 4, 2).is_some());
+        }
+        // The first picture's pixels were evicted, and it still draws at the size it was stored at.
+        assert!(!store.state.borrow().bitmaps.contains_key("a0"));
+        for id in &ids {
+            assert!(store.placeholder(&attachment(id), cell, 4, 2).is_some());
+        }
+        assert!(store.take_wanted().is_empty());
     }
 }

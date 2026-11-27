@@ -16,6 +16,29 @@ pub struct PromptContent {
     pub images: Vec<PromptImage>,
 }
 
+/// Base64 read as Node's `Buffer.from(data, 'base64')` reads it: the standard and
+/// the URL-safe alphabet, with or without padding, line breaks and other
+/// characters outside the alphabet skipped.
+fn decode_base64(data: &str) -> Vec<u8> {
+    let mut clean: String = data
+        .chars()
+        .take_while(|c| *c != '=')
+        .filter_map(|c| match c {
+            '-' => Some('+'),
+            '_' => Some('/'),
+            c if c.is_ascii_alphanumeric() || c == '+' || c == '/' => Some(c),
+            _ => None,
+        })
+        .collect();
+    // A last group of one character holds no whole byte.
+    if clean.len() % 4 == 1 {
+        clean.pop();
+    }
+    base64::engine::general_purpose::STANDARD_NO_PAD
+        .decode(clean)
+        .unwrap_or_default()
+}
+
 /// The blocks in order, as one text. A linked file becomes its path, which the
 /// agent reads with its own tools, and an image becomes a file to upload.
 pub fn prompt_content(blocks: &[Value]) -> PromptContent {
@@ -38,9 +61,7 @@ pub fn prompt_content(blocks: &[Value]) -> PromptContent {
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             images.push(PromptImage {
-                data: base64::engine::general_purpose::STANDARD
-                    .decode(data)
-                    .unwrap_or_default(),
+                data: decode_base64(data),
                 filename: format!("image.{subtype}"),
             });
         }
@@ -158,6 +179,14 @@ mod tests {
             prompt_content(&blocks).text,
             "look at /tmp/a.rs#L3 https://x.example"
         );
+    }
+
+    #[test]
+    fn decodes_base64_as_node_does() {
+        let bytes = b"\xfb\xff\x00hi";
+        for data in ["+/8AaGk=", "+/8AaGk", "-_8AaGk", "+/8A\naGk="] {
+            assert_eq!(decode_base64(data), bytes, "{data}");
+        }
     }
 
     #[test]
