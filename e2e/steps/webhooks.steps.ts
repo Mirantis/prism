@@ -307,10 +307,10 @@ Then('a HEAD request to webhook {string} answers {int}', async ({ page }, name: 
 });
 
 When(
-  'I POST the payload {string} to webhook {string} {int} times',
-  async ({ page }, payload: string, name: string, times: number) => {
+  'I POST the payloads {string}, {string} and {string} to webhook {string}',
+  async ({ page }, first: string, second: string, third: string, name: string) => {
     const statuses: number[] = [];
-    for (let i = 0; i < times; i++) statuses.push(await postWebhookBody(page, name, payload));
+    for (const payload of [first, second, third]) statuses.push(await postWebhookBody(page, name, payload));
     // Each delivery answers on its own; the step reports a single status only when all agree.
     lastWebhookStatus = statuses.every((s) => s === statuses[0]) ? statuses[0] : null;
   },
@@ -350,6 +350,26 @@ Then(
       120_000,
     );
     expect(messages.map((m) => m.content)).toEqual([text]);
+  },
+);
+
+Then(
+  'one webhook-triggered message is stored in the conversation, containing {string}, {string} and {string}',
+  async ({}, first: string, second: string, third: string) => {
+    const agentId = getCurrentAgentId();
+    const markers = [first, second, third];
+    const hasAll = (content: string) => markers.every((marker) => content.includes(marker));
+    // The run's record of a post into web chat is an internal row, which no client shows.
+    const messages = await pollUntil(
+      () =>
+        dbHelper.getPrisma().conversationMessage.findMany({
+          where: { triggeredBy: 'WEBHOOK', internalStep: false, thread: { agentId } },
+        }),
+      (rows) => rows.some((m) => hasAll(m.content)),
+      120_000,
+    );
+    expect(messages).toHaveLength(1);
+    expect(hasAll(messages[0].content)).toBe(true);
   },
 );
 
