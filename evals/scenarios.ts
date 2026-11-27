@@ -804,6 +804,20 @@ const DELIVERY_SCENARIOS: Scenario[] = [
     },
     (o) => reachedUser(o) && o.reached.length === 1,
   ),
+  deliveryScenario(
+    'delivery.webhook-coalesced-no-prompt',
+    'A webhook run with no prompt that handles three alert events posts one message.',
+    {
+      mode: 'webhook',
+      instruction: '',
+      payloads: [
+        { status: 'firing', alert: 'DiskFull', host: 'db-1' },
+        { status: 'firing', alert: 'DiskFull', host: 'db-2' },
+        { status: 'firing', alert: 'DiskFull', host: 'db-3' },
+      ],
+    },
+    (o) => reachedUser(o) && o.reached.length === 1,
+  ),
 ];
 
 /** A working session whose details a summary has to carry word for word. All values are invented. */
