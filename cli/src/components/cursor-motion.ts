@@ -9,7 +9,8 @@
 import type { Key } from 'ink';
 import wrapAnsi from 'wrap-ansi';
 
-const WORD_CHAR = /[\p{L}\p{N}_]/u;
+// A combining mark belongs to the letter before it, so a word move never splits the pair.
+const WORD_CHAR = /[\p{L}\p{M}\p{N}_]/u;
 
 const isWordChar = (char: string | undefined): boolean =>
   char !== undefined && WORD_CHAR.test(char);
