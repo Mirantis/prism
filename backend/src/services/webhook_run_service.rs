@@ -561,8 +561,8 @@ impl WebhookRunService {
         }))
     }
 
-    /// Writes the row and trims the oldest finished rows beyond the bound, in one
-    /// transaction.
+    /// Writes the row and trims the oldest finished rows beyond the bound, with the
+    /// events their runs handled, in one transaction.
     async fn insert(&self, event: &AcceptedEvent, status: WebhookRunStatus) -> anyhow::Result<()> {
         let row = NewWebhookRun::new(
             event.id.clone(),
@@ -589,6 +589,10 @@ impl WebhookRunService {
                     return Ok(());
                 }
 
+                // A run's other events go with its first one, so every kept event can
+                // show the run that handled it.
+                diesel::delete(wr::webhook_runs.filter(wr::coalesced_into.eq_any(&over_bound)))
+                    .execute(conn)?;
                 diesel::delete(wr::webhook_runs.filter(wr::id.eq_any(&over_bound)))
                     .execute(conn)?;
                 Ok(())
@@ -863,6 +867,49 @@ mod tests {
         let row = run("run-1").await.unwrap();
         assert!(row.error.unwrap().len() < 2100);
         assert_eq!(row.message_id, None);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn trims_the_events_of_a_trimmed_run_with_it() {
+        let fixture = fixture().await;
+        let agent_id = fixture.agent_id.clone();
+        crate::db::run(move |conn| {
+            let base = 1_700_000_000_000_i64;
+            let rows: Vec<NewWebhookRun> = (0..MAX_WEBHOOK_RUNS + 1)
+                .map(|i| {
+                    let mut row = NewWebhookRun::new(
+                        format!("old-{i}"),
+                        &agent_id,
+                        "alerts",
+                        "push",
+                        "completed",
+                    );
+                    row.created_at = DbDateTime(crate::support::from_ms(base + i));
+                    if i == 1 || i == 2 {
+                        row.coalesced_into = Some("old-0".to_string());
+                    }
+                    row
+                })
+                .collect();
+            diesel::insert_into(wr::webhook_runs)
+                .values(&rows)
+                .execute(conn)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        WEBHOOK_RUN_SERVICE
+            .accept(&event(&fixture, "run-new"), WebhookRunStatus::Running)
+            .await
+            .unwrap();
+
+        for id in ["old-0", "old-1", "old-2"] {
+            assert!(run(id).await.is_none(), "{id}");
+        }
+        assert!(run("old-3").await.is_some());
+        assert!(run("run-new").await.is_some());
     }
 
     #[tokio::test]
