@@ -166,6 +166,11 @@ export function webhookRunPrompt(
   return call<string>('render', { kind: 'webhook', instruction, payload, eventType, route });
 }
 
+/** The run prompt of a webhook run that handles several events, from each event's run prompt. */
+export function webhookBatchRunPrompt(prompts: string[]): Promise<string> {
+  return call<string>('render', { kind: 'webhookBatch', prompts });
+}
+
 /** The places a delivery setting allows over the given linked targets. */
 export function postingCeiling(
   target: { deliverTo: string; channelIds: string[] },

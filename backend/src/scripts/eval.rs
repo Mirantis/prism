@@ -67,7 +67,7 @@ use crate::services::thread_reply_classifier_service::{
     ClassifyInput, GateAgent, ThreadAction, ThreadLine, ThreadPlatform, decide_thread_action,
 };
 use crate::services::web_chat_label::WEB_CHAT_LABEL;
-use crate::services::webhook_service::render_webhook_turn_prompt;
+use crate::services::webhook_service::{render_webhook_batch_prompt, render_webhook_turn_prompt};
 use crate::support::js::len16;
 use crate::templates::default_workspace::get_default_workspace_files;
 use crate::tools::ask_questions::ask_questions_result;
@@ -346,6 +346,9 @@ enum RenderParams {
         event_type: String,
         route: String,
     },
+    /// The run prompt of a webhook run that handles several events, from each
+    /// event's run prompt.
+    WebhookBatch { prompts: Vec<String> },
 }
 
 fn render(params: RenderParams) -> anyhow::Result<Value> {
@@ -375,6 +378,10 @@ fn render(params: RenderParams) -> anyhow::Result<Value> {
             event_type,
             route,
         } => render_webhook_turn_prompt(Some(&instruction), &payload, &event_type, &route),
+        RenderParams::WebhookBatch { prompts } => {
+            let prompts: Vec<&str> = prompts.iter().map(String::as_str).collect();
+            render_webhook_batch_prompt(&prompts)
+        }
     };
     Ok(Value::String(text))
 }
@@ -1019,6 +1026,16 @@ mod tests {
         .unwrap();
         let rendered = render(webhook).unwrap();
         assert!(rendered.as_str().unwrap().contains("Report the deploy."));
+        let batch: RenderParams =
+            serde_json::from_value(json!({ "kind": "webhookBatch", "prompts": ["a", "b"] }))
+                .unwrap();
+        assert!(
+            render(batch)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .ends_with("Event 2 of 2:\nb")
+        );
         let scheduled: RenderParams =
             serde_json::from_value(json!({ "kind": "scheduledRun", "instruction": "Check CI." }))
                 .unwrap();

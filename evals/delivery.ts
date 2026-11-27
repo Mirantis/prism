@@ -15,6 +15,7 @@ import {
   postingCeiling as ceilingOf,
   runTurn,
   scheduledRunPrompt,
+  webhookBatchRunPrompt,
   webhookRunPrompt,
   type TurnTrace,
 } from './harness';
@@ -56,6 +57,8 @@ export interface AutonomousRun {
   instruction: string;
   /** The webhook event. */
   payload?: Record<string, unknown>;
+  /** The webhook events one run handles, oldest first, in place of `payload`. */
+  payloads?: Record<string, unknown>[];
   ceiling?: Ceiling;
   earlier?: EarlierMessage;
   /** The channel messages that started a heartbeat. */
@@ -123,6 +126,10 @@ function sendStubs(ceiling: PostingCeiling, sent: Posted[]) {
 
 function runPrompt(run: AutonomousRun, lastSend: TaskLastSend | undefined): Promise<string> {
   if (run.mode === 'heartbeat') return heartbeatRunPrompt(run.triggers);
+  if (run.mode === 'webhook' && run.payloads) {
+    const payloads = run.payloads;
+    return Promise.all(payloads.map((p) => webhookRunPrompt(run.instruction, p, 'unknown', 'deploy-events'))).then(webhookBatchRunPrompt);
+  }
   if (run.mode === 'webhook') return webhookRunPrompt(run.instruction, run.payload ?? {}, 'unknown', 'deploy-events');
   return scheduledRunPrompt(run.instruction, lastSend);
 }
