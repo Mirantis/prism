@@ -394,9 +394,8 @@ pub fn render_webhook_batch_prompt(prompts: &[&str]) -> String {
         return prompt.to_string();
     }
     let count = prompts.len();
-    let mut message = format!(
-        "{count} events arrived on this webhook close together. Handle them together in this one run. They are below, oldest first."
-    );
+    let mut message =
+        format!("{count} events arrived on this webhook close together, oldest first.");
     for (index, prompt) in prompts.iter().enumerate() {
         message.push_str(&format!("\n\nEvent {} of {count}:\n{prompt}", index + 1));
     }
@@ -1657,7 +1656,7 @@ mod tests {
         assert_eq!(render_webhook_batch_prompt(&["only"]), "only");
         assert_eq!(
             render_webhook_batch_prompt(&["first", "second"]),
-            "2 events arrived on this webhook close together. Handle them together in this one run. They are below, oldest first.\n\nEvent 1 of 2:\nfirst\n\nEvent 2 of 2:\nsecond"
+            "2 events arrived on this webhook close together, oldest first.\n\nEvent 1 of 2:\nfirst\n\nEvent 2 of 2:\nsecond"
         );
     }
 
