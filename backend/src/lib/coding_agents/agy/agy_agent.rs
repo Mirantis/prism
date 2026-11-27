@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use indexmap::IndexMap;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::config::{CONFIG, CodingAgentName, TierSet};
 use crate::lib::coding_agents::cli_probe::probe_cli;
@@ -15,16 +15,18 @@ use crate::lib::coding_agents::coding_agent::{
     CodingAgentRun, CodingAgentStopReason, CodingAgentTask, CodingAgentUsage,
     PLAN_ONLY_INSTRUCTION,
 };
-use crate::lib::coding_agents::shared_skills_home::prepare_shared_skills_home;
+use crate::lib::coding_agents::shared_skills_home::points_at;
 use crate::lib::coding_agents::tracked_run::track_run;
 use crate::lib::execution_environments::docker::volumes::CONTAINER_PATHS;
 use crate::lib::execution_environments::execution_environment::{
-    ExecutionEnvironment, ExecutionEnvironmentName, ProcessEnv,
+    ExecutionEnvironment, ExecutionEnvironmentName, ProcessEnv, io_error_kind,
 };
 use crate::lib::execution_environments::get_execution_environment::{
     get_execution_environment, get_execution_environment_for,
 };
+use crate::lib::log_redaction::err_json;
 use crate::lib::telemetry::track_event;
+use crate::log_warn;
 
 pub const DISPLAY_NAME: &str = "Antigravity CLI";
 pub const COMMAND: &str = "agy";
@@ -62,9 +64,11 @@ impl CodingAgent for AgyAgent {
     }
 
     /// Links the runtime's skills directory into `agy`'s global customization
-    /// root (`<home>/.gemini/config/skills`). `agy` has no setting to relocate
-    /// `~/.gemini` away from `$HOME`; `prepare_shared_skills_home` refuses to
-    /// overwrite an existing real `skills` directory if the user already has one.
+    /// root (`<home>/.gemini/config/skills`) only when nothing exists there yet.
+    /// `agy` has no setting to relocate `~/.gemini` away from `$HOME`, so an
+    /// existing directory, file or symlink is left untouched and only reported
+    /// via `skills_linked`. Any filesystem failure is logged and reported as
+    /// `skills_linked: false` so startup never fails for optional skills.
     async fn prepare_home(&self) -> anyhow::Result<CodingAgentHome> {
         let env = self.target();
         let base_env = env.base_env();
@@ -75,7 +79,52 @@ impl CodingAgent for AgyAgent {
             });
         };
         let config_dir = format!("{home}/.gemini/config");
-        prepare_shared_skills_home(&*env, &config_dir, None).await
+        let skills_dir = env.paths().skills_dir;
+        let link = format!("{config_dir}/skills");
+        let files = env.files();
+
+        match files.lstat(&link).await {
+            Ok(_) => Ok(CodingAgentHome {
+                config_dir,
+                skills_linked: points_at(&*env, &link, &skills_dir).await,
+            }),
+            Err(err) if io_error_kind(&err) == Some(std::io::ErrorKind::NotFound) => {
+                if let Err(err) = files.mkdir(&config_dir).await {
+                    log_warn!(
+                        json!({ "configDir": config_dir, "err": err_json(&err) }),
+                        "[Startup] Could not prepare Antigravity CLI skills directory"
+                    );
+                    return Ok(CodingAgentHome {
+                        config_dir,
+                        skills_linked: false,
+                    });
+                }
+                if let Err(err) = files.symlink(&skills_dir, &link).await {
+                    log_warn!(
+                        json!({ "link": link, "target": skills_dir, "err": err_json(&err) }),
+                        "[Startup] Could not link Antigravity CLI skills directory"
+                    );
+                    return Ok(CodingAgentHome {
+                        config_dir,
+                        skills_linked: false,
+                    });
+                }
+                Ok(CodingAgentHome {
+                    config_dir,
+                    skills_linked: points_at(&*env, &link, &skills_dir).await,
+                })
+            }
+            Err(err) => {
+                log_warn!(
+                    json!({ "link": link, "err": err_json(&err) }),
+                    "[Startup] Could not inspect Antigravity CLI skills directory"
+                );
+                Ok(CodingAgentHome {
+                    config_dir,
+                    skills_linked: false,
+                })
+            }
+        }
     }
 
     /// Available when `~/.gemini/antigravity-cli/jetski_state.pbtxt` exists and
@@ -128,10 +177,16 @@ impl CodingAgent for AgyAgent {
 /// The home directory where `agy` keeps `.gemini` inside `environment`.
 fn home_dir_in(environment: &dyn ExecutionEnvironment, env: &ProcessEnv) -> Option<String> {
     if let Some(home) = env.get("HOME").filter(|value| !value.is_empty()) {
-        return Some(home.trim_end_matches('/').to_string());
+        return Some(home.trim_end_matches(['/', '\\']).to_string());
     }
     if environment.id() == ExecutionEnvironmentName::Docker {
         return Some(CONTAINER_PATHS.home_dir.to_string());
+    }
+    if let Some((_, home)) = env
+        .iter()
+        .find(|(key, value)| key.eq_ignore_ascii_case("USERPROFILE") && !value.is_empty())
+    {
+        return Some(home.trim_end_matches(['/', '\\']).to_string());
     }
     None
 }
@@ -241,7 +296,8 @@ fn count(value: &Value, key: &str) -> i64 {
 /// Parses `agy --output-format stream-json` NDJSON lines into neutral events.
 fn create_parser(initial_model: String) -> ParseLine {
     let mut model = initial_model;
-    let mut answer = String::new();
+    let mut pending_text = String::new();
+    let mut answers: Vec<String> = Vec::new();
     Box::new(move |line| {
         let event: Value = serde_json::from_str(line)?;
         if event.is_null() {
@@ -266,19 +322,26 @@ fn create_parser(initial_model: String) -> ParseLine {
                 let Some(step) = event.get("step_update") else {
                     return Ok(vec![]);
                 };
-                if text(step, "step_type") == Some("agent_response")
-                    && let Some(delta) = non_empty_text(step, "text_delta")
-                {
-                    answer.push_str(delta);
-                    return Ok(vec![CodingAgentEvent::Text {
-                        text: delta.to_string(),
-                    }]);
+                if text(step, "step_type") == Some("agent_response") {
+                    if let Some(delta) = non_empty_text(step, "text_delta") {
+                        pending_text.push_str(delta);
+                    }
+                    if text(step, "state") == Some("DONE") && !pending_text.is_empty() {
+                        let text = std::mem::take(&mut pending_text);
+                        answers.push(text.clone());
+                        return Ok(vec![CodingAgentEvent::Text { text }]);
+                    }
                 }
                 Ok(vec![])
             }
             Some("result") => {
                 let payload = event.get("result").unwrap_or(&event);
                 let mut events = Vec::new();
+                if !pending_text.is_empty() {
+                    let text = std::mem::take(&mut pending_text);
+                    answers.push(text.clone());
+                    events.push(CodingAgentEvent::Text { text });
+                }
                 if let Some(usage) = payload.get("usage") {
                     // `agy` reports uncached `input_tokens` separately from `cache_read_tokens`
                     // (`total_tokens = input_tokens + output_tokens`), so do not subtract cache reads.
@@ -312,7 +375,7 @@ fn create_parser(initial_model: String) -> ParseLine {
                 let message = match stop_reason {
                     CodingAgentStopReason::EndTurn => non_empty_text(payload, "response")
                         .map(str::to_string)
-                        .unwrap_or_else(|| answer.clone()),
+                        .unwrap_or_else(|| answers.join("\n\n")),
                     CodingAgentStopReason::Error | CodingAgentStopReason::MaxTurns => {
                         non_empty_text(payload, "error")
                             .or_else(|| non_empty_text(payload, "response"))

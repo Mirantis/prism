@@ -187,10 +187,7 @@ async fn parses_stream_json_session_deltas_usage_and_result() {
                 session_id: "ab51a318-604e-40ff-8576-f2356379a5e0".to_string(),
             },
             CodingAgentEvent::Text {
-                text: "hel".to_string(),
-            },
-            CodingAgentEvent::Text {
-                text: "lo\n".to_string(),
+                text: "hello\n".to_string(),
             },
             CodingAgentEvent::Usage {
                 usage: CodingAgentUsage {
@@ -212,6 +209,125 @@ async fn parses_stream_json_session_deltas_usage_and_result() {
             },
         ]
     );
+}
+
+#[tokio::test]
+async fn keeps_split_deltas_together_through_task_manager_and_flushes_unclosed_deltas() {
+    use crate::tools::shell::agent_task_manager::{
+        AgentTaskManager, AgentTaskParams, TaskStopReason,
+    };
+
+    // Unclosed ACTIVE deltas (no DONE step before result) still emit one Text event.
+    let child = FakeChild::new();
+    let (environment, _) = spawning(child.clone());
+    let run = create_agy_agent(Some(environment.arc())).run(task());
+    child.emit_line(
+        &json!({
+            "event": "step_update",
+            "step_update": { "step_index": 1, "state": "ACTIVE", "step_type": "agent_response", "text_delta": "part 1 " }
+        })
+        .to_string(),
+    );
+    child.emit_line(
+        &json!({
+            "event": "step_update",
+            "step_update": { "step_index": 1, "state": "ACTIVE", "step_type": "agent_response", "text_delta": "part 2" }
+        })
+        .to_string(),
+    );
+    child.emit_line(
+        &json!({
+            "event": "result",
+            "result": { "status": "SUCCESS", "response": "", "num_turns": 1 }
+        })
+        .to_string(),
+    );
+    child.finish(Some(0));
+    assert_eq!(
+        collect(&run).await,
+        vec![
+            CodingAgentEvent::Text {
+                text: "part 1 part 2".to_string(),
+            },
+            CodingAgentEvent::Result {
+                stop_reason: CodingAgentStopReason::EndTurn,
+                turns: 1,
+                message: "part 1 part 2".to_string(),
+                refusals: None,
+            },
+        ]
+    );
+
+    // End-to-end through AgentTaskManager::drive: split deltas in one agent_response
+    // produce "hello\n", not "hel\n\nlo\n".
+    let _db = crate::db::testing::test_db();
+    let child = FakeChild::new();
+    let (environment, _) = spawning(child.clone());
+    let agent = create_agy_agent(Some(environment.arc()));
+    let manager = Arc::new(AgentTaskManager::new(Some(Arc::new(move |_| {
+        Ok(agent.clone())
+    }))));
+
+    let started = manager
+        .start_task(AgentTaskParams {
+            agent: Some(CodingAgentName::Agy),
+            prompt: "say hello".to_string(),
+            workdir: Some("/work".to_string()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    child.emit_line(
+        &json!({
+            "event": "init",
+            "conversation_id": "ab51a318-604e-40ff-8576-f2356379a5e0",
+            "init": { "model": "gemini-3.8-flash-low" }
+        })
+        .to_string(),
+    );
+    child.emit_line(
+        &json!({
+            "event": "step_update",
+            "step_update": { "step_index": 1, "state": "ACTIVE", "step_type": "agent_response", "text_delta": "hel" }
+        })
+        .to_string(),
+    );
+    child.emit_line(
+        &json!({
+            "event": "step_update",
+            "step_update": { "step_index": 3, "state": "DONE", "step_type": "agent_response", "text_delta": "lo\n" }
+        })
+        .to_string(),
+    );
+    child.emit_line(
+        &json!({
+            "event": "result",
+            "result": {
+                "conversation_id": "ab51a318-604e-40ff-8576-f2356379a5e0",
+                "status": "SUCCESS",
+                "response": "hello\n",
+                "num_turns": 1
+            }
+        })
+        .to_string(),
+    );
+    child.finish(Some(0));
+
+    let mut final_status = None;
+    for _ in 0..100 {
+        let status = manager
+            .read_status(&started.task_id, Some(30))
+            .await
+            .unwrap();
+        if status.completed {
+            final_status = Some(status);
+            break;
+        }
+    }
+    let status = final_status.expect("agy task did not complete");
+    assert_eq!(status.stop_reason, Some(TaskStopReason::EndTurn));
+    assert_eq!(status.result.as_deref(), Some("hello\n"));
 }
 
 #[tokio::test]
@@ -328,6 +444,13 @@ async fn checks_state_and_models_probe_for_availability() {
             .await
             .unwrap()
     );
+    // Windows sessions provide USERPROFILE without HOME.
+    assert!(
+        agent
+            .is_available(&env_of(&[("USERPROFILE", &home_str)]))
+            .await
+            .unwrap()
+    );
     assert!(
         !agent
             .is_available(&env_of(&[("HOME", "/nonexistent")]))
@@ -353,7 +476,7 @@ async fn checks_state_and_models_probe_for_availability() {
 }
 
 #[tokio::test]
-async fn prepares_home_by_linking_skills_into_agy_global_config_without_clobbering_real_dir() {
+async fn prepares_home_by_linking_skills_only_when_absent_and_never_fails_startup() {
     let dir = tempfile::tempdir().unwrap();
     let skills = dir.path().join("skills");
     std::fs::create_dir_all(&skills).unwrap();
@@ -370,7 +493,8 @@ async fn prepares_home_by_linking_skills_into_agy_global_config_without_clobberi
         ..Default::default()
     };
 
-    let prepared = create_agy_agent(Some(environment.arc()))
+    // Nothing at `<home>/.gemini/config/skills` -> creates the link.
+    let prepared = create_agy_agent(Some(environment.clone().arc()))
         .prepare_home()
         .await
         .unwrap();
@@ -380,6 +504,65 @@ async fn prepares_home_by_linking_skills_into_agy_global_config_without_clobberi
         std::fs::canonicalize(home.join(".gemini/config/skills")).unwrap(),
         std::fs::canonicalize(&skills).unwrap()
     );
+
+    // Calling again when the link already points at the runtime's skills reports true.
+    let prepared_again = create_agy_agent(Some(environment.arc()))
+        .prepare_home()
+        .await
+        .unwrap();
+    assert!(prepared_again.skills_linked);
+
+    // An existing user-owned symlink (valid or dangling) is never replaced.
+    #[cfg(unix)]
+    {
+        let user_skills = dir.path().join("user-skills");
+        std::fs::create_dir_all(&user_skills).unwrap();
+        let linked_home = dir.path().join("linked-home");
+        std::fs::create_dir_all(linked_home.join(".gemini/config")).unwrap();
+        let user_link = linked_home.join(".gemini/config/skills");
+        std::os::unix::fs::symlink(&user_skills, &user_link).unwrap();
+        let linked_str = linked_home.to_string_lossy().into_owned();
+        let linked_env = FakeEnvironment {
+            paths: paths.clone(),
+            base_env: env_of(&[("HOME", &linked_str)]),
+            files: FakeFiles::local(),
+            ..Default::default()
+        };
+        let prepared_linked = create_agy_agent(Some(linked_env.arc()))
+            .prepare_home()
+            .await
+            .unwrap();
+        assert_eq!(
+            prepared_linked.config_dir,
+            format!("{linked_str}/.gemini/config")
+        );
+        assert!(!prepared_linked.skills_linked);
+        assert_eq!(
+            std::fs::canonicalize(&user_link).unwrap(),
+            std::fs::canonicalize(&user_skills).unwrap()
+        );
+
+        let dangling_home = dir.path().join("dangling-home");
+        std::fs::create_dir_all(dangling_home.join(".gemini/config")).unwrap();
+        let dangling_link = dangling_home.join(".gemini/config/skills");
+        std::os::unix::fs::symlink(dir.path().join("removed-target"), &dangling_link).unwrap();
+        let dangling_str = dangling_home.to_string_lossy().into_owned();
+        let dangling_env = FakeEnvironment {
+            paths: paths.clone(),
+            base_env: env_of(&[("HOME", &dangling_str)]),
+            files: FakeFiles::local(),
+            ..Default::default()
+        };
+        let prepared_dangling = create_agy_agent(Some(dangling_env.arc()))
+            .prepare_home()
+            .await
+            .unwrap();
+        assert!(!prepared_dangling.skills_linked);
+        assert_eq!(
+            std::fs::read_link(&dangling_link).unwrap(),
+            dir.path().join("removed-target")
+        );
+    }
 
     // A real skills directory already owned by the user is never overwritten.
     let owned_home = dir.path().join("owned-home");
@@ -400,6 +583,44 @@ async fn prepares_home_by_linking_skills_into_agy_global_config_without_clobberi
         format!("{owned_str}/.gemini/config")
     );
     assert!(!prepared_owned.skills_linked);
+
+    // A blocked or unwritable `.gemini` path reports skills_linked: false instead of failing boot.
+    let blocked_home = dir.path().join("blocked-home");
+    std::fs::create_dir_all(&blocked_home).unwrap();
+    std::fs::write(blocked_home.join(".gemini"), "not a dir").unwrap();
+    let blocked_str = blocked_home.to_string_lossy().into_owned();
+    let blocked_env = FakeEnvironment {
+        paths: paths.clone(),
+        base_env: env_of(&[("HOME", &blocked_str)]),
+        files: FakeFiles::local(),
+        ..Default::default()
+    };
+    let prepared_blocked = create_agy_agent(Some(blocked_env.arc()))
+        .prepare_home()
+        .await
+        .unwrap();
+    assert_eq!(
+        prepared_blocked.config_dir,
+        format!("{blocked_str}/.gemini/config")
+    );
+    assert!(!prepared_blocked.skills_linked);
+
+    // Windows USERPROFILE works when HOME is absent.
+    let win_home = dir.path().join("win-home");
+    std::fs::create_dir_all(&win_home).unwrap();
+    let win_str = win_home.to_string_lossy().into_owned();
+    let win_env = FakeEnvironment {
+        paths: paths.clone(),
+        base_env: env_of(&[("USERPROFILE", &win_str)]),
+        files: FakeFiles::local(),
+        ..Default::default()
+    };
+    let prepared_win = create_agy_agent(Some(win_env.arc()))
+        .prepare_home()
+        .await
+        .unwrap();
+    assert_eq!(prepared_win.config_dir, format!("{win_str}/.gemini/config"));
+    assert!(prepared_win.skills_linked);
 
     let no_home = FakeEnvironment {
         paths,
