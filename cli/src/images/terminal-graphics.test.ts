@@ -11,6 +11,11 @@ import {
 
 // What kitty 0.36 answers to PROBE, in order.
 const KITTY_REPLIES = '\x1b_Gi=31;OK\x1b\\\x1b[6;20;10t\x1bP>|kitty(0.36.4)\x1b\\\x1b[?62;c';
+// What Rex 0.1.0-preview.23 answers to PROBE: no feature query support.
+const REX_REPLIES =
+  '\x1b_Gi=31;OK\x1b\\\x1b_Gi=32;EINVAL: dimensions required\x1b\\\x1b[6;16;8t\x1bP>|rex 0.1.0-preview.23\x1b\\\x1b[?62;22c';
+// The feature query answer of a terminal that draws Unicode placeholders, from the kitty spec.
+const PLACEHOLDER_REPLY = '\x1b_Gi=32,e=T,U=1;OK\x1b\\';
 // A terminal that knows none of the queries but the device attributes.
 const PLAIN_REPLIES = '\x1b[?1;2c';
 
@@ -32,11 +37,18 @@ describe('parseProbeReplies', () => {
   it("reads kitty's answers", () => {
     expect(parseProbeReplies(KITTY_REPLIES)).toEqual({
       graphics: true,
+      placeholders: false,
       cell: { width: 10, height: 20 },
       terminal: 'kitty(0.36.4)',
       complete: true,
       rest: '',
     });
+  });
+
+  it('reads the placeholder feature query answer', () => {
+    expect(parseProbeReplies(`${PLACEHOLDER_REPLY}${PLAIN_REPLIES}`).placeholders).toBe(true);
+    expect(parseProbeReplies('\x1b_Gi=32,e=T;OK\x1b\\').placeholders).toBe(false);
+    expect(parseProbeReplies(REX_REPLIES)).toMatchObject({ graphics: true, placeholders: false, rest: '' });
   });
 
   it('reads a graphics error as no graphics', () => {
@@ -58,6 +70,11 @@ describe('drawsPlaceholders', () => {
     ['kitty(0.28.0)', true],
     ['kitty(0.27.1)', false],
     ['ghostty 1.1.3', true],
+    ['Rio 0.5.30', true],
+    ['Rio 0.3.11', true],
+    ['Rio 0.3.10', false],
+    ['rex 0.1.0-preview.23', true],
+    ['Konsole 24.08.3', false],
     ['WezTerm 20240203-110809-5046fc22', false],
     [null, false],
   ])('%s → %s', (terminal, expected) => {
@@ -70,6 +87,15 @@ describe('graphicsFrom', () => {
     const replies = parseProbeReplies(KITTY_REPLIES);
     expect(graphicsFrom(replies)).toEqual({ protocol: 'kitty', cell: { width: 10, height: 20 } });
     expect(graphicsFrom({ ...replies, terminal: 'WezTerm 20240203' }).protocol).toBe('text');
+  });
+
+  it('uses kitty graphics in a terminal that reports placeholders, whatever its name', () => {
+    const replies = parseProbeReplies(`\x1b_Gi=31;OK\x1b\\${PLACEHOLDER_REPLY}\x1bP>|NewTerm 1.0\x1b\\${PLAIN_REPLIES}`);
+    expect(graphicsFrom(replies).protocol).toBe('kitty');
+  });
+
+  it('uses kitty graphics in Rex', () => {
+    expect(graphicsFrom(parseProbeReplies(REX_REPLIES))).toEqual({ protocol: 'kitty', cell: { width: 8, height: 16 } });
   });
 
   it('keeps the description in a terminal without kitty graphics', () => {

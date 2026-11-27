@@ -251,7 +251,7 @@ TUI, save them to disk with [`/save`](terminal-ui.md#attaching-and-saving-files)
 The agent can also show an image, such as a chart, inside its reply at the place
 where the text explains it, by naming an image file in its workspace (the same
 bound as `share_file`) or an image in the conversation. The Terminal UI
-[draws it there in kitty and Ghostty](terminal-ui.md#images-in-replies) and shows
+[draws it there in terminals that support it](terminal-ui.md#images-in-replies) and shows
 `[image: …]` elsewhere, and `/save` saves the image with the other files of that turn.
 A heartbeat, webhook run or scheduled task that doesn't continue a conversation
 can't share a file: it reaches you only through the messages it posts, which
