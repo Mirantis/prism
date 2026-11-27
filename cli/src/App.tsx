@@ -268,6 +268,9 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   );
 
   const popupOpen = (slashMode || attachMode) && popupItems.length > 0;
+  // While the user walks history, Up and Down stay with the walk, even on an entry that
+  // opens the popup, so Down can still bring the draft back.
+  const popupArrows = popupOpen && historyIndex === null;
 
   // Keep commandIndex within bounds as the visible list shrinks/grows.
   useEffect(() => {
@@ -470,18 +473,20 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       return;
     }
     // While a popup is open (slash commands or /attach path suggestions),
-    // Up/Down move its selection and Tab autocompletes — that takes
-    // precedence over history recall.
+    // Tab autocompletes, and Up/Down move its selection unless the user walks
+    // history (`popupArrows`).
     if (popupOpen) {
-      if (key.upArrow) {
+      if (popupArrows && key.upArrow) {
         setCommandIndex((i) => (i - 1 + popupItems.length) % popupItems.length);
         return;
       }
-      if (key.downArrow) {
+      if (popupArrows && key.downArrow) {
         setCommandIndex((i) => (i + 1) % popupItems.length);
         return;
       }
       if (key.tab) {
+        // A completion is an edit, so it ends a history walk and the popup takes Up and Down.
+        setHistoryIndex(null);
         if (slashMode) {
           acceptHighlightedCommand();
         } else {
@@ -734,8 +739,8 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
             onChange={handleInputChange}
             onSubmit={onSubmit}
             hideCursor={hideCursor}
-            // While a popup is open, App's own handler moves its selection.
-            onVerticalEdge={popupOpen ? undefined : recallHistory}
+            // With popupArrows, App's own handler moves the popup's selection.
+            onVerticalEdge={popupArrows ? undefined : recallHistory}
           />
           {popupOpen && (
             <CommandPopup items={popupItems} selectedIndex={safeIndex} />
