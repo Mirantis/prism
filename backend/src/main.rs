@@ -16,10 +16,13 @@ use prism_runtime::lib::environment::is_sea;
 use prism_runtime::scripts::coding_agent_exec;
 
 fn main() {
+    // A terminal that resumes programs (OSC 7577) gives the first process of a pane
+    // this token, and a process that holds it can register a command the terminal
+    // runs later. `main` removes it first, so no process the runtime starts inherits it.
     // SAFETY: `main` is synchronous and nothing before this line starts a thread.
     // Each subcommand below builds its Tokio runtime, and the server its threads,
     // only after this call.
-    unsafe { prism_runtime::lib::environment::remove_terminal_resume_token() };
+    unsafe { std::env::remove_var("OSC7577_TOKEN") };
     prism_runtime::lib::environment::install_tls_provider();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
