@@ -23,7 +23,7 @@ use crate::db::models::{ChannelMessage, ConversationMessage, MessageRole, NewCha
 use crate::db::schema::channel_messages::dsl as c;
 use crate::db::schema::conversation_messages::dsl as m;
 use crate::db::schema::conversation_threads::dsl as t;
-use crate::db::sql_types::DbDateTime;
+use crate::db::sql_types::{DbDateTime, PrismaDateTime};
 use crate::lib::message_search_index::{self, IndexHit, IndexQuery, fts_query, query_words};
 use crate::lib::telemetry::track_event;
 use crate::services::generated_ui::generated_ui_service::PRESS_TRIGGER_NAME;
@@ -750,33 +750,43 @@ async fn add_output_hits(
     let after = options.after_ms.and_then(DateTime::from_timestamp_millis);
     let before = options.before_ms.and_then(DateTime::from_timestamp_millis);
     let lowered: Vec<Vec<char>> = words.iter().map(|word| lower_chars(word)).collect();
-    let mut offset = 0;
+    let mut page_end: Option<PageEnd> = None;
     loop {
-        let (thread, patterns) = (thread_id.clone(), patterns.clone());
+        let (thread, patterns, end) = (thread_id.clone(), patterns.clone(), page_end.take());
         let rows = crate::db::read(move |conn| {
             Ok(tool_call_candidates(
-                conn, &thread, &patterns, any_word, after, before, offset,
+                conn,
+                &thread,
+                &patterns,
+                any_word,
+                after,
+                before,
+                end.as_ref(),
             )?)
         })
         .await?;
         let last_page = (rows.len() as i64) < OUTPUT_PAGE;
-        for (id, created_at, tool_calls) in rows {
+        page_end = rows.last().map(PageEnd::of);
+        for row in rows {
             if hits.len() >= usize::try_from(options.limit).unwrap_or(0) {
                 return Ok(());
             }
-            if found.contains(&id) {
+            // The query lets every row with the text default through the bounds.
+            let outside = after.is_some_and(|after| row.created_at < after)
+                || before.is_some_and(|before| row.created_at >= before);
+            if outside || found.contains(&row.id) {
                 continue;
             }
             let Some(excerpt) =
-                output_excerpt(&tool_results(tool_calls.as_ref()), &lowered, any_word)
+                output_excerpt(&tool_results(row.tool_calls.as_ref()), &lowered, any_word)
             else {
                 continue;
             };
             hits.push(IndexHit {
-                message_id: Some(id),
+                message_id: Some(row.id),
                 channel_message_id: None,
                 thread_id: thread_id.clone(),
-                created_at_ms: created_at.timestamp_millis(),
+                created_at_ms: row.created_at.timestamp_millis(),
                 automated: false,
                 excerpt,
             });
@@ -784,13 +794,57 @@ async fn add_output_hits(
         if last_page {
             return Ok(());
         }
-        offset += OUTPUT_PAGE;
     }
 }
 
-/// One page, newest first, of a conversation's agent messages in the time bounds
-/// whose stored tool calls hold the patterns (any of them with `any_word`): a cheap
-/// first pass on the JSON text before the results are read.
+diesel::define_sql_function! {
+    /// SQLite's `typeof`: how a value is stored (`'integer'`, `'text'`, ...).
+    #[sql_name = "typeof"]
+    fn stored_type(value: PrismaDateTime) -> Text;
+}
+
+/// An agent message whose stored tool calls may hold the words.
+#[derive(Queryable)]
+struct ToolCallCandidate {
+    id: String,
+    created_at: DateTime<Utc>,
+    tool_calls: Option<Value>,
+    /// `typeof("createdAt")`.
+    stored_type: String,
+    /// `"createdAt"` as text: the column's text default on rows older than the runtime.
+    stored_text: String,
+}
+
+/// The ordering keys of the last candidate a page read, so the next page starts
+/// after it. A row that holds the column's text default keeps that text, because
+/// SQLite orders every text above every number the runtime wrote.
+struct PageEnd {
+    created_at: StoredTime,
+    id: String,
+}
+
+enum StoredTime {
+    Written(DateTime<Utc>),
+    Default(String),
+}
+
+impl PageEnd {
+    fn of(row: &ToolCallCandidate) -> PageEnd {
+        let created_at = if row.stored_type == "text" {
+            StoredTime::Default(row.stored_text.clone())
+        } else {
+            StoredTime::Written(row.created_at)
+        };
+        PageEnd {
+            created_at,
+            id: row.id.clone(),
+        }
+    }
+}
+
+/// One page, newest first and after `page_end`, of a conversation's agent messages
+/// in the time bounds whose stored tool calls hold the patterns (any of them with
+/// `any_word`): a cheap first pass on the JSON text before the results are read.
 fn tool_call_candidates(
     conn: &mut SqliteConnection,
     thread_id: &str,
@@ -798,8 +852,8 @@ fn tool_call_candidates(
     any_word: bool,
     after: Option<DateTime<Utc>>,
     before: Option<DateTime<Utc>>,
-    offset: i64,
-) -> QueryResult<Vec<(String, DateTime<Utc>, Option<Value>)>> {
+    page_end: Option<&PageEnd>,
+) -> QueryResult<Vec<ToolCallCandidate>> {
     type Condition =
         Box<dyn BoxableExpression<m::conversation_messages, Sqlite, SqlType = Nullable<Bool>>>;
     let like = |pattern: &String| -> Condition {
@@ -828,17 +882,51 @@ fn tool_call_candidates(
             query = query.filter(like(pattern));
         }
     }
+    // A row with the column's text default compares above every millisecond bound,
+    // so it passes here and the caller checks its decoded time.
+    let text_default = || stored_type(m::created_at).eq("text");
     if let Some(after) = after {
-        query = query.filter(m::created_at.ge(DbDateTime(after)));
+        query = query.filter(m::created_at.ge(DbDateTime(after)).or(text_default()));
     }
     if let Some(before) = before {
-        query = query.filter(m::created_at.lt(DbDateTime(before)));
+        query = query.filter(m::created_at.lt(DbDateTime(before)).or(text_default()));
+    }
+    match page_end {
+        None => {}
+        // Every text sorts above every number, so only numbers come after a number.
+        Some(PageEnd {
+            created_at: StoredTime::Written(at),
+            id,
+        }) => {
+            query = query.filter(
+                m::created_at
+                    .lt(DbDateTime(*at))
+                    .or(m::created_at.eq(DbDateTime(*at)).and(m::id.lt(id.clone()))),
+            );
+        }
+        Some(PageEnd {
+            created_at: StoredTime::Default(text),
+            id,
+        }) => {
+            let stored = || m::created_at.cast::<Text>();
+            query = query.filter(
+                stored_type(m::created_at)
+                    .ne("text")
+                    .or(stored().lt(text.clone()))
+                    .or(stored().eq(text.clone()).and(m::id.lt(id.clone()))),
+            );
+        }
     }
     query
         .order((m::created_at.desc(), m::id.desc()))
-        .offset(offset)
         .limit(OUTPUT_PAGE)
-        .select((m::id, m::created_at, m::tool_calls))
+        .select((
+            m::id,
+            m::created_at,
+            m::tool_calls,
+            stored_type(m::created_at),
+            m::created_at.cast::<Text>(),
+        ))
         .load(conn)
 }
 

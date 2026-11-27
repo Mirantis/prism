@@ -566,6 +566,86 @@ async fn numbers_rows_with_the_text_default_time_where_the_read_puts_them() {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn a_tool_result_search_bounds_and_pages_rows_with_the_text_default_time() {
+    let _db = crate::db::testing::test_db();
+    seed(&[("web", AGENT, None)]).await;
+    let rotated = json!([{
+        "tool": "shell_exec",
+        "input": { "command": "./rotate.sh" },
+        "output": "kubectl: secret rotated"
+    }]);
+    let written = rotated.clone();
+    stored(
+        "web",
+        "written",
+        1,
+        MessageRole::Agent,
+        "Rotated.",
+        move |row| {
+            row.tool_calls = Some(written);
+        },
+    )
+    .await;
+    // Rows older than the runtime hold the text default: one match at 07:00, and
+    // more than a page of near misses that share one time at 07:30, so a page
+    // ends inside them and the next one starts after the last id it read.
+    let near = json!([{
+        "tool": "shell_exec",
+        "input": { "command": "kubectl apply -f cm.yaml" },
+        "output": "configmap rotated"
+    }]);
+    let mut values = vec![format!(
+        "('legacy', 'web', 'AGENT', 'Rotated.', '{rotated}', 'USER_INPUT', '2026-10-08 07:00:00')"
+    )];
+    values.extend((0..(OUTPUT_PAGE + 5)).map(|i| {
+        format!(
+            "('near-{i:02}', 'web', 'AGENT', 'Applied.', '{near}', 'USER_INPUT', '2026-10-08 07:30:00')"
+        )
+    }));
+    let insert = format!(
+        r#"INSERT INTO "conversation_messages" ("id", "threadId", "role", "content", "toolCalls", "triggeredBy", "createdAt") VALUES {};"#,
+        values.join(",\n")
+    );
+    crate::db::run(move |conn| {
+        use diesel::connection::SimpleConnection;
+        conn.batch_execute(&insert)?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let found_ids = |outcome: &SearchOutcome| {
+        let mut found: Vec<String> = outcome
+            .matches
+            .iter()
+            .map(|hit| hit.message.id.clone())
+            .collect();
+        found.sort();
+        found
+    };
+
+    let mut search = options("kubectl rotated");
+    search.thread_id = Some("web".into());
+    let found = CONVERSATION_SEARCH_SERVICE
+        .search(search.clone())
+        .await
+        .unwrap();
+    assert_eq!(found_ids(&found), ["legacy", "written"]);
+
+    search.before_ms = Some(at(0).timestamp_millis());
+    let found = CONVERSATION_SEARCH_SERVICE
+        .search(search.clone())
+        .await
+        .unwrap();
+    assert_eq!(found_ids(&found), ["legacy"]);
+
+    search.after_ms = Some(at(0).timestamp_millis());
+    search.before_ms = None;
+    let found = CONVERSATION_SEARCH_SERVICE.search(search).await.unwrap();
+    assert_eq!(found_ids(&found), ["written"]);
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn a_search_of_one_conversation_also_matches_its_tool_results() {
     let _db = crate::db::testing::test_db();
     seed(&[("web", AGENT, None)]).await;
