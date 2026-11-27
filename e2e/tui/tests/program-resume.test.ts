@@ -2,11 +2,13 @@
  * `prism-cli` against a terminal that resumes programs (OSC 7577): the CLI reports
  * `prism --resume <id>` for its conversation, signed with the terminal's token, and
  * the reported command reopens that conversation in the reported directory. A user
- * exit clears the record and a termination keeps it. A terminal without a token
- * receives no report. No Bedrock interaction required.
+ * exit clears the record, also from the wait for a runtime that does not answer, and
+ * a termination keeps it. A terminal without a token receives no report. No Bedrock
+ * interaction required.
  */
 
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
@@ -69,6 +71,23 @@ function seedMessage(dbPath: string, threadId: string, content: string): void {
   }
 }
 
+/** A local port with nothing listening on it. */
+async function closedPort(): Promise<number> {
+  const server = net.createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as net.AddressInfo;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
+}
+
+/** A home directory whose settings file names `httpUrl`. */
+function homeWithRuntimeAt(httpUrl: string): string {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tui-e2e-program-resume-home-'));
+  fs.mkdirSync(path.join(home, '.prism'));
+  fs.writeFileSync(path.join(home, '.prism', 'settings.json'), JSON.stringify({ httpUrl }));
+  return home;
+}
+
 const feature = loadFeatureFromText(
   readFileSync(path.join(import.meta.dirname, '../features/program-resume.feature'), 'utf8'),
 );
@@ -77,6 +96,7 @@ let env: RuntimeTestEnv;
 let session: TuiSession | undefined;
 let projectDir: string;
 let homeDir: string;
+let offlineHomeDir: string;
 let cliEnv: NodeJS.ProcessEnv;
 
 describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachScenario, AfterEachScenario, Scenario }) => {
@@ -85,17 +105,14 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     projectDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tui-e2e-program-resume-project-')));
     // The resume command carries no environment, so the CLI reports only when the
     // settings file names the runtime.
-    homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tui-e2e-program-resume-home-'));
-    fs.mkdirSync(path.join(homeDir, '.prism'));
-    fs.writeFileSync(
-      path.join(homeDir, '.prism', 'settings.json'),
-      JSON.stringify({ httpUrl: `http://127.0.0.1:${env.port}` }),
-    );
+    homeDir = homeWithRuntimeAt(`http://127.0.0.1:${env.port}`);
+    offlineHomeDir = homeWithRuntimeAt(`http://127.0.0.1:${await closedPort()}`);
   });
   AfterAllScenarios(async () => {
     await env.cleanup();
     fs.rmSync(projectDir, { recursive: true, force: true });
     fs.rmSync(homeDir, { recursive: true, force: true });
+    fs.rmSync(offlineHomeDir, { recursive: true, force: true });
   });
   BeforeEachScenario(() => {
     wipeThreads(env.dbPath);
@@ -105,10 +122,10 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     if (session) await session.stop();
   });
 
-  const terminalEnv = (token: string | undefined): NodeJS.ProcessEnv => ({
+  const terminalEnv = (token: string | undefined, home = homeDir): NodeJS.ProcessEnv => ({
     ...env.prismEnv,
     PRISM_HTTP_URL: undefined,
-    HOME: homeDir,
+    HOME: home,
     OSC7577_TOKEN: token,
   });
 
@@ -221,6 +238,23 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       await session!.waitForFrame(/Prism/, BOOT_FRAME_TIMEOUT_MS);
       await new Promise((resolve) => setTimeout(resolve, 1_000));
       expect(session!.rawOutput()).not.toContain('\x1b]7577;');
+    });
+  });
+
+  Scenario('Ctrl+C while the CLI waits for the runtime clears the record', ({ Given, When, Then, And }) => {
+    Given('a terminal that supports program resume, and a runtime that does not answer', () => {
+      cliEnv = terminalEnv(TOKEN, offlineHomeDir);
+    });
+    When('I resume a conversation by id', () => {
+      session = startPrism({ env: cliEnv, runtime: env.runtime, args: ['--resume', 'thread-from-before'], cwd: projectDir });
+    });
+    And('I press Ctrl+C while the CLI waits for the runtime', async () => {
+      await session!.waitForFrame(/Waiting for the Prism runtime/, BOOT_FRAME_TIMEOUT_MS);
+      session!.send(KEYS.CTRL_C);
+      expect(await session!.waitForExit(30_000)).not.toBe(0);
+    });
+    Then('the CLI clears its resume record', () => {
+      expect(resumeReports(session!.rawOutput())).toEqual([{ pid: expect.any(Number), clear: true }]);
     });
   });
 });

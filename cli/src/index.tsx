@@ -80,12 +80,17 @@ function main(): void {
     );
   }
 
+  /** Remove this pane's resume record, for a launch that ends before the app runs. */
+  function clearResumeRecord(): void {
+    if (resumeToken && process.stdout.isTTY) process.stdout.write(programResumeSequence({ clear: true }, resumeToken));
+  }
+
   /**
    * Print why the launch cannot open a conversation, and exit with an error. A
    * terminal that resumed this command would run it again, so the record is cleared.
    */
   function fail(message: string): never {
-    if (resumeToken && process.stdout.isTTY) process.stdout.write(programResumeSequence({ clear: true }, resumeToken));
+    clearResumeRecord();
     console.error(message);
     process.exit(1);
   }
@@ -115,10 +120,17 @@ function main(): void {
       // stops it. The terminal's answers to the graphics probe arrive in raw mode first.
       await graphics;
       if (process.stdin.isTTY) process.stdin.setRawMode(false);
+      // Ctrl+C in the wait is a user exit, so it clears the record as the app's exit does.
+      const interrupted = () => {
+        clearResumeRecord();
+        process.exit(130);
+      };
+      process.on('SIGINT', interrupted);
       const opened: Launch =
         launch.kind === 'thread'
           ? await resolveThreadLaunch(launch.id, tuiAdapterService, onWait)
           : await resolveContinueLaunch(process.cwd(), tuiAdapterService, onWait);
+      process.off('SIGINT', interrupted);
       if (opened.kind === 'exit') fail(opened.message);
       if (process.stdin.isTTY) process.stdin.setRawMode(true);
       await start(opened.kind === 'thread' ? { thread: opened } : {});
