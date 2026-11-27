@@ -33,6 +33,8 @@ export interface TurnEventPayload {
   outcome?: TurnOutcome;
   /** What went wrong, when `outcome` is `failed`. Written for a person. */
   error?: string;
+  /** The step a `running` turn is on: another `running` event reports each step. */
+  step?: { index: number; tool: string };
 }
 
 /** What the terminal UI shows for a failed turn whose event has no `error`. */

@@ -32,7 +32,7 @@ use crate::lib::llm_errors::{
     build_error_step, build_refusal_step, is_context_overflow_error, is_rejected_request_error,
 };
 use crate::lib::llm_providers::create_provider::{create_provider, missing_provider_settings};
-use crate::lib::llm_providers::deferred_tools::record_deferral_refusal;
+use crate::lib::llm_providers::deferred_tools::{LOAD_TOOLS_NAME, record_deferral_refusal};
 use crate::lib::llm_providers::llm_provider::{
     CachePointFragment, DeferredToolProtocol, LlmProvider, ProviderOptionsFragment,
     ToolChangeProtocol, cache_request_options, cache_ttl_for, merge_provider_options,
@@ -48,7 +48,7 @@ use crate::lib::step_usage::{fold_step_usage, to_step_usage};
 use crate::lib::task_tool::{Invoker, Subagent};
 use crate::lib::telemetry::{LangfuseTelemetry, langfuse_telemetry, track_event};
 use crate::lib::tool_collection::{CollectToolsInput, collect_tools, with_tools_cache_control};
-use crate::lib::tool_lifecycle::with_tool_lifecycle_events;
+use crate::lib::tool_lifecycle::{with_tool_lifecycle_events, with_tool_lifecycle_events_on};
 use crate::lib::tool_output_limiter::{
     RenderToolResultOptions, SpilledToolOutput, ToolOutputCaptureOptions, render_tool_result,
     render_tool_result_detailed, unwrap_tool_output, with_tool_output_capture,
@@ -611,6 +611,8 @@ struct RequestInputs {
     model_id: String,
     cache_point: CachePointFragment,
     gated_tools: ToolSet,
+    /// The turn's finished steps, which `load_tools`'s events count from.
+    steps_finished: Arc<AtomicUsize>,
     deferrable: Vec<String>,
     subagents: Vec<Subagent>,
     tool_change_protocol: Option<&'static ToolChangeProtocol>,
@@ -663,8 +665,9 @@ impl RequestInputs {
         let request = &self.request;
         // Above the threshold the MCP tools go deferred, behind `load_tools` and the
         // catalog. `load_tools` is added after the gate: the tool it loads is gated
-        // on each call.
-        let tool_search: ToolSearchPlan = plan_tool_search(PlanToolSearchInput {
+        // on each call. It reports its calls like the gated tools, so a step that
+        // only loads tools is a step too.
+        let mut tool_search: ToolSearchPlan = plan_tool_search(PlanToolSearchInput {
             tools: self.gated_tools.clone(),
             deferrable: self.deferrable.clone(),
             protocol,
@@ -676,6 +679,12 @@ impl RequestInputs {
             },
         })
         .await;
+        tool_search.tools = with_tool_lifecycle_events_on(
+            tool_search.tools,
+            LOAD_TOOLS_NAME,
+            request.on_tool_event.clone(),
+            self.steps_finished.clone(),
+        );
         // A request that replays the conversation sends the conversation's declared
         // tool list, so the tools block stays the same when the tool set changes
         // (see tool_ledger_service.rs).
@@ -1568,6 +1577,7 @@ async fn run_invocation(
         model_id: model_id.clone(),
         cache_point,
         gated_tools,
+        steps_finished: steps_finished.clone(),
         deferrable: collected.deferrable,
         subagents,
         tool_change_protocol,

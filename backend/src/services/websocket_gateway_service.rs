@@ -605,7 +605,10 @@ impl WebSocketGatewayService {
         let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) else {
             return Vec::new();
         };
-        match QUESTION_CARD_SERVICE.waiting(&agent_id).await {
+        match QUESTION_CARD_SERVICE
+            .waiting(&agent_id, &CONFIG.owner_user_id())
+            .await
+        {
             Ok(cards) => cards
                 .into_iter()
                 .map(|card| SnapshotQuestionCard {
@@ -1000,12 +1003,15 @@ impl WebSocketGatewayService {
 
     /// Answer `hello`: the version check, the resume and the `welcome`.
     ///
-    /// The snapshot is read first, because the desktop's state needs the database.
-    /// Everything after it — the `welcome`, the replay and joining the live stream —
-    /// runs with the stream held, so no event can fall between the replay and the first
-    /// live one. An event published while the snapshot was read is in the replay, or
-    /// newer than a `welcome` that did not resume; either way the client applies it
-    /// after the snapshot, and every event is an upsert or a full state.
+    /// The snapshot is read first, because the desktop's state and the waiting question
+    /// cards need the database. Everything after it — the `welcome`, the replay and
+    /// joining the live stream — runs with the stream held, so no event can fall
+    /// between the replay and the first live one. An event published while the
+    /// snapshot was read is in the replay: the events after the client's cursor when
+    /// it resumes, else the events after the stream's position before the read, with
+    /// the `welcome` at that position. Either way the client applies it after the
+    /// snapshot, and every event is an upsert or a full state. Only when those events
+    /// are no longer kept does a `welcome` that did not resume start at the newest.
     ///
     /// A `hello` that does not parse or names another protocol is answered
     /// `protocol_unsupported`
@@ -1036,8 +1042,13 @@ impl WebSocketGatewayService {
 
         let ws = Arc::clone(ws);
         tokio::spawn(async move {
+            let read_from = (EVENT_STREAM_SERVICE.stream_id(), EVENT_STREAM_SERVICE.seq());
             let computer = self.computer_state().await;
             let question_cards = self.waiting_question_cards().await;
+            #[cfg(test)]
+            if let Some(after_read) = testing::AFTER_SNAPSHOT_READ.read().clone() {
+                after_read();
+            }
             if !ws.is_open() {
                 return;
             }
@@ -1047,6 +1058,13 @@ impl WebSocketGatewayService {
                 let replay = resume.as_ref().and_then(|resume| {
                     EVENT_STREAM_SERVICE.replay_after(&resume.stream_id, resume.seq)
                 });
+                // Without a resume, the events published while the snapshot was read.
+                let missed = match &replay {
+                    Some(_) => None,
+                    None => EVENT_STREAM_SERVICE
+                        .replay_after(&read_from.0, read_from.1)
+                        .map(|missed| (read_from.1, missed)),
+                };
                 let turns = INBOUND_MESSAGE_SERVICE
                     .turns()
                     .into_iter()
@@ -1062,7 +1080,9 @@ impl WebSocketGatewayService {
                         payload: WelcomePayload {
                             protocol: PROTOCOL_VERSION,
                             stream_id: EVENT_STREAM_SERVICE.stream_id(),
-                            seq: EVENT_STREAM_SERVICE.seq(),
+                            seq: missed
+                                .as_ref()
+                                .map_or_else(|| EVENT_STREAM_SERVICE.seq(), |(seq, _)| *seq),
                             resumed: replay.is_some(),
                             you: WelcomeYou {
                                 id: ws.sender.as_ref().map(|s| s.id.clone()),
@@ -1077,7 +1097,11 @@ impl WebSocketGatewayService {
                         },
                     },
                 );
-                for entry in replay.iter().flatten() {
+                for entry in replay
+                    .iter()
+                    .flatten()
+                    .chain(missed.iter().flat_map(|(_, missed)| missed))
+                {
                     self.send_entry(&ws, entry);
                 }
                 let subscriber = Arc::clone(&ws);
@@ -1631,6 +1655,18 @@ impl WebSocketGatewayService {
 
 pub static WEB_SOCKET_GATEWAY_SERVICE: LazyLock<WebSocketGatewayService> =
     LazyLock::new(WebSocketGatewayService::new);
+
+/// What tests run at the points a race needs.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::sync::Arc;
+
+    use parking_lot::RwLock;
+
+    /// Runs after a `hello`'s snapshot is read, before the `welcome` is sent.
+    pub(crate) static AFTER_SNAPSHOT_READ: RwLock<Option<Arc<dyn Fn() + Send + Sync>>> =
+        RwLock::new(None);
+}
 
 #[cfg(test)]
 mod tests;

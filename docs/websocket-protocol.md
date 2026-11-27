@@ -53,7 +53,9 @@ binary frames. A frame is at most 1 MB.
      after your cursor, in order, and then live events.
    - If `resumed` is `false`, reload history for the conversation on screen with
      `GET /messages?threadId=…`. Keep any events that arrive while that request
-     is running, and apply them afterwards.
+     is running, and apply them afterwards. The frames that follow `welcome` start
+     with the events published while the runtime read the snapshot, after its
+     `seq`, and then live events. Apply them over the snapshot.
    - `threadMode` is `single` when the agent keeps one conversation. Then show no
      way to start or switch a conversation: `GET /threads` lists that one alone, and
      `POST /threads` returns it. A runtime that sends no `threadMode` keeps many.
@@ -110,7 +112,11 @@ see a gap, reconnect and resume from the last `seq` you applied.
   - `step` `{ index, tool }` is the step a `running` turn is on. Each step that
     calls a tool arrives as another `running` event: `index` counts the turn's
     steps from 1, and `tool` names the tool the step called first. A turn that has
-    called no tool yet has no `step`.
+    called no tool yet has no `step`. When a turn with a step ends, a
+    `running` event without `step` follows. Then comes `idle`, a follow-up turn
+    that answers messages sent during the turn, or other work that keeps the
+    conversation running, such as a goal. A `running` event while the
+    conversation already runs reports progress, not a new turn.
   - `step` arrives in concise mode too
     ([chat verbosity](configuration.md#chat-verbosity)), where the text of the
     turn's steps stays hidden.

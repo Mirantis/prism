@@ -27,6 +27,7 @@ import {
   type SendAckPayload,
   type StreamEvent,
   type TurnEventPayload,
+  type TurnState,
   type WelcomePayload,
 } from '../chat-protocol.js';
 import { coerceMessage, type ContextUsage, type TuiMessage } from '../tui-adapter.js';
@@ -62,11 +63,16 @@ class Session {
   private tail: Promise<void> = Promise.resolve();
   private sends: Promise<void> = Promise.resolve();
 
-  /** `working`: whether a turn runs or waits on the conversation, as of the frames this session has handled. */
+  /** `state`: the conversation's turn, as of the frames this session has handled. */
   constructor(
     readonly id: string,
-    public working: boolean,
+    public state: TurnState,
   ) {}
+
+  /** Whether a turn runs or waits on the conversation. */
+  get working(): boolean {
+    return this.state !== 'idle';
+  }
 
   /** Run `work` after the sends before it, so the runtime gets the client's prompts in their order. */
   send(work: () => Promise<void>): Promise<void> {
@@ -87,7 +93,7 @@ class Session {
 class Bridge {
   private readonly sessions = new Map<string, Session>();
   /** The conversations with a turn running or queued, as the socket last said. A session starts from it. */
-  private readonly working = new Set<string>();
+  private readonly turns = new Map<string, Exclude<TurnState, 'idle'>>();
 
   constructor(
     private readonly runtime: Runtime,
@@ -110,7 +116,7 @@ class Bridge {
    * history goes first. Without, the client is taken to have the history.
    */
   attach(threadId: string, replay: boolean): Promise<void> {
-    const session = this.sessions.get(threadId) ?? new Session(threadId, this.working.has(threadId));
+    const session = this.sessions.get(threadId) ?? new Session(threadId, this.turns.get(threadId) ?? 'idle');
     // Registered before the read, so a message that arrives during it waits in the queue behind it.
     this.sessions.set(threadId, session);
     return session.run(async () => {
@@ -182,13 +188,13 @@ class Bridge {
   }
 
   private onWelcome(welcome: WelcomePayload): void {
-    this.working.clear();
-    for (const turn of welcome.snapshot.turns) this.working.add(turn.threadId);
+    this.turns.clear();
+    for (const turn of welcome.snapshot.turns) this.turns.set(turn.threadId, turn.state);
     // A resumed socket sends every missed event next, and the session follows those.
     if (welcome.resumed) return;
     for (const session of this.sessions.values()) {
-      const working = this.working.has(session.id);
-      this.queue(session.id, () => this.catchUp(session, working));
+      const state = this.turns.get(session.id) ?? 'idle';
+      this.queue(session.id, () => this.catchUp(session, state));
     }
   }
 
@@ -201,14 +207,15 @@ class Bridge {
       }
       case 'turn': {
         const turn = event.payload as TurnEventPayload;
-        const working = turn.state !== 'idle';
-        if (working) this.working.add(turn.threadId);
-        else this.working.delete(turn.threadId);
+        if (turn.state === 'idle') this.turns.delete(turn.threadId);
+        else this.turns.set(turn.threadId, turn.state);
         this.queue(turn.threadId, async (session) => {
-          session.working = working;
-          if (working) {
+          // A `running` event while the turn already runs reports its step, not a new turn.
+          const started = turn.state !== session.state;
+          session.state = turn.state;
+          if (session.working) {
             // In the session's order, so a cancel that ended with the turn before does not stop this one.
-            if (session.prompts.some((prompt) => prompt.cancelled)) this.runtime.cancel(session.id);
+            if (started && session.prompts.some((prompt) => prompt.cancelled)) this.runtime.cancel(session.id);
             return;
           }
           session.lastTurn = turn;
@@ -307,13 +314,14 @@ class Bridge {
 
   /**
    * After the socket came back without the missed events: send what the client
-   * missed. `working` is the conversation's state at the welcome. When no turn
+   * missed. `state` is the conversation's turn at the welcome. When no turn
    * works, the turn of the prompts the runtime had confirmed ended while the
    * socket was away, and they end here. A prompt sent after the welcome is
    * confirmed after it, and ends with its own turn.
    */
-  private async catchUp(session: Session, working: boolean): Promise<void> {
-    session.working = working;
+  private async catchUp(session: Session, state: TurnState): Promise<void> {
+    session.state = state;
+    const working = session.working;
     session.lastTurn = undefined;
     const confirmed = session.prompts.filter((prompt) => prompt.scheduled);
     for (const message of await this.missed(session)) await this.forward(session, message);

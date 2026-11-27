@@ -35,6 +35,7 @@ use crate::prompts::agent_message_prompt::{agent_message_columns, render_agent_m
 use crate::prompts::context_builder::{ConversationMessage as HistoryRow, SteeringMessage};
 use crate::prompts::resume_prompt::RESUMED_REPLY_NOTICE;
 use crate::prompts::task_notification_prompt::TASK_NOTIFICATION_TRIGGER;
+use crate::protocol::chat_protocol::TurnStep;
 use crate::services::agent_workspace_service::AGENT_WORKSPACE_SERVICE;
 use crate::services::attachment_service::ATTACHMENT_SERVICE;
 use crate::services::channel_adapter_interface::{ChannelContext, ChannelName};
@@ -241,14 +242,14 @@ pub struct ChatTurnEnd {
     pub error: Option<InvokeError>,
 }
 
-/// A step of a chat turn started: its first tool call began. Emitted as `step_started`.
+/// The step a chat turn is on changed. Emitted as `step_changed`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChatStepStarted {
+pub struct ChatStepChanged {
     pub thread_id: String,
-    /// The step's number in the turn, from 1.
-    pub index: usize,
-    /// The name of the tool call that started the step.
-    pub tool: String,
+    /// The step a tool call started, or `None` when the turn ended. A coalesced
+    /// follow-up turn starts without a step, and work that keeps the thread running
+    /// after the chat, such as a goal, reports none.
+    pub step: Option<TurnStep>,
 }
 
 /// The message of chat work whose row is not stored yet.
@@ -432,15 +433,15 @@ struct StreamTurnParams {
 /// Receives each `turn_ended` event.
 pub type TurnEndedListener = Arc<dyn Fn(&ChatTurnEnd) + Send + Sync>;
 
-/// Receives each `step_started` event.
-pub type StepStartedListener = Arc<dyn Fn(&ChatStepStarted) + Send + Sync>;
+/// Receives each `step_changed` event.
+pub type StepChangedListener = Arc<dyn Fn(&ChatStepChanged) + Send + Sync>;
 
-/// The `turn_ended` events, an exchange on a thread ended, and the `step_started`
-/// events, a step of a chat turn started.
+/// The `turn_ended` events, an exchange on a thread ended, and the `step_changed`
+/// events, the step of a chat turn changed.
 #[derive(Default)]
 pub struct ConversationEngineEvents {
     turn_ended: RwLock<Vec<TurnEndedListener>>,
-    step_started: RwLock<Vec<StepStartedListener>>,
+    step_changed: RwLock<Vec<StepChangedListener>>,
 }
 
 impl ConversationEngineEvents {
@@ -457,21 +458,38 @@ impl ConversationEngineEvents {
         }
     }
 
-    /// Call `listener` with every step of a chat turn that starts from now on.
-    pub fn on_step_started(&self, listener: impl Fn(&ChatStepStarted) + Send + Sync + 'static) {
-        self.step_started.write().push(Arc::new(listener));
+    /// Call `listener` with every change of a chat turn's step from now on.
+    pub(crate) fn on_step_changed(
+        &self,
+        listener: impl Fn(&ChatStepChanged) + Send + Sync + 'static,
+    ) {
+        self.step_changed.write().push(Arc::new(listener));
     }
 
-    /// Hand `started` to every listener, synchronously and in subscription order.
-    pub fn emit_step_started(&self, started: &ChatStepStarted) {
-        let listeners = self.step_started.read().clone();
+    /// Hand `changed` to every listener, synchronously and in subscription order.
+    fn emit_step_changed(&self, changed: &ChatStepChanged) {
+        let listeners = self.step_changed.read().clone();
         for listener in listeners {
-            listener(started);
+            listener(changed);
         }
     }
 }
 
-/// The turn's tool listener: `caller`'s, and a `step_started` event at the first
+/// Reports a chat turn's step ended when the turn ends, however it ends.
+struct StepEnded(String);
+
+impl Drop for StepEnded {
+    fn drop(&mut self) {
+        CONVERSATION_ENGINE_SERVICE
+            .events
+            .emit_step_changed(&ChatStepChanged {
+                thread_id: std::mem::take(&mut self.0),
+                step: None,
+            });
+    }
+}
+
+/// The turn's tool listener: `caller`'s, and a `step_changed` event at the first
 /// tool call of each step. The parallel calls of a step report it once.
 fn step_reporter(thread_id: &str, caller: Option<ToolLifecycleListener>) -> ToolLifecycleListener {
     let thread_id = thread_id.to_string();
@@ -482,10 +500,12 @@ fn step_reporter(thread_id: &str, caller: Option<ToolLifecycleListener>) -> Tool
         {
             CONVERSATION_ENGINE_SERVICE
                 .events
-                .emit_step_started(&ChatStepStarted {
+                .emit_step_changed(&ChatStepChanged {
                     thread_id: thread_id.clone(),
-                    index: event.step,
-                    tool: event.tool_name.clone(),
+                    step: Some(TurnStep {
+                        index: event.step,
+                        tool: event.tool_name.clone(),
+                    }),
                 });
         }
         if let Some(caller) = &caller {
@@ -1587,6 +1607,7 @@ impl ConversationEngineService {
             on_history_read: Some(Arc::clone(&params.on_history_read)),
             ..InvokeRequest::default()
         };
+        let _step_ended = StepEnded(thread_id.clone());
         let mut steps = stream_of(request);
         while let Some(step) = steps.next().await {
             let step = step?;
