@@ -663,7 +663,7 @@ describe('App', () => {
     unmount();
   });
 
-  it('leaves a half-typed draft untouched when Up is pressed', async () => {
+  it('recalls history from a draft and brings the draft back with Down', async () => {
     const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
     /**
      * Let Ink settle. Two sequential state updates (the resolved session thread,
@@ -673,15 +673,64 @@ describe('App', () => {
     const flush = async (times = 3) => {
       for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
     };
-    await submitCopy(stdin, flush);
-
-    stdin.write('draft'); // non-empty input, not browsing history
+    const count = (s: string, sub: string) => s.split(sub).length - 1;
+    // A plain chat message: a recalled slash command opens the popup, which
+    // then takes Down.
+    stdin.write('gamma-msg');
     await flush();
-    stdin.write('\x1B[A'); // Up — must be ignored so the draft survives
+    stdin.write('\r');
+    await flush();
+
+    stdin.write('half-typed');
+    await flush();
+    stdin.write('\x1B[A'); // Up on the only row → recall
+    await flush();
+    expect(count(lastFrame() ?? '', 'gamma-msg')).toBe(2); // message list + input
+    expect(lastFrame() ?? '').not.toContain('half-typed');
+
+    stdin.write('\x1B[B'); // Down past the newest → the draft comes back
+    await flush();
+    expect(count(lastFrame() ?? '', 'gamma-msg')).toBe(1);
+    expect(lastFrame() ?? '').toContain('half-typed');
+    unmount();
+  });
+
+  it('moves up through a multi-row draft before it recalls history', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    /**
+     * Let Ink settle. Two sequential state updates (the resolved session thread,
+     * then a context frame) need more than one macrotask to reach a frame, so
+     * settle a few times rather than guessing one is enough.
+     */
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
+    const count = (s: string, sub: string) => s.split(sub).length - 1;
+    stdin.write('gamma-msg');
+    await flush();
+    stdin.write('\r');
+    await flush();
+
+    for (const key of ['first-row', '\n', 'second-row']) {
+      // '\n' is Ctrl+J, which the composer keeps as a newline.
+      stdin.write(key);
+      await flush();
+    }
+    stdin.write('\x1B[A'); // Up from the second row → first row, no recall
+    await flush();
+    expect(count(lastFrame() ?? '', 'gamma-msg')).toBe(1);
+    expect(lastFrame() ?? '').toContain('second-row');
+
+    stdin.write('\x1B[A'); // Up on the first row → recall
+    await flush();
+    expect(count(lastFrame() ?? '', 'gamma-msg')).toBe(2);
+    expect(lastFrame() ?? '').not.toContain('second-row');
+
+    stdin.write('\x1B[B'); // Down past the newest → the draft comes back
     await flush();
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('draft');
-    expect(frame).not.toContain('/copy');
+    expect(count(frame, 'gamma-msg')).toBe(1);
+    expect(frame).toMatch(/first-row[^\n]*\n[^\n]*second-row/);
     unmount();
   });
 

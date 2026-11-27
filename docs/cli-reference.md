@@ -73,7 +73,7 @@ or **Enter** to complete the selection, then **Enter** to run.
 | `Enter` | Send the message (or run the slash command). While the command popup is open, Enter completes the selection instead of sending. Works while the agent is responding — the message is handed to the running turn. |
 | `Esc` | Cancel the in-flight response while the agent is thinking. Leaves what you have typed alone. |
 | `Ctrl+O` | Expand / collapse tool calls in the latest agent message. |
-| `Up` / `Down` | Walk back/forward through your message history (from an empty input). |
+| `Up` / `Down` | Move one row up or down in the input. On the first row, Up goes back through your message history; on the last row, Down goes forward. Down past the newest message brings back what you were typing. |
 | `Home` / `End`, `Ctrl+A` / `Ctrl+E` | Move to the start or end of the line. `Cmd+Left` / `Cmd+Right` do the same in a terminal that passes them to the program. |
 | `Option+Left` / `Option+Right`, `Ctrl+Left` / `Ctrl+Right` | Move one word back or forward. |
 | `Ctrl+C` | Quit. |
