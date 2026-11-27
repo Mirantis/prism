@@ -786,6 +786,20 @@ const DELIVERY_SCENARIOS: Scenario[] = [
     },
     (o) => !placesOf(o).has('#general'),
   ),
+  deliveryScenario(
+    'delivery.webhook-coalesced-once',
+    'A webhook run that handles three events of one review posts one message.',
+    {
+      mode: 'webhook',
+      instruction: 'A review event arrived on pull request {pull_request.number}: {comment.body}. Tell me in one sentence what the review asks for.',
+      payloads: [
+        { pull_request: { number: 42 }, comment: { body: 'Changes requested: see the inline comments.' } },
+        { pull_request: { number: 42 }, comment: { body: 'Rename parseConfig to readConfig.' } },
+        { pull_request: { number: 42 }, comment: { body: 'Add a test for the empty file case.' } },
+      ],
+    },
+    (o) => reachedUser(o) && o.reached.length === 1,
+  ),
 ];
 
 /** A working session whose details a summary has to carry word for word. All values are invented. */
