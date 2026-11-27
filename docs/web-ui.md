@@ -350,8 +350,10 @@ What the agent has spent, and what it has done.
   restart, and reads **Failed** when it cannot: a deliver-only event, or a
   webhook deleted in the meantime.
   Expand a run to see the message it delivered and the tool calls it made. When
-  it delivered to web chat, **Open conversation** opens that chat. The 1,000
-  newest finished runs are kept.
+  it delivered to web chat, **Open conversation** opens that chat. An event that
+  a webhook's coalescing window gave to an earlier event's run reads **Handled
+  with an earlier event**, and expands to that run. The 1,000 newest finished
+  runs are kept.
 
 - **Tool calls.** The tool calls the agent has stored, newest turn first, across
   every conversation, running back through the whole history.

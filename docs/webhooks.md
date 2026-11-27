@@ -34,6 +34,7 @@ Click **New subscription** on the Webhooks page. **Delivery** and
 | Delivery | **May post to** | Where the run may post: **All channels** (default — web chat, Slack and Teams, like heartbeat alerts), **Chat** (web chat only), **Slack** (Slack only), **Microsoft Teams** (Teams only), or **None** (nowhere) — see [Delivery targets & storage](#delivery-targets--storage). |
 | Delivery | **Slack channels** | Shown when **May post to** is **Slack**: the linked channels to post to. With none checked, the message goes to your DM, else the main channel. |
 | Delivery | **Deliver only** | Skip the agent: the rendered prompt template is posted directly as the message. Zero LLM cost — useful for plain notifications. |
+| Delivery | **Coalescing window (seconds)** | Hidden in **Deliver only** mode. Events that arrive within this many seconds (1–600) of the first one get one agent run, whose prompt holds every event. Empty (the default) = one run per event. |
 | Delivery | **Prompt** / **Message template** | Instructions for the agent, or the message sent in **Deliver only** mode. Supports payload substitution — see below. |
 | Authentication | **Scheme** | How the sender proves itself: **Shared token in a header** (default), **HMAC signature of the body**, or **None**. |
 | Authentication | **Header** / **Prefix** / **Secret** (+ **Algorithm** / **Encoding** / **Signed URL**) | Where the credential arrives and what it's compared against; shown once Scheme isn't None. See [Authentication](#authentication). |
@@ -87,10 +88,16 @@ disappears silently. Every accepted event is also listed on the
 (`202`) and queued, then executed one at a time in arrival order — so rapid
 distinct events are never dropped, even from senders that don't retry on
 non-2xx (GitHub never redelivers automatically). The queue is capped
-(10 pending); beyond that, deliveries answer `429` as a backstop against
+(10 pending runs); beyond that, deliveries answer `429` as a backstop against
 pathological floods. Deliver-only requests are not queued or limited — they
 cost no LLM tokens. A queued or running event survives a restart, and runs when
 the runtime is back.
+
+With a **Coalescing window**, the first event's run starts when the window ends,
+or when the previous run ends if that is later. The events that arrive until the
+run starts join it, up to 10 to a run, and a joining event takes no place in the
+queue. An event that arrives after the run starts goes into the next run. Each
+event answers `202` with its own `runId`.
 
 ## Authentication
 
