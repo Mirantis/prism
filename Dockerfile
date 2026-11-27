@@ -171,7 +171,7 @@ RUN npm install -g @anthropic-ai/claude-code @openai/codex
 # MITM-injection model rewrites `__nexus_cred:<id>__` placeholders on
 # the wire (no creds on disk).
 #
-# Pre-create ~/.cache node-owned: mise v2026.7.12 verifies tool downloads via
+# Pre-create ~/.cache node-owned: mise verifies tool downloads via
 # sigstore/cosign, whose TUF client writes a cache dir under ~/.cache. The
 # BuildKit cache mount on the next RUN creates the parent /home/node/.cache as
 # root, so without this the sigstore cache fails with "Permission denied" and
@@ -181,7 +181,7 @@ USER node
 # Bumped from v2026.2.16 → v2026.7.12: the older mise picked a freethreaded
 # stripped python-build-standalone tarball for `python@3.13` that it couldn't
 # lay out ("missing lib directory"); v2026.7.12 selects the correct build.
-ARG MISE_VERSION=v2026.7.12
+ARG MISE_VERSION=v2026.11.14
 # python is pinned to an exact patch: 3.13.15's from-source build fails in
 # `make install` while ensurepip bootstraps the bundled pip wheel (python-build
 # 2.8.3, Debian bookworm, amd64 and arm64 alike). Re-float to python@3.13 once
