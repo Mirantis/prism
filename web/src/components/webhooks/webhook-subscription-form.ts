@@ -51,10 +51,13 @@ export function subscriptionFormValues(subscription: WebhookSubscription): Webho
   };
 }
 
-/** The coalescing window to save: `null` for an empty field. The runtime checks the range. */
+/**
+ * The coalescing window to save: `null` for an empty field, and in Deliver only
+ * mode, which hides the field and runs no agent. The runtime checks the range.
+ */
 export function coalesceSecondsToSave(values: WebhookSubscriptionFormValues): number | null {
   const text = values.coalesceSeconds.trim();
-  return text === '' ? null : Number(text);
+  return values.deliverOnly || text === '' ? null : Number(text);
 }
 
 /** The channel list to save: the runtime accepts one for the Slack target only. */
