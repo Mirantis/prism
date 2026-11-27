@@ -29,6 +29,7 @@ pub mod loopback_host;
 pub mod managed_realtime;
 pub mod mcp_client;
 pub mod media_store;
+pub mod message_search_index;
 pub mod model_call;
 pub mod model_catalog;
 pub mod model_pricing;

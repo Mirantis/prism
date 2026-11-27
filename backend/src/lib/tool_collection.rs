@@ -12,7 +12,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::ai::{ModelMessage, ToolSet};
 use crate::config::CONFIG;
-use crate::db::models::ThreadSource;
 use crate::lib::coding_agents::availability::ensure_coding_agents_detected;
 use crate::lib::execution_environments::get_execution_environment::get_execution_environment;
 use crate::lib::llm_providers::llm_provider::{
@@ -29,7 +28,6 @@ use crate::services::channel_adapter_interface::ChannelName;
 use crate::services::coding_agent_sign_in::coding_agent_account::installed_clis;
 use crate::services::computer::computer_access::ComputerUse;
 use crate::services::computer::supported::has_computer_for_mode;
-use crate::services::conversation_service::CONVERSATION_SERVICE;
 use crate::services::delivery_target_service::PostingCeiling;
 use crate::services::outbound_message_service::SEND_MESSAGE_TOOL_NAME;
 use crate::services::plugin_mcp_service::PLUGIN_MCP_SERVICE;
@@ -39,7 +37,9 @@ use crate::tools::ask_questions::get_ask_questions_tools;
 use crate::tools::attachments::get_attachment_tools;
 use crate::tools::coding_agent_sign_in::get_coding_agent_sign_in_tools;
 use crate::tools::computer::get_computer_tools;
-use crate::tools::conversation_history::get_conversation_history_tools;
+use crate::tools::conversation_search::{
+    ConversationSearchToolsInput, get_conversation_search_tools,
+};
 use crate::tools::cron::get_cron_tools;
 use crate::tools::goals::get_goal_tools;
 use crate::tools::meeting::{
@@ -269,14 +269,14 @@ pub async fn collect_tools(input: CollectToolsInput) -> anyhow::Result<Collected
         input.register_attachment_injection.clone(),
     ));
     built_in_tools.extend(get_web_fetch_tools(&input.user_id, &input.agent_id));
-    // Every run bound to a stored thread gets it, so the thread keeps one tool list
-    // across its modes. A thread read live from a channel keeps its compacted
-    // messages there.
-    if let Some(thread_id) = thread_id
-        && CONVERSATION_SERVICE.get_thread_source(thread_id).await? == Some(ThreadSource::Database)
-    {
-        built_in_tools.extend(get_conversation_history_tools(thread_id, workspace_root));
-    }
+    built_in_tools.extend(get_conversation_search_tools(
+        ConversationSearchToolsInput {
+            agent_id: input.agent_id.clone(),
+            user_id: input.user_id.clone(),
+            thread_id: thread_id.map(str::to_string),
+            workspace_root: workspace_root.map(str::to_string),
+        },
+    ));
     // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md body on
     // demand. The workspace root merges the repo's skills with the global ones.
     // Empty (and omitted) when no skills are available.

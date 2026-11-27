@@ -50,7 +50,7 @@ appears in the chat and the context meter drops.
   strings and identifiers. It also records what tool calls did and returned,
   because the compacted context contains no raw tool calls.
 - When the summary leaves out a detail, the agent reads the original messages
-  with its compacted-history tool.
+  with its [conversation search](tools.md#conversation-search).
 
 ## Repeated compactions
 

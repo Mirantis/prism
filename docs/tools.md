@@ -58,13 +58,14 @@ Manage long-term memory. See **[Memory](memory.md)** for the full picture.
 **Write** and **Delete** are withheld and refused while
 **[locked-in mode](configuration.md#locked-in-mode)** is on. **Search** stays.
 
-## Compacted history
+## Conversation search
 
-**Read compacted history** — read the earlier messages of the conversation that
-a [compaction](compaction.md) summary replaced, with their tool calls and
-results, or search them for a word. A search shows the part of a long message
-around the match, and the agent can then read the messages around it or the
-whole message. The agent uses it when the summary leaves out a detail it needs.
+**Search conversations** — find what was said in any of the agent's
+conversations, on every surface, and read the messages around a match. Ask in
+your own words, such as "what codename did I give you last week?". A search
+finds the words of messages and of the agent's tool calls, not what a tool
+returned. The agent also reads with it the earlier part of a conversation that
+a [compaction](compaction.md) summary replaced.
 
 ## Self-management
 

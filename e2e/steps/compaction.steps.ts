@@ -168,7 +168,7 @@ Given('a compacted conversation whose summary leaves out the build id from a dep
   await new HomePage(page).navigate();
 });
 
-/** Three warnings far apart in one long log: a search shows the part around the first alone. */
+/** Three warnings far apart in one long log: a page of the conversation shows the start of the log alone. */
 const WARNING_STEPS = [41, 212, 377];
 const WARNING_LOG = Array.from({ length: 400 }, (_, i) =>
   WARNING_STEPS.includes(i) ? `step ${i}: WARN disk usage high on node-${i % 5}` : `step ${i}: ok (payments-api rollout, replica ${i % 3})`,
@@ -206,7 +206,7 @@ Then('the agent read a compacted message in full', async () => {
   const thread = await latestThread();
   const readsInFull = (r: { toolCalls: unknown }) =>
     ((r.toolCalls ?? []) as Array<{ tool?: string; input?: unknown }>).some((call) => {
-      if (call.tool !== 'read_compacted_history') return false;
+      if (call.tool !== 'search_conversations') return false;
       const input = typeof call.input === 'string' ? JSON.parse(call.input) : call.input;
       return typeof (input as { position?: unknown })?.position === 'number';
     });
@@ -222,10 +222,10 @@ Then('the agent read the compacted history', async () => {
   const thread = await latestThread();
   const rows = await pollUntil(
     () => dbHelper.getPrisma().conversationMessage.findMany({ where: { threadId: thread.id, role: 'AGENT' } }),
-    (found) => found.some((r) => JSON.stringify(r.toolCalls ?? '').includes('read_compacted_history')),
+    (found) => found.some((r) => JSON.stringify(r.toolCalls ?? '').includes('search_conversations')),
     120_000,
   );
-  expect(rows.some((r) => JSON.stringify(r.toolCalls ?? '').includes('read_compacted_history'))).toBe(true);
+  expect(rows.some((r) => JSON.stringify(r.toolCalls ?? '').includes('search_conversations'))).toBe(true);
 });
 
 Then('every seeded message is still visible in the conversation', async ({ page }) => {

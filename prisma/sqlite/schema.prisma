@@ -252,9 +252,10 @@ model ConversationThread {
   contextTokens Int?
   contextModel  String?
 
-  messages  ConversationMessage[]
-  goals     Goal[]
-  cronTasks CronTask[]
+  messages        ConversationMessage[]
+  channelMessages ChannelMessage[]
+  goals           Goal[]
+  cronTasks       CronTask[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -295,12 +296,58 @@ model ConversationMessage {
   thread      ConversationThread  @relation(fields: [threadId], references: [id], onDelete: Cascade)
   attachments MessageAttachment[]
   webhookRun  WebhookRun?
+  searchEntry MessageSearchEntry?
 
   @@index([role, createdAt])
   // A thread's history, whole or one page at a time. Without `id`, rows written in
   // the same millisecond stay in the order they were written, as the model's view needs.
   @@index([threadId, createdAt])
   @@map("conversation_messages")
+}
+
+// A person's message in a conversation whose history a channel keeps, as the last
+// read of that history returned it. The channel holds the only other copy, so the
+// conversation search keeps this one. Written by `conversation_search_service`.
+model ChannelMessage {
+  id                String   @id @default(uuid())
+  threadId          String
+  // The message's id in the channel.
+  externalMessageId String
+  senderExternalId  String?
+  senderName        String?
+  content           String
+  // When the person sent it, by the channel's clock.
+  createdAt         DateTime
+  updatedAt         DateTime @updatedAt
+
+  thread      ConversationThread  @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  searchEntry MessageSearchEntry?
+
+  @@unique([threadId, externalMessageId])
+  @@map("channel_messages")
+}
+
+// One message the conversation search can find: a stored message or a channel
+// message. `id` is the rowid of its text in the `message_search` full-text index.
+// Triggers that `lib/message_search_index.rs` creates at boot write these rows and
+// the index; no code writes them.
+model MessageSearchEntry {
+  id               Int     @id @default(autoincrement())
+  messageId        String? @unique
+  channelMessageId String? @unique
+  threadId         String
+  // The message's time in epoch milliseconds, whatever form its own column holds.
+  createdAtMs      BigInt
+  // A message a person typed, which a channel message of the same conversation replaces.
+  personMessage    Boolean
+  // Written in a heartbeat, scheduled-task or webhook run.
+  automated        Boolean
+
+  message        ConversationMessage? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  channelMessage ChannelMessage?      @relation(fields: [channelMessageId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAtMs])
+  @@map("message_search_entries")
 }
 
 // Shared files uploaded by users (web drag-and-drop or Slack attachments).

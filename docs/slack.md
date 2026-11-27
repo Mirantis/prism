@@ -110,7 +110,9 @@ switching to a DM link, and vice-versa.
   linked channels.
 - **Threads.** Each Slack thread maps to a conversation thread in
   Prism Agent; the agent can read the thread's history, including messages
-  from before it joined.
+  from before it joined. It keeps a copy of the messages it reads there, so it
+  can find them later from any conversation with
+  [conversation search](tools.md#conversation-search).
 - **Working cue.** While the agent works on your message it shows a live
   status in the reply thread: "is thinking…" while the model reasons, and the
   running tools while any are in flight — "is running kubectl…", or "is

@@ -36,7 +36,7 @@ use crate::services::plugin_catalog_service::{PLUGIN_CATALOG_SERVICE, PluginEntr
 use crate::services::skill_catalog_service::{SKILL_CATALOG_SERVICE, SkillEntry, SkillSource};
 use crate::services::tool_ledger_service::AnchoredToolChange;
 use crate::support::js::trim as js_trim;
-use crate::tools::conversation_history::COMPACTED_HISTORY_TOOL_NAME;
+use crate::tools::conversation_search::{CONVERSATION_SEARCH_TOOL_NAME, CURRENT_CONVERSATION};
 use crate::types::{AgentMessageOrigin, HeartbeatTrigger, InvokeMode, TaskLastSend};
 
 /// The context a prompt is built from (the same type the invocation reads).
@@ -923,7 +923,9 @@ pub const SUMMARY_MESSAGE_OPENING: &str = "<conversation-summary>";
 /// every turn sends the same bytes.
 fn summary_message(summary: &str, history_readable: bool) -> String {
     let lookup = if history_readable {
-        format!(" {COMPACTED_HISTORY_TOOL_NAME} reads the earlier messages word for word.")
+        format!(
+            " {CONVERSATION_SEARCH_TOOL_NAME} with conversation_id \"{CURRENT_CONVERSATION}\" reads the earlier messages word for word."
+        )
     } else {
         String::new()
     };

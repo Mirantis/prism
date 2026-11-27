@@ -1824,27 +1824,46 @@
       "description": "Read a public web page as text: its main text as markdown, with its title and final address. Use it to read a page instead of opening it in the browser. It runs no JavaScript and sends no sign-in, so open a page that needs either in the browser."
     }
   ],
-  "conversation-history": [
+  "conversation-search": [
     {
       "type": "function",
-      "name": "read_compacted_history",
+      "name": "search_conversations",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "query": {
-            "description": "Return only the messages whose text or tool calls contain this, ignoring case.",
+            "description": "A few distinctive keywords to search for. Without it, conversation_id names the conversation to read.",
             "type": "string",
             "minLength": 1
           },
+          "conversation_id": {
+            "description": "The conversation to search in or to read: an id a match gave, or \"current\" for this conversation. Without it, a query searches every conversation.",
+            "type": "string",
+            "minLength": 1
+          },
+          "max_results": {
+            "description": "How many matches to return, 1 to 10. Default 5.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "after": {
+            "description": "With a query: only messages from this time on. An ISO 8601 date or time, or a span back from now such as 24h, 7d or 2w.",
+            "type": "string"
+          },
+          "before": {
+            "description": "With a query: only messages before this time. An ISO 8601 date or time, or a span back from now such as 24h, 7d or 2w.",
+            "type": "string"
+          },
           "offset": {
-            "description": "How many messages to skip, for the next page. Without a query this is the position of the first message. Default 0.",
+            "description": "With conversation_id and no query: the position of the first message to read. Default 0.",
             "type": "integer",
             "minimum": 0,
             "maximum": 9007199254740991
           },
           "position": {
-            "description": "Read the message at this position in full, uncut. Ignores query and offset.",
+            "description": "With conversation_id and no query: read the message at this position in full, uncut.",
             "type": "integer",
             "minimum": 0,
             "maximum": 9007199254740991
@@ -1858,7 +1877,7 @@
         },
         "additionalProperties": false
       },
-      "description": "Read the earlier messages of this conversation that its summary replaced, oldest first, with their tool calls and results. Use it when you need an exact detail the summary does not give: a command, an error, a value, what the user said word for word. Each message has a position. A page cuts long texts; give a query to see the part around a match. Give a position as offset, without a query, to read from that message onward; a smaller offset reads the messages before it. Give position to read one message in full."
+      "description": "Search your conversations on every surface for what was said in them, or read one conversation. Use it when the user refers to something said in another conversation, or when this conversation's summary leaves out an exact detail: a command, an error, a value, what the user said word for word. A search takes a short query: a few distinctive keywords, not documents, code or long passages. It matches the words of messages, your replies and the inputs of your tool calls, but not tool results. Each match gives its conversation_id and the message's position in that conversation. To read around a match, give that conversation_id and an offset a few positions before it, without a query; a smaller offset reads earlier messages. Give conversation_id and position to read one message in full, with its tool results. The conversation_id \"current\" is this conversation, including the part its summary replaced."
     }
   ],
   "skills": [

@@ -119,6 +119,8 @@ fn loads_every_model_from_the_migrated_schema_and_models_every_column() {
         agent_workspace_revisions => AgentWorkspaceRevision,
         conversation_threads => ConversationThread,
         conversation_messages => ConversationMessage,
+        channel_messages => ChannelMessage,
+        message_search_entries => MessageSearchEntry,
         message_attachments => MessageAttachment,
         conversation_participants => ConversationParticipant,
         cron_tasks => CronTask,
