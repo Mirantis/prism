@@ -1,4 +1,7 @@
 import React from 'react';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from 'ink-testing-library';
 
@@ -674,8 +677,6 @@ describe('App', () => {
       for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
     };
     const count = (s: string, sub: string) => s.split(sub).length - 1;
-    // A plain chat message: a recalled slash command opens the popup, which
-    // then takes Down.
     stdin.write('gamma-msg');
     await flush();
     stdin.write('\r');
@@ -732,6 +733,79 @@ describe('App', () => {
     expect(count(frame, 'gamma-msg')).toBe(1);
     expect(frame).toMatch(/first-row[^\n]*\n[^\n]*second-row/);
     unmount();
+  });
+
+  it('brings the draft back with Down from a recalled slash command', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
+    await submitCopy(stdin, flush);
+
+    stdin.write('half-typed');
+    await flush();
+    stdin.write('\x1B[A'); // Up → "/copy", which opens the popup
+    await flush();
+    expect(lastFrame() ?? '').toContain('/copy');
+    expect(lastFrame() ?? '').not.toContain('half-typed');
+
+    stdin.write('\x1B[B'); // Down is the history walk's, not the popup's
+    await flush();
+    expect(lastFrame() ?? '').toContain('half-typed');
+    expect(lastFrame() ?? '').not.toContain('/copy');
+    unmount();
+  });
+
+  it('walks Up past a recalled slash command', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
+    const count = (s: string, sub: string) => s.split(sub).length - 1;
+    stdin.write('gamma-msg');
+    await flush();
+    stdin.write('\r');
+    await flush();
+    await submitCopy(stdin, flush);
+
+    stdin.write('\x1B[A'); // Up → "/copy"
+    await flush();
+    stdin.write('\x1B[A'); // Up → "gamma-msg", not a popup row
+    await flush();
+    expect(count(lastFrame() ?? '', 'gamma-msg')).toBe(2); // message list + input
+    unmount();
+  });
+
+  it('gives Up and Down back to the popup after Tab completes a recalled path', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'attach-walk-'));
+    fs.mkdirSync(path.join(dir, 'alpha', 'one'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'alpha', 'two'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'beta'));
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    const flush = async (times = 4) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
+    try {
+      stdin.write(`/attach ${dir}/`);
+      await flush();
+      stdin.write('\r'); // history now holds the /attach line
+      await flush();
+
+      stdin.write('draft-x');
+      await flush();
+      stdin.write('\x1B[A'); // Up → the /attach line, popup lists alpha and beta
+      await flush();
+      stdin.write('\t'); // Tab → into alpha, popup lists one and two
+      await flush();
+      stdin.write('\x1B[B'); // Down moves the selection, not back to the draft
+      await flush();
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('alpha/');
+      expect(frame).not.toContain('draft-x');
+    } finally {
+      unmount();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('clears the input when Down goes past the newest entry', async () => {
