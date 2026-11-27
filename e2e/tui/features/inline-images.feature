@@ -12,3 +12,21 @@ Feature: Images inside the agent's reply
     When I ask the agent to show an image between "PRISMBEFORE" and "PRISMAFTER"
     Then the CLI stores the image in the terminal
     And the reply draws the image's placeholders between "PRISMBEFORE" and "PRISMAFTER"
+
+  Scenario: Rex draws the image with the kitty graphics protocol
+    Given the CLI runs in Rex
+    When I ask the agent to show an image between "PRISMBEFORE" and "PRISMAFTER"
+    Then the CLI stores the image in the terminal
+    And the reply draws the image's placeholders between "PRISMBEFORE" and "PRISMAFTER"
+
+  Scenario: Rio draws the image with the kitty graphics protocol
+    Given the CLI runs in Rio
+    When I ask the agent to show an image between "PRISMBEFORE" and "PRISMAFTER"
+    Then the CLI stores the image in the terminal
+    And the reply draws the image's placeholders between "PRISMBEFORE" and "PRISMAFTER"
+
+  Scenario: A terminal that reports Unicode placeholders draws the image, whatever its name
+    Given the CLI runs in a terminal that reports Unicode placeholders
+    When I ask the agent to show an image between "PRISMBEFORE" and "PRISMAFTER"
+    Then the CLI stores the image in the terminal
+    And the reply draws the image's placeholders between "PRISMBEFORE" and "PRISMAFTER"
