@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::config::{CONFIG, CodingAgentName, TierSet};
 use crate::lib::coding_agents::cli_probe::probe_cli;
-use crate::lib::coding_agents::cli_run::{CliRunSpec, ParseLine, run_cli};
+use crate::lib::coding_agents::cli_run::{CliRunSpec, FlushEvents, ParseLine, run_cli};
 use crate::lib::coding_agents::coding_agent::{
     CodingAgent, CodingAgentEvent, CodingAgentHome, CodingAgentMode, CodingAgentRefusal,
     CodingAgentRun, CodingAgentStopReason, CodingAgentTask, CodingAgentUsage,
@@ -155,6 +155,8 @@ impl CodingAgent for AgyAgent {
             .unwrap_or_else(|| get_execution_environment_for(task.workdir.as_deref()));
         let models = CONFIG.coding_agent_models.agy.clone();
         let requested_model = model_for(&task, &models);
+        let (parse_line, flush) =
+            create_parser(requested_model.unwrap_or_else(|| UNNAMED_MODEL.to_string()));
         let run = run_cli(
             CliRunSpec {
                 task_id: task.task_id.clone(),
@@ -163,9 +165,8 @@ impl CodingAgent for AgyAgent {
                 args: build_args(&task, &models),
                 cwd: task.workdir.clone(),
                 env: task.env.clone(),
-                parse_line: create_parser(
-                    requested_model.unwrap_or_else(|| UNNAMED_MODEL.to_string()),
-                ),
+                parse_line,
+                flush: Some(flush),
             },
             Some(run_in),
         );
@@ -293,12 +294,16 @@ fn count(value: &Value, key: &str) -> i64 {
         .map_or(0, |count| count as i64)
 }
 
-/// Parses `agy --output-format stream-json` NDJSON lines into neutral events.
-fn create_parser(initial_model: String) -> ParseLine {
+/// Parses `agy --output-format stream-json` NDJSON lines into neutral events,
+/// plus an EOF flusher that emits any buffered in-progress `text_delta` if the
+/// process exits or is stopped before reaching `state: "DONE"` or `result`.
+fn create_parser(initial_model: String) -> (ParseLine, FlushEvents) {
     let mut model = initial_model;
-    let mut pending_text = String::new();
+    let pending_text = Arc::new(parking_lot::Mutex::new(String::new()));
+    let flush_pending = pending_text.clone();
+    let mut current_step_index: Option<i64> = None;
     let mut answers: Vec<String> = Vec::new();
-    Box::new(move |line| {
+    let parse_line: ParseLine = Box::new(move |line| {
         let event: Value = serde_json::from_str(line)?;
         if event.is_null() {
             anyhow::bail!("Cannot read properties of null (reading 'event')");
@@ -323,24 +328,44 @@ fn create_parser(initial_model: String) -> ParseLine {
                     return Ok(vec![]);
                 };
                 if text(step, "step_type") == Some("agent_response") {
+                    let mut events = Vec::new();
+                    let step_index = step.get("step_index").and_then(Value::as_i64);
+                    if step_index.is_some()
+                        && current_step_index.is_some()
+                        && step_index != current_step_index
+                    {
+                        let flushed = std::mem::take(&mut *pending_text.lock());
+                        if !flushed.is_empty() {
+                            answers.push(flushed.clone());
+                            events.push(CodingAgentEvent::Text { text: flushed });
+                        }
+                    }
+                    if step_index.is_some() {
+                        current_step_index = step_index;
+                    }
                     if let Some(delta) = non_empty_text(step, "text_delta") {
-                        pending_text.push_str(delta);
+                        pending_text.lock().push_str(delta);
                     }
-                    if text(step, "state") == Some("DONE") && !pending_text.is_empty() {
-                        let text = std::mem::take(&mut pending_text);
-                        answers.push(text.clone());
-                        return Ok(vec![CodingAgentEvent::Text { text }]);
+                    if text(step, "state") == Some("DONE") {
+                        let flushed = std::mem::take(&mut *pending_text.lock());
+                        current_step_index = None;
+                        if !flushed.is_empty() {
+                            answers.push(flushed.clone());
+                            events.push(CodingAgentEvent::Text { text: flushed });
+                        }
                     }
+                    return Ok(events);
                 }
                 Ok(vec![])
             }
             Some("result") => {
                 let payload = event.get("result").unwrap_or(&event);
                 let mut events = Vec::new();
-                if !pending_text.is_empty() {
-                    let text = std::mem::take(&mut pending_text);
-                    answers.push(text.clone());
-                    events.push(CodingAgentEvent::Text { text });
+                let flushed = std::mem::take(&mut *pending_text.lock());
+                current_step_index = None;
+                if !flushed.is_empty() {
+                    answers.push(flushed.clone());
+                    events.push(CodingAgentEvent::Text { text: flushed });
                 }
                 if let Some(usage) = payload.get("usage") {
                     // `agy` reports uncached `input_tokens` separately from `cache_read_tokens`
@@ -394,7 +419,16 @@ fn create_parser(initial_model: String) -> ParseLine {
             }
             _ => Ok(vec![]),
         }
-    })
+    });
+    let flush: FlushEvents = Box::new(move || {
+        let flushed = std::mem::take(&mut *flush_pending.lock());
+        if flushed.is_empty() {
+            Vec::new()
+        } else {
+            vec![CodingAgentEvent::Text { text: flushed }]
+        }
+    });
+    (parse_line, flush)
 }
 
 fn denied_actions_of(payload: &Value) -> Option<Vec<CodingAgentRefusal>> {
