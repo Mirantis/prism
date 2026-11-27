@@ -24,3 +24,9 @@ Feature: The terminal resumes the conversation after it restarts
     Given a terminal without program resume
     When I launch the CLI in a project directory
     Then the CLI writes no resume report
+
+  Scenario: Ctrl+C while the CLI waits for the runtime clears the record
+    Given a terminal that supports program resume, and a runtime that does not answer
+    When I resume a conversation by id
+    And I press Ctrl+C while the CLI waits for the runtime
+    Then the CLI clears its resume record
