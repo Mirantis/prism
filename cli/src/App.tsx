@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { randomUUID } from 'node:crypto';
 import { Box, Text, useApp, useInput, useStdin } from 'ink';
 import {
@@ -121,10 +121,12 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   const [staged, setStaged] = useState<AttachmentMeta[]>([]);
   // Submitted-input history for Up/Down recall (oldest → newest). historyIndex
   // is null when not browsing; otherwise it's the index of the entry currently
-  // shown in the input. Up enters history only from an empty input, then walks
-  // to older entries; editing the input exits browsing.
+  // shown in the input. Up on the composer's first row enters history and keeps
+  // the draft, which Down past the newest entry brings back. Editing the input
+  // exits browsing.
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  const draftRef = useRef('');
 
   // Mark adapter connected so any future runtime broadcasts can reach us.
   useEffect(() => {
@@ -264,6 +266,8 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
           })),
     [slashMode, filteredCommands, pathSuggestions],
   );
+
+  const popupOpen = (slashMode || attachMode) && popupItems.length > 0;
 
   // Keep commandIndex within bounds as the visible list shrinks/grows.
   useEffect(() => {
@@ -429,9 +433,10 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     { isActive: !suspended },
   );
 
-  // Ctrl+O / Up / Down / Tab handling. ink-text-input v6 explicitly returns
-  // early for these keys so they don't conflict with the textbox. Disabled
-  // while a panel is open so the panel's own useInput owns the keyboard.
+  // Escape / Ctrl+O handling, and Up / Down / Tab while a popup is open. The
+  // composer ignores Escape, Ctrl+O and Tab, and ignores Up / Down while it has
+  // no onVerticalEdge (see components/TextInput.tsx). Disabled while a panel is
+  // open so the panel's own useInput owns the keyboard.
   useInput((input, key) => {
     // Escape while the conversation is working stops it. A running turn ends
     // in a `turn` event whose outcome draws the marker, whoever stopped it. A
@@ -467,7 +472,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     // While a popup is open (slash commands or /attach path suggestions),
     // Up/Down move its selection and Tab autocompletes — that takes
     // precedence over history recall.
-    if ((slashMode || attachMode) && popupItems.length > 0) {
+    if (popupOpen) {
       if (key.upArrow) {
         setCommandIndex((i) => (i - 1 + popupItems.length) % popupItems.length);
         return;
@@ -492,39 +497,39 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       }
       return;
     }
+  }, {
+    isActive: !suspended && activePanel === null && !signInOpen && resumePhase === 'chat',
+  });
 
-    // Command history recall (popup not showing). Up enters history from an
-    // empty input and walks to older entries; Down walks back toward the
-    // newest and clears the input past the end. Each recall remounts <Input>
-    // so ink-text-input's cursor lands at the end of the value.
-    if (key.upArrow) {
-      if (history.length === 0) return;
-      // From an idle (non-browsing) state, only hijack Up when the input is
-      // empty so a half-typed draft is never clobbered.
-      if (historyIndex === null && inputValue.length > 0) return;
-      const nextIndex =
-        historyIndex === null ? history.length - 1 : Math.max(0, historyIndex - 1);
-      setHistoryIndex(nextIndex);
-      setInputValue(history[nextIndex] ?? '');
-      setInputResetKey((k) => k + 1);
-      return;
-    }
-    if (key.downArrow) {
+  // Command history recall, for Up on the composer's first row and Down on its
+  // last. Each recall remounts <Input> so the cursor lands at the end of the
+  // value.
+  const recallHistory = useCallback(
+    (direction: 'up' | 'down') => {
+      if (direction === 'up') {
+        if (history.length === 0) return;
+        if (historyIndex === null) draftRef.current = inputValue;
+        const nextIndex =
+          historyIndex === null ? history.length - 1 : Math.max(0, historyIndex - 1);
+        setHistoryIndex(nextIndex);
+        setInputValue(history[nextIndex] ?? '');
+        setInputResetKey((k) => k + 1);
+        return;
+      }
       if (historyIndex === null) return;
       const nextIndex = historyIndex + 1;
       if (nextIndex >= history.length) {
         setHistoryIndex(null);
-        setInputValue('');
+        setInputValue(draftRef.current);
         setInputResetKey((k) => k + 1);
         return;
       }
       setHistoryIndex(nextIndex);
       setInputValue(history[nextIndex] ?? '');
       setInputResetKey((k) => k + 1);
-    }
-  }, {
-    isActive: !suspended && activePanel === null && !signInOpen && resumePhase === 'chat',
-  });
+    },
+    [history, historyIndex, inputValue],
+  );
 
   // Drawn at once under the id it is sent with. The runtime's copy arrives with
   // the same id and takes this row's place.
@@ -729,8 +734,10 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
             onChange={handleInputChange}
             onSubmit={onSubmit}
             hideCursor={hideCursor}
+            // While a popup is open, App's own handler moves its selection.
+            onVerticalEdge={popupOpen ? undefined : recallHistory}
           />
-          {(slashMode || attachMode) && popupItems.length > 0 && (
+          {popupOpen && (
             <CommandPopup items={popupItems} selectedIndex={safeIndex} />
           )}
         </>

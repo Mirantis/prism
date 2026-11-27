@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
+import { Box } from 'ink';
+import chalk from 'chalk';
 import { render } from 'ink-testing-library';
 import { Input } from './Input.js';
 
@@ -13,10 +15,10 @@ const press = async (stdin: { write: (data: string) => void }, ...keys: string[]
 
 // The cursor starts at the end of `value`. After `keys`, an `X` is typed, and the
 // value it gives shows where the cursor was.
-const typeAfter = async (value: string, keys: string[]) => {
+const typeAfter = async (value: string, keys: string[], onVerticalEdge = vi.fn()) => {
   const onChange = vi.fn();
   const { stdin, unmount } = render(
-    <Input value={value} onChange={onChange} onSubmit={vi.fn()} />,
+    <Input value={value} onChange={onChange} onSubmit={vi.fn()} onVerticalEdge={onVerticalEdge} />,
   );
   await press(stdin, ...keys, 'X');
   unmount();
@@ -158,6 +160,116 @@ describe('Input', () => {
       // Ink holds a lone ESC for 20 ms before it emits Escape.
       await new Promise((r) => setTimeout(r, 60));
       expect(onChange).not.toHaveBeenCalled();
+      unmount();
+    });
+  });
+
+  describe('Up and Down', () => {
+    it('moves one line up at the same column', async () => {
+      const onVerticalEdge = vi.fn();
+      expect(await typeAfter('alpha\nbeta', ['\x1b[A'], onVerticalEdge)).toBe('alphXa\nbeta');
+      expect(onVerticalEdge).not.toHaveBeenCalled();
+    });
+
+    it('moves one line down at the same column', async () => {
+      const onVerticalEdge = vi.fn();
+      const value = await typeAfter('alpha\nbeta', ['\x1b[A', '\x1b[H', '\x1b[B'], onVerticalEdge);
+      expect(value).toBe('alpha\nXbeta');
+      expect(onVerticalEdge).not.toHaveBeenCalled();
+    });
+
+    it('reports Up on the first row and Down on the last', async () => {
+      const onVerticalEdge = vi.fn();
+      const { stdin, unmount } = render(
+        <Input value={'alpha\nbeta'} onChange={vi.fn()} onSubmit={vi.fn()} onVerticalEdge={onVerticalEdge} />,
+      );
+      await press(stdin, '\x1b[B');
+      expect(onVerticalEdge).toHaveBeenLastCalledWith('down');
+      await press(stdin, '\x1b[A');
+      expect(onVerticalEdge).toHaveBeenCalledTimes(1);
+      await press(stdin, '\x1b[A');
+      expect(onVerticalEdge).toHaveBeenLastCalledWith('up');
+      expect(onVerticalEdge).toHaveBeenCalledTimes(2);
+      unmount();
+    });
+
+    it('moves between the rows a long line wraps into', async () => {
+      // 16 columns less the border, the padding and the prompt leave 10 for the
+      // text, so it draws as "aaaa bbbb " and "cccc".
+      const onChange = vi.fn();
+      const onVerticalEdge = vi.fn();
+      const { stdin, lastFrame, unmount } = render(
+        <Box width={16}>
+          <Input
+            value="aaaa bbbb cccc"
+            onChange={onChange}
+            onSubmit={vi.fn()}
+            onVerticalEdge={onVerticalEdge}
+          />
+        </Box>,
+      );
+      expect(lastFrame() ?? '').toMatch(/aaaa bbbb[^\n]*\n[^\n]*cccc/);
+      await press(stdin, '\x1b[A', 'X');
+      expect(onChange).toHaveBeenLastCalledWith('aaaaX bbbb cccc');
+      expect(onVerticalEdge).not.toHaveBeenCalled();
+      unmount();
+    });
+
+    it('reports Up on one drawn row when the cursor cell fills the padding', async () => {
+      // 15 columns leave 9 for the text. Ink still draws "aaaa bbbb" and the cursor
+      // cell on one row, the cell in the right padding.
+      const onVerticalEdge = vi.fn();
+      const { stdin, unmount } = render(
+        <Box width={15}>
+          <Input value="aaaa bbbb" onChange={vi.fn()} onSubmit={vi.fn()} onVerticalEdge={onVerticalEdge} />
+        </Box>,
+      );
+      await press(stdin, '\x1b[A');
+      expect(onVerticalEdge).toHaveBeenCalledWith('up');
+      unmount();
+    });
+
+    it('draws a cursor that sits on a newline, and moves on from it', async () => {
+      const level = chalk.level;
+      chalk.level = 1;
+      try {
+        const onChange = vi.fn();
+        const { stdin, lastFrame, unmount } = render(
+          <Input value={'alpha\nbeta'} onChange={onChange} onSubmit={vi.fn()} onVerticalEdge={vi.fn()} />,
+        );
+        await press(stdin, '\x1b[A', '\x05'); // Up, then Ctrl+E onto the newline
+        expect(lastFrame() ?? '').toContain(`alpha${chalk.inverse(' ')}`);
+        await press(stdin, '\x1b[B', 'X'); // Down keeps the column, clamped to "beta"
+        expect(onChange).toHaveBeenLastCalledWith('alpha\nbetaX');
+        unmount();
+      } finally {
+        chalk.level = level;
+      }
+    });
+
+    it('ignores Up and Down without onVerticalEdge', async () => {
+      const onChange = vi.fn();
+      const { stdin, unmount } = render(
+        <Input value={'alpha\nbeta'} onChange={onChange} onSubmit={vi.fn()} />,
+      );
+      await press(stdin, '\x1b[A', 'X');
+      expect(onChange).toHaveBeenLastCalledWith('alpha\nbetaX');
+      unmount();
+    });
+
+    it('reports every Up and Down when the cursor is hidden', async () => {
+      const onVerticalEdge = vi.fn();
+      const { stdin, unmount } = render(
+        <Input
+          value={'alpha\nbeta'}
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          hideCursor
+          onVerticalEdge={onVerticalEdge}
+        />,
+      );
+      await press(stdin, '\x1b[A');
+      expect(onVerticalEdge).toHaveBeenLastCalledWith('up');
       unmount();
     });
   });

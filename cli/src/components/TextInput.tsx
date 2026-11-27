@@ -8,6 +8,9 @@
  * - Home, End, Ctrl+A, Ctrl+E and Cmd+Left/Right go to the start or end of the
  *   line. Option+Left/Right, Meta+B/F and Ctrl+Left/Right move one word
  *   (`cursor-motion.ts`).
+ * - With `onVerticalEdge`, Up and Down move one drawn row. On the first or last
+ *   row they call `onVerticalEdge` instead. Without it they are ignored, as
+ *   upstream ignores them.
  *
  * Why we vendor it. Upstream's guard only skips up/down/tab/shift+tab/ctrl+c, so
  * Ink hands Ctrl+O in as `input === 'o'` and it lands in the value. `App` also
@@ -20,18 +23,20 @@
  * user can steer it mid-response, and that accident is gone.
  *
  * Filtering here settles it by construction rather than by mount order: chords
- * belong to `App`, never to the value. `key.meta` is deliberately NOT filtered —
- * Ink sets it for Option+Enter, which must keep submitting.
+ * belong to `App`, never to the value. Up and Down follow the same rule: the
+ * cursor offset is state here, so this handler chooses whether a key moves the
+ * cursor or goes to `App` through `onVerticalEdge`. `key.meta` is deliberately
+ * NOT filtered — Ink sets it for Option+Enter, which must keep submitting.
  *
  * Everything else is upstream's logic, transcribed to TSX, less `placeholder`,
  * `highlightPastedText` and `UncontrolledTextInput`, which nothing here uses.
  */
 
-import React, { useState, useEffect } from 'react';
-import { Text, useInput } from 'ink';
+import React, { useState, useEffect, useRef } from 'react';
+import { Box, Text, measureElement, useInput, type DOMElement } from 'ink';
 import chalk from 'chalk';
 import { isLateProbeReply } from '../images/terminal-graphics.js';
-import { editingKeyTarget } from './cursor-motion.js';
+import { editingKeyTarget, verticalTarget } from './cursor-motion.js';
 
 interface Props {
   value: string;
@@ -43,6 +48,8 @@ interface Props {
   showCursor?: boolean;
   /** Draw each character as this instead, for a password field. */
   mask?: string;
+  /** Up on the first drawn row or Down on the last. Without it, Up and Down are ignored. */
+  onVerticalEdge?: (direction: 'up' | 'down') => void;
 }
 
 export const TextInput: React.FC<Props> = ({
@@ -52,7 +59,9 @@ export const TextInput: React.FC<Props> = ({
   focus = true,
   showCursor = true,
   mask,
+  onVerticalEdge,
 }) => {
+  const boxRef = useRef<DOMElement>(null);
   const [cursorOffset, setCursorOffset] = useState((originalValue || '').length);
 
   // Keep the cursor inside the value when it changes from the outside (history
@@ -72,7 +81,10 @@ export const TextInput: React.FC<Props> = ({
     renderedValue = shownValue.length > 0 ? '' : chalk.inverse(' ');
     let i = 0;
     for (const char of shownValue) {
-      renderedValue += i === cursorOffset ? chalk.inverse(char) : char;
+      if (i !== cursorOffset) renderedValue += char;
+      // An inverse newline shows nothing, so a cursor on one draws as a cell before it.
+      else if (char === '\n') renderedValue += `${chalk.inverse(' ')}\n`;
+      else renderedValue += chalk.inverse(char);
       i++;
     }
     if (shownValue.length > 0 && cursorOffset === shownValue.length) {
@@ -83,8 +95,6 @@ export const TextInput: React.FC<Props> = ({
   useInput(
     (input, key) => {
       if (
-        key.upArrow ||
-        key.downArrow ||
         key.tab ||
         (key.shift && key.tab) ||
         // App cancels the in-flight turn on Escape; upstream let it fall through
@@ -93,6 +103,21 @@ export const TextInput: React.FC<Props> = ({
         // The terminal's answer to the start-up graphics probe, arriving late over a slow link.
         isLateProbeReply(input)
       ) {
+        return;
+      }
+
+      if (key.upArrow || key.downArrow) {
+        if (!onVerticalEdge) return;
+        const direction = key.upArrow ? 'up' : 'down';
+        // Ink wraps the text at the text node's own width, which can be one column
+        // wider than the box when the cursor cell overflows into the padding.
+        const textNode = boxRef.current?.childNodes[0] as DOMElement | undefined;
+        const width = textNode ? measureElement(textNode).width : 0;
+        const target = showCursor
+          ? verticalTarget(shownValue, cursorOffset, width, direction)
+          : null;
+        if (target === null) onVerticalEdge(direction);
+        else setCursorOffset(target);
         return;
       }
 
@@ -141,7 +166,12 @@ export const TextInput: React.FC<Props> = ({
     { isActive: focus },
   );
 
-  return <Text>{renderedValue}</Text>;
+  // The box gives Up and Down a handle on the text node, which takes no ref.
+  return (
+    <Box ref={boxRef}>
+      <Text>{renderedValue}</Text>
+    </Box>
+  );
 };
 
 export default TextInput;
