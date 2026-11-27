@@ -90,6 +90,7 @@ fn chatgpt_provider(base_url: &str, fetch: FetchFunction) -> LlmProvider {
         api_key: Some("chatgpt-oauth".to_string()),
         base_url: Some(base_url.to_string()),
         fetch: Some(fetch),
+        headers: None,
         // The endpoint also answers only streamed requests.
         middleware: vec![
             Arc::new(NoStore),

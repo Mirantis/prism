@@ -21,6 +21,7 @@ use crate::lib::embedding_providers::embedding_provider::{
     EMBEDDING_DIMENSIONS, EmbeddingProvider,
 };
 use crate::lib::llm_providers::llm_provider::provider_options;
+use crate::lib::llm_providers::openrouter::openrouter_provider::open_router_attribution_headers;
 
 pub fn create_open_router_embedding_provider(base_url: &str) -> EmbeddingProvider {
     let openai = Arc::new(create_openai(openrouter_settings(&CONFIG, base_url)));
@@ -53,6 +54,7 @@ fn openrouter_settings(config: &Config, base_url: &str) -> OpenAIProviderSetting
                     .then(|| "managed".to_string())
             }),
         base_url: Some(base_url.to_string()),
+        headers: Some(open_router_attribution_headers(config)),
         ..Default::default()
     }
 }
@@ -90,6 +92,14 @@ mod tests {
             "https://proxy.example/openrouter/v1",
         );
         assert_eq!(s.api_key, None);
+    }
+
+    #[test]
+    fn names_the_same_app_as_chat() {
+        let config = config(&[("OPENROUTER_APP_TITLE", "Example Product")]);
+        let s = openrouter_settings(&config, OPENROUTER_DIRECT);
+        assert_eq!(s.headers, Some(open_router_attribution_headers(&config)));
+        assert_eq!(s.headers.unwrap()["X-OpenRouter-Title"], "Example Product");
     }
 
     #[test]

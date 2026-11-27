@@ -130,6 +130,7 @@ grouped per platform.
 | `OPENAI_BASE_URL` | **(OpenAI)** Override the chat/embeddings endpoint (must serve the Responses API). Does not move the voice-meeting Realtime WebSocket. |
 | `OPENROUTER_API_KEY` | **(OpenRouter)** API key, sent as a bearer header. Required for direct mode only — through the Mirantis Agent Platform gateway it holds the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `OPENROUTER_BASE_URL` | **(OpenRouter)** Override the chat/embeddings endpoint (must serve the Responses API). Defaults to `https://openrouter.ai/api/v1`. |
+| `OPENROUTER_APP_URL` / `OPENROUTER_APP_TITLE` | **(OpenRouter)** The app OpenRouter credits this agent's usage to, shown in its public rankings under the `personal-agent` category. Set both to show a product that runs Prism under its own name. Defaults to `https://github.com/Mirantis/prism` and `Prism`. |
 | `ANTHROPIC_API_KEY` | **(Anthropic)** API key, sent as the `x-api-key` header. Always required — this platform is direct-only, so there is no gateway mode to hold the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `ANTHROPIC_BASE_URL` | **(Anthropic)** Override the chat endpoint (must end at `/v1`). |
 | `LITELLM_API_KEY` | **(LiteLLM)** LiteLLM key, sent as the `x-api-key` header. Required for direct mode only — through the Mirantis Agent Platform gateway it holds the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
