@@ -14,15 +14,20 @@ use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::*;
-use crate::db::models::{NewAgentWorkspace, NewConversationThread};
-use crate::db::schema::{agent_workspaces, conversation_threads};
+use crate::db::models::{
+    MessageRole, MessageTrigger, NewAgentWorkspace, NewConversationMessage, NewConversationThread,
+};
+use crate::db::schema::{agent_workspaces, conversation_messages, conversation_threads};
+use crate::db::sql_types::DbDateTime;
+use crate::lib::tool_lifecycle::{ToolLifecycleEvent, ToolLifecycleEventType};
 use crate::protocol::chat_protocol::SequencedEvent;
 use crate::protocol::chat_protocol::{TurnEventPayload, TurnState};
+use crate::services::agent_workspace_service::AGENT_WORKSPACE_SERVICE;
 use crate::services::context_usage_service::{ContextUsageEvent, ContextUsageSnapshot};
 use crate::services::conversation_service::ThreadCreated;
 use crate::services::message_delivery_service::MESSAGE_DELIVERY_SERVICE;
 use crate::services::websocket_adapter_service::WebSocketAdapterService;
-use crate::types::{InvokeRequest, InvokeStep};
+use crate::types::{InvokeRequest, InvokeStep, ToolCallRecord};
 
 const THREAD: &str = "d046783b-f46e-43b5-b4bb-247e6b1915bf";
 const MESSAGE: &str = "8d7e6f5a-4b3c-4d2e-9f1a-0b1c2d3e4f5a";
@@ -192,6 +197,7 @@ fn turn_event() -> StreamEvent {
         state: TurnState::Running,
         outcome: None,
         error: None,
+        step: None,
     })
 }
 
@@ -647,6 +653,15 @@ fn normalized(mut ours: Value, recorded: &Value) -> Value {
             let computer = &recorded["payload"]["snapshot"]["computer"];
             ours["payload"]["snapshot"]["computer"] =
                 only_keys_of(&ours["payload"]["snapshot"]["computer"], computer);
+            if recorded["payload"]["snapshot"]
+                .get("questionCards")
+                .is_none()
+            {
+                ours["payload"]["snapshot"]
+                    .as_object_mut()
+                    .unwrap()
+                    .shift_remove("questionCards");
+            }
         }
         Some("computer") => ours["payload"] = only_keys_of(&ours["payload"], &recorded["payload"]),
         Some("message") => {
@@ -746,4 +761,214 @@ async fn plays_the_recorded_session_frame_for_frame() {
 
     *crate::services::conversation_engine_service::testing::INVOKE.write() = None;
     *crate::services::thread_title_service::testing::GENERATE.write() = None;
+}
+
+// ============================================================================
+// The step a running turn is on
+// ============================================================================
+
+fn started(request: &InvokeRequest, tool: &str, step: usize) {
+    (request.on_tool_event.as_ref().unwrap())(ToolLifecycleEvent {
+        kind: ToolLifecycleEventType::Started,
+        tool_name: tool.into(),
+        step,
+    });
+}
+
+/// A model whose first step calls `web_search` and `fetch_page` at once and says
+/// "Looking it up.", and whose second step calls `read_file`, once `release` lets it.
+fn stepping_model(
+    release: Arc<tokio::sync::Notify>,
+) -> crate::services::conversation_engine_service::testing::Invoke {
+    Arc::new(move |request: InvokeRequest| {
+        let request = Arc::new(request);
+        let (first, second) = (request.clone(), request);
+        let release = release.clone();
+        let tool_call: ToolCallRecord = serde_json::from_value(json!({
+            "tool": "web_search",
+            "input": "{}",
+            "output": "",
+            "success": true,
+            "timestamp": "2026-01-01"
+        }))
+        .unwrap();
+        futures::stream::once(async move {
+            started(&first, "web_search", 1);
+            started(&first, "fetch_page", 1);
+            Ok(InvokeStep {
+                text: "Looking it up.".into(),
+                tool_calls: vec![tool_call],
+                ..InvokeStep::default()
+            })
+        })
+        .chain(futures::stream::once(async move {
+            release.notified().await;
+            started(&second, "read_file", 2);
+            Ok(InvokeStep {
+                text: "Done.".into(),
+                ..InvokeStep::default()
+            })
+        }))
+        .boxed()
+    })
+}
+
+/// Runs one turn on the stepping model and checks the steps every client is told,
+/// in the `turn` events and in the `welcome` of a client that connects mid-turn.
+/// Answers the texts of the turn's `message` events.
+async fn run_a_stepping_turn(verbose: bool) -> Vec<Value> {
+    fresh_stream();
+    seed().await;
+    AGENT_WORKSPACE_SERVICE
+        .update_verbose(&json!(verbose))
+        .await
+        .unwrap();
+    let url = serve().await;
+    let release = Arc::new(tokio::sync::Notify::new());
+    *crate::services::thread_title_service::testing::GENERATE.write() =
+        Some(Arc::new(|_: &str| None));
+    *crate::services::conversation_engine_service::testing::INVOKE.write() =
+        Some(stepping_model(release.clone()));
+
+    let mut client = ready(&url).await;
+    client.send(send_frame("s1", json!({}))).await;
+    client
+        .next(|f| f["type"] == "turn" && f["payload"]["step"]["index"] == 1)
+        .await;
+    let mut late = Client::open(&url, &[]).await;
+    late.hello(None).await;
+    let welcome = late.welcome().await;
+    assert_eq!(
+        welcome["payload"]["snapshot"]["turns"],
+        json!([{ "threadId": THREAD, "state": "running", "step": { "index": 1, "tool": "web_search" } }])
+    );
+    release.notify_one();
+    client
+        .next(|f| f["type"] == "turn" && f["payload"]["state"] == "idle")
+        .await;
+
+    let turns: Vec<Value> = client
+        .frames
+        .iter()
+        .filter(|f| f["type"] == "turn")
+        .map(|f| f["payload"].clone())
+        .collect();
+    assert_eq!(
+        turns,
+        [
+            json!({ "threadId": THREAD, "state": "running" }),
+            json!({ "threadId": THREAD, "state": "running", "step": { "index": 1, "tool": "web_search" } }),
+            json!({ "threadId": THREAD, "state": "running", "step": { "index": 2, "tool": "read_file" } }),
+            json!({ "threadId": THREAD, "state": "idle", "outcome": "completed" }),
+        ]
+    );
+    let texts = client
+        .frames
+        .iter()
+        .filter(|f| f["type"] == "message" && f["payload"]["role"] == "AGENT")
+        .map(|f| f["payload"]["content"].clone())
+        .collect();
+    late.close().await;
+    client.close().await;
+    *crate::services::conversation_engine_service::testing::INVOKE.write() = None;
+    *crate::services::thread_title_service::testing::GENERATE.write() = None;
+    texts
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
+async fn a_concise_turn_reports_its_step_and_keeps_the_steps_text_hidden() {
+    let _db = crate::db::testing::test_db();
+    let texts = run_a_stepping_turn(false).await;
+    assert_eq!(texts, [json!("Done.")]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
+async fn a_verbose_turn_reports_its_step_and_shows_the_steps_text() {
+    let _db = crate::db::testing::test_db();
+    let texts = run_a_stepping_turn(true).await;
+    assert_eq!(texts, [json!("Looking it up."), json!("Done.")]);
+}
+
+// ============================================================================
+// Waiting question cards
+// ============================================================================
+
+const OTHER_THREAD: &str = "5b1e8c2d-7a4f-4e3b-9c6d-1f2e3a4b5c6d";
+
+/// A message in `thread_id` whose question card has `id` and `status`, stored at `second`.
+async fn seed_card(thread_id: &str, id: &str, status: &str, second: u32) {
+    let mut row = NewConversationMessage::new(
+        thread_id,
+        MessageRole::Agent,
+        "Budget?",
+        MessageTrigger::UserInput,
+    );
+    row.created_at = DbDateTime(
+        chrono::DateTime::parse_from_rfc3339(&format!("2026-01-01T00:00:{second:02}Z"))
+            .unwrap()
+            .into(),
+    );
+    let mut card = json!({
+        "type": "question_card",
+        "id": id,
+        "status": status,
+        "questions": [{ "text": "Budget?", "options": [{ "label": "Low" }, { "label": "High" }], "allowOther": false, "multiSelect": false }],
+        "otherMaxLength": 500
+    });
+    if status == "answered" {
+        card["answers"] = json!([{ "options": [0] }]);
+        card["answeredBy"] = Value::Null;
+    }
+    row.blocks = Some(json!([card]));
+    crate::db::run(move |conn| {
+        diesel::insert_into(conversation_messages::table)
+            .values(&row)
+            .execute(conn)?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
+async fn lists_the_waiting_question_cards_of_every_conversation_in_the_welcome() {
+    let _db = crate::db::testing::test_db();
+    fresh_stream();
+    seed().await;
+    crate::db::run(|conn| {
+        let mut thread =
+            NewConversationThread::new(CONFIG.agent_id().unwrap(), CONFIG.owner_user_id());
+        thread.id = OTHER_THREAD.into();
+        diesel::insert_into(conversation_threads::table)
+            .values(&thread)
+            .execute(conn)?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let (answered, first, second) = (
+        "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+        "1b2c3d4e-5f6a-4b7c-9d8e-0f1a2b3c4d5e",
+        "2c3d4e5f-6a7b-4c8d-ae9f-1a2b3c4d5e6f",
+    );
+    seed_card(THREAD, answered, "answered", 1).await;
+    seed_card(OTHER_THREAD, first, "waiting", 2).await;
+    seed_card(THREAD, second, "waiting", 3).await;
+    let url = serve().await;
+
+    let mut client = Client::open(&url, &[]).await;
+    client.hello(None).await;
+    let welcome = client.welcome().await;
+
+    assert_eq!(
+        welcome["payload"]["snapshot"]["questionCards"],
+        json!([
+            { "id": first, "threadId": OTHER_THREAD },
+            { "id": second, "threadId": THREAD },
+        ])
+    );
+    client.close().await;
 }

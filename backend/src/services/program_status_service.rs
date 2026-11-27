@@ -450,6 +450,7 @@ mod tests {
             state: crate::protocol::chat_protocol::TurnState::Idle,
             outcome: Some(TurnOutcome::Failed),
             error: None,
+            step: None,
         });
         assert_eq!(
             service.status(),

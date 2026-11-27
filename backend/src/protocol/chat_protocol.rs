@@ -678,6 +678,14 @@ impl TurnOutcome {
     }
 }
 
+/// The step a running turn is on: the step's number in the turn, from 1, and the
+/// name of the tool call that started it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnStep {
+    pub index: usize,
+    pub tool: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnEventPayload {
@@ -688,6 +696,9 @@ pub struct TurnEventPayload {
     /// What went wrong, when `outcome` is `failed`. Written for a person.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The step of a `running` turn, once a tool call started one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<TurnStep>,
 }
 
 /// The `error` of a failed turn. The details go to the log.
@@ -1132,12 +1143,26 @@ pub struct SnapshotTurn {
     pub thread_id: String,
     /// `queued` or `running`, never `idle`.
     pub state: TurnState,
+    /// The step of a `running` turn, once a tool call started one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<TurnStep>,
+}
+
+/// A question card that waits for an answer, in the `welcome` snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotQuestionCard {
+    pub id: String,
+    pub thread_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WelcomeSnapshot {
     pub turns: Vec<SnapshotTurn>,
     pub computer: Option<Map<String, Value>>,
+    /// Every waiting question card in the conversations a client sees, oldest first.
+    #[serde(rename = "questionCards", default)]
+    pub question_cards: Vec<SnapshotQuestionCard>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1306,9 +1331,17 @@ mod tests {
                 }
                 ("received", _) => {
                     let direct: DirectFrame = serde_json::from_value(frame.clone()).unwrap();
+                    let mut expected = frame.clone();
+                    if frame["type"] == "welcome" {
+                        // Recorded before `questionCards`, which every snapshot now has.
+                        expected["payload"]["snapshot"]
+                            .as_object_mut()
+                            .unwrap()
+                            .insert("questionCards".into(), json!([]));
+                    }
                     assert_eq!(
                         serde_json::to_string(&direct).unwrap(),
-                        serde_json::to_string(frame).unwrap()
+                        serde_json::to_string(&expected).unwrap()
                     );
                 }
                 (direction, kind) => panic!("unexpected {direction} {kind}"),

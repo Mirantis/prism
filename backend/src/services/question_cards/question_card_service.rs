@@ -15,7 +15,8 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::db::models::{ConversationMessage, MessageTrigger};
+use crate::config::CONFIG;
+use crate::db::models::{ConversationMessage, ConversationThread, MessageTrigger};
 use crate::db::schema::{conversation_messages, conversation_threads};
 use crate::db::sql_types::DbJson;
 use crate::lib::log_redaction::err_json;
@@ -26,11 +27,13 @@ use crate::protocol::chat_protocol::{
     QuestionCardStatus,
 };
 use crate::services::channel_adapter_interface::ChannelName;
+use crate::services::conversation_service::CONVERSATION_SERVICE;
 use crate::services::inbound_message_service::{
     INBOUND_MESSAGE_SERVICE, InboundMessage, InboundMessageError, InboundSender,
 };
 use crate::services::message_delivery_service::{MESSAGE_DELIVERY_SERVICE, PublishOptions};
 use crate::services::pending_work_service::{PENDING_WORK_SERVICE, PendingWorkKind};
+use crate::services::web_thread::web_thread;
 
 use super::question_card_schema::{MAX_OTHER_CHARS, parse_question_card};
 use super::question_card_text::{answer_message_text, one_line, question_card_text};
@@ -67,6 +70,13 @@ pub enum AnswerOutcome {
 pub struct ClosedInChat {
     row: ConversationMessage,
     card: QuestionCardBlock,
+}
+
+/// A waiting card and the conversation it waits in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WaitingCard {
+    pub id: String,
+    pub thread_id: String,
 }
 
 /// The agent asked again while a card waits, or twice in one step.
@@ -408,6 +418,41 @@ impl QuestionCardService {
             return Ok(AnswerOutcome::ReplyPending(answered));
         }
         Ok(AnswerOutcome::Answered(answered))
+    }
+
+    /// Every card that waits in the agent's conversations a client sees, oldest first.
+    pub async fn waiting(&self, agent_id: &str) -> anyhow::Result<Vec<WaitingCard>> {
+        let filter = CONVERSATION_SERVICE
+            .client_thread_filter(agent_id, &CONFIG.owner_user_id())
+            .await?;
+        let agent_id = agent_id.to_string();
+        let rows: Vec<(ConversationMessage, ConversationThread)> = crate::db::read(move |conn| {
+            Ok(conversation_messages::table
+                .inner_join(conversation_threads::table)
+                .filter(conversation_threads::agent_id.eq(agent_id))
+                .filter(web_thread())
+                .filter(conversation_messages::blocks.is_not_null())
+                .order((
+                    conversation_messages::created_at.asc(),
+                    conversation_messages::id.asc(),
+                ))
+                .select((
+                    ConversationMessage::as_select(),
+                    ConversationThread::as_select(),
+                ))
+                .load(conn)?)
+        })
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter(|(row, thread)| is_waiting(row.blocks.as_ref()) && filter.allows(thread))
+            .filter_map(|(row, _)| {
+                card_of(&row).map(|card| WaitingCard {
+                    id: card.id,
+                    thread_id: row.thread_id,
+                })
+            })
+            .collect())
     }
 
     /// A message the person typed closes the cards waiting in its conversation, in that message's transaction.

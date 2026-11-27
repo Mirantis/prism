@@ -46,8 +46,9 @@ use crate::lib::telemetry::{agent_props, track_event};
 use crate::lib::token_bucket::TokenBucket;
 use crate::protocol::chat_protocol::{
     AckPayload, CLOSE_CODES, ClientFrame, DirectFrame, HELLO_TIMEOUT_MS, MAX_FRAME_BYTES, NackCode,
-    NackPayload, PROTOCOL_VERSION, SendAckPayload, SnapshotTurn, StreamEvent, ThreadEventPayload,
-    WelcomePayload, WelcomeSnapshot, WelcomeYou, parse_client_frame, parse_hello_frame,
+    NackPayload, PROTOCOL_VERSION, SendAckPayload, SnapshotQuestionCard, SnapshotTurn, StreamEvent,
+    ThreadEventPayload, WelcomePayload, WelcomeSnapshot, WelcomeYou, parse_client_frame,
+    parse_hello_frame,
 };
 use crate::services::compaction_service::COMPACTION_SERVICE;
 use crate::services::computer::computer_help_service::COMPUTER_HELP_SERVICE;
@@ -60,6 +61,7 @@ use crate::services::inbound_message_service::{
 };
 use crate::services::meeting::openai_endpoint::is_realtime_configured;
 use crate::services::meeting::resampler::MEETING_SAMPLE_RATE;
+use crate::services::question_cards::question_card_service::QUESTION_CARD_SERVICE;
 use crate::services::thread_title_service::THREAD_TITLE_SERVICE;
 use crate::services::update::update_service::UPDATE_SERVICE;
 use crate::services::voice::dictation_session::{
@@ -597,6 +599,30 @@ impl WebSocketGatewayService {
         }
     }
 
+    /// The waiting question cards for the `welcome` snapshot. A failed read is
+    /// logged and sends an empty list; the history still shows each card.
+    async fn waiting_question_cards(&self) -> Vec<SnapshotQuestionCard> {
+        let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) else {
+            return Vec::new();
+        };
+        match QUESTION_CARD_SERVICE.waiting(&agent_id).await {
+            Ok(cards) => cards
+                .into_iter()
+                .map(|card| SnapshotQuestionCard {
+                    id: card.id,
+                    thread_id: card.thread_id,
+                })
+                .collect(),
+            Err(error) => {
+                log_warn!(
+                    json!({ "err": err_json(&error) }),
+                    "[QuestionCards] Could not read the waiting question cards"
+                );
+                Vec::new()
+            }
+        }
+    }
+
     /// Start serving the chat socket: register [`Self::handle_upgrade`] for
     /// `/api/ws` with `websocket_upgrades::serve_upgrades`, subscribe to the other
     /// services' events, and start the 30-second heartbeat that pings every socket
@@ -1011,6 +1037,7 @@ impl WebSocketGatewayService {
         let ws = Arc::clone(ws);
         tokio::spawn(async move {
             let computer = self.computer_state().await;
+            let question_cards = self.waiting_question_cards().await;
             if !ws.is_open() {
                 return;
             }
@@ -1026,6 +1053,7 @@ impl WebSocketGatewayService {
                     .map(|turn| SnapshotTurn {
                         thread_id: turn.thread_id,
                         state: turn.state,
+                        step: turn.step,
                     })
                     .collect();
                 self.send_to(
@@ -1041,7 +1069,11 @@ impl WebSocketGatewayService {
                                 name: ws.sender.as_ref().map(|s| s.name.clone()),
                             },
                             thread_mode: CONFIG.thread_mode,
-                            snapshot: WelcomeSnapshot { turns, computer },
+                            snapshot: WelcomeSnapshot {
+                                turns,
+                                computer,
+                                question_cards,
+                            },
                         },
                     },
                 );
