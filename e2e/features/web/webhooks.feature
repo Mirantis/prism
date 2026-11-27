@@ -62,6 +62,19 @@ Feature: Inbound webhooks
     And I send the message
     Then the agent reply contains "lunar-relay"
 
+  # Three deliveries inside the window get one agent run, and the Activity page
+  # names the run that handled each of them.
+  Scenario: An agent-mode subscription with a coalescing window runs the agent once for a burst
+    When I navigate to the webhooks page
+    And I enable the webhook receiver
+    And I create a webhook subscription named "burst" with a 5 second coalescing window and prompt "Ignore the payload. Reply with exactly WEBHOOK_BURST_OK and nothing else."
+    When I POST the payload '{"status":"firing"}' to webhook "burst" 3 times
+    Then the webhook response status is 202
+    And a webhook-triggered message reading exactly "WEBHOOK_BURST_OK" is stored in the conversation
+    When I navigate to the activity page
+    Then the webhook run "burst" is listed as "Completed"
+    And 2 runs of webhook "burst" are handled with an earlier event
+
   Scenario: An agent-mode run with nothing to report posts nothing
     When I navigate to the webhooks page
     And I enable the webhook receiver
