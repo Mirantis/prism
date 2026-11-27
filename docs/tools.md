@@ -192,8 +192,7 @@ leaves out plugin servers that start a command, because those run in the
 container.
 The Docker image includes Claude Code and Codex; for a local installation, run
 `npm install -g @anthropic-ai/claude-code @openai/codex`. Install the Antigravity CLI (`agy`)
-on `PATH` and authenticate with `GEMINI_API_KEY`, `AGY_ADC_AUTH=true`, or a local sign-in to
-use `agent: "agy"`.
+on `PATH` and set `GEMINI_API_KEY` or sign in locally to use `agent: "agy"`.
 
 If you set `CLAUDE_CONFIG_DIR`, Claude Code uses that directory and Prism leaves
 it untouched; link its `skills` directory to your Prism skills directory to share

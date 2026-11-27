@@ -208,7 +208,7 @@ async fn parses_stream_json_session_deltas_usage_and_result() {
             },
             CodingAgentEvent::Usage {
                 usage: CodingAgentUsage {
-                    model: "gemini-3.8-flash-low".to_string(),
+                    model: "gemini-3.8-flash".to_string(),
                     input_tokens: 18266,
                     cache_read_tokens: 14042,
                     cache_write_tokens: 0,
@@ -227,40 +227,48 @@ async fn parses_stream_json_session_deltas_usage_and_result() {
         ]
     );
 
-    // GEMINI_API_KEY and AGY_ADC_AUTH runs record per-token usage (`subscription: false`).
-    for env in [
-        env_of(&[("GEMINI_API_KEY", "test-key")]),
-        env_of(&[("AGY_ADC_AUTH", "true")]),
-    ] {
-        let child = FakeChild::new();
-        let (environment, _) = spawning(child.clone());
-        let run = create_agy_agent(Some(environment.arc())).run(CodingAgentTask { env, ..task() });
-        child.emit_line(
-            &json!({
-                "event": "result",
-                "result": {
-                    "status": "SUCCESS",
-                    "response": "ok\n",
-                    "num_turns": 1,
-                    "usage": { "input_tokens": 100, "output_tokens": 10, "cache_read_tokens": 0 }
-                }
-            })
-            .to_string(),
-        );
-        child.finish(Some(0));
-        let events = collect(&run).await;
-        assert!(matches!(
-            &events[0],
-            CodingAgentEvent::Usage {
-                usage: CodingAgentUsage {
-                    subscription: false,
-                    input_tokens: 100,
-                    output_tokens: 10,
-                    ..
-                }
+    // GEMINI_API_KEY runs record per-token usage (`subscription: false`) with effort suffix
+    // stripped so the reported model resolves a catalog price in Spending.
+    let child = FakeChild::new();
+    let (environment, _) = spawning(child.clone());
+    let run = create_agy_agent(Some(environment.arc())).run(CodingAgentTask {
+        env: env_of(&[("GEMINI_API_KEY", "test-key")]),
+        ..task()
+    });
+    child.emit_line(
+        &json!({
+            "event": "init",
+            "conversation_id": "conv-api",
+            "init": { "model": "gemini-4-neon-xhigh" }
+        })
+        .to_string(),
+    );
+    child.emit_line(
+        &json!({
+            "event": "result",
+            "result": {
+                "status": "SUCCESS",
+                "response": "ok\n",
+                "num_turns": 1,
+                "usage": { "input_tokens": 100, "output_tokens": 10, "cache_read_tokens": 0 }
             }
-        ));
-    }
+        })
+        .to_string(),
+    );
+    child.finish(Some(0));
+    let events = collect(&run).await;
+    let CodingAgentEvent::Usage { usage } = &events[1] else {
+        panic!("expected Usage event, got {events:?}");
+    };
+    assert_eq!(usage.model, "gemini-4-neon");
+    assert!(!usage.subscription);
+    assert_eq!(usage.input_tokens, 100);
+    assert_eq!(usage.output_tokens, 10);
+    assert!(
+        crate::lib::model_catalog::find_catalog_entry(&usage.model)
+            .and_then(|entry| entry.cost)
+            .is_some()
+    );
 }
 
 #[tokio::test]
@@ -613,26 +621,10 @@ async fn checks_state_and_models_probe_for_availability() {
         ]]
     );
 
-    // AGY_ADC_AUTH=true works headlessly without jetski_state.pbtxt when `agy models` succeeds.
-    probed_args.lock().clear();
-    assert!(
-        agent
-            .is_available(&env_of(&[("AGY_ADC_AUTH", "true")]))
-            .await
-            .unwrap()
-    );
-    assert_eq!(probed_args.lock().as_slice(), &[vec!["models".to_string()]]);
-
     let signed_out = create_agy_agent(Some(models_signed_out().arc()));
     assert!(
         !signed_out
             .is_available(&env_of(&[("HOME", &home_str)]))
-            .await
-            .unwrap()
-    );
-    assert!(
-        !signed_out
-            .is_available(&env_of(&[("AGY_ADC_AUTH", "true")]))
             .await
             .unwrap()
     );
