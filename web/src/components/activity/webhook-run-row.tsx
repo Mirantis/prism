@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Layers } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/format';
 import { WebhookRunDetails } from './webhook-run-details';
 import type { WebhookRunStatus, WebhookRunSummary } from '@/types';
@@ -39,13 +39,19 @@ export function WebhookRunRow({ run }: { run: WebhookRunSummary }) {
           className={`size-3 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`}
         />
         <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${status.dot}`} />
-        <span className="shrink-0 font-medium text-foreground">{run.name}</span>
+        <span className="min-w-0 truncate font-medium text-foreground">{run.name}</span>
         {run.event !== 'unknown' && (
           <span className="min-w-0 truncate font-mono text-muted-foreground">{run.event}</span>
         )}
         {run.coalescedInto && (
-          <span data-testid="activity-webhook-run-coalesced" className="shrink-0 text-muted-foreground">
-            Handled with an earlier event
+          // On a phone the icon stands for the label, which stays the accessible name.
+          <span
+            data-testid="activity-webhook-run-coalesced"
+            title="Handled with an earlier event"
+            className="flex shrink-0 items-center gap-1 text-muted-foreground sm:min-w-0 sm:shrink"
+          >
+            <Layers aria-hidden="true" className="size-3 shrink-0" />
+            <span className="truncate max-sm:sr-only">Handled with an earlier event</span>
           </span>
         )}
         <span className="ml-auto flex shrink-0 items-center gap-2 pl-2 text-[11px] text-muted-foreground">
