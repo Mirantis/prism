@@ -5,15 +5,21 @@
  */
 
 import type { ThreadMode } from './chat-protocol.js';
+import type { ContextUsage, ThreadSummary } from './tui-adapter.js';
 
 /** What the command line asks for. Arguments it does not know are left alone. */
 export type LaunchArgs =
   | { kind: 'new' }
   | { kind: 'pick' }
-  | { kind: 'thread'; id: string };
+  | { kind: 'thread'; id: string }
+  | { kind: 'continue' }
+  | { kind: 'invalid'; message: string };
 
 export function parseLaunchArgs(args: string[]): LaunchArgs {
   const resumeAt = args.indexOf('--resume');
+  const continues = args.includes('--continue');
+  if (resumeAt !== -1 && continues) return { kind: 'invalid', message: 'Use --resume or --continue, not both.' };
+  if (continues) return { kind: 'continue' };
   if (resumeAt === -1) return { kind: 'new' };
   const id = args[resumeAt + 1];
   return id && !id.startsWith('-') ? { kind: 'thread', id } : { kind: 'pick' };
@@ -23,11 +29,13 @@ export function parseLaunchArgs(args: string[]): LaunchArgs {
 export interface LaunchRuntime {
   threadMode(): Promise<ThreadMode | undefined>;
   threadStatus(id: string): Promise<'found' | 'missing' | undefined>;
+  listSessions(workspaceRoot: string): Promise<ThreadSummary[] | undefined>;
 }
 
-/** A conversation to open at start. */
+/** A conversation to open at start, with its last context reading when the launch has one. */
 export interface OpenThread {
   id: string;
+  contextUsage: ContextUsage | null;
 }
 
 /**
@@ -68,15 +76,54 @@ export async function resolveThreadLaunch(
   onWait: () => void,
   retryMs?: number,
 ): Promise<Launch> {
-  // One wait notice for the whole launch, however many questions it asks.
-  let waited = false;
-  const wait = () => {
-    if (!waited) onWait();
-    waited = true;
-  };
+  const wait = once(onWait);
   const mode = await untilAnswered(() => runtime.threadMode(), wait, retryMs);
   if (mode === 'single') return { kind: 'session' };
   const status = await untilAnswered(() => runtime.threadStatus(id), wait, retryMs);
   if (status === 'missing') return { kind: 'exit', message: `No conversation with id ${id}.` };
-  return { kind: 'thread', id };
+  return { kind: 'thread', id, contextUsage: null };
+}
+
+/**
+ * The conversation `--continue` opens: the most recently updated one started in
+ * `cwd`, or the error when there is none. An agent in single-thread mode opens
+ * its one conversation.
+ *
+ * The runtime lists a directory's 50 newest conversations by creation time, so a
+ * directory with more than 50 can miss an older one updated since. That is the
+ * trade for a lookup that needs no other runtime route.
+ */
+export async function resolveContinueLaunch(
+  cwd: string,
+  runtime: LaunchRuntime,
+  onWait: () => void,
+  retryMs?: number,
+): Promise<Launch> {
+  const wait = once(onWait);
+  const mode = await untilAnswered(() => runtime.threadMode(), wait, retryMs);
+  if (mode === 'single') return { kind: 'session' };
+  const sessions = await untilAnswered(() => runtime.listSessions(cwd), wait, retryMs);
+  // A runtime older than the `workspaceRoot` query lists every directory's threads.
+  const latest = latestUpdated(sessions.filter((session) => session.workspaceRoot === cwd));
+  if (!latest) return { kind: 'exit', message: `No conversation to continue in ${cwd}.` };
+  return { kind: 'thread', id: latest.id, contextUsage: latest.contextUsage };
+}
+
+/** The most recently updated conversation, the first listed on a tie. */
+export function latestUpdated(sessions: ThreadSummary[]): ThreadSummary | undefined {
+  let latest: ThreadSummary | undefined;
+  for (const session of sessions) {
+    if (!latest || Date.parse(session.updatedAt) > Date.parse(latest.updatedAt)) latest = session;
+  }
+  return latest;
+}
+
+/** `fn`, run on its first call only: one wait notice for a launch that asks several questions. */
+function once(fn: () => void): () => void {
+  let called = false;
+  return () => {
+    if (called) return;
+    called = true;
+    fn();
+  };
 }

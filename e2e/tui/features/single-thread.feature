@@ -14,3 +14,9 @@ Feature: An agent that keeps one conversation
     Then the CLI shows "single-thread-resume-marker"
     And the CLI showed no resume picker
     And the agent still has one conversation
+
+  Scenario: --continue opens the conversation
+    Given the agent's conversation holds "single-thread-continue-marker"
+    When I launch the CLI with --continue in another directory
+    Then the CLI shows "single-thread-continue-marker"
+    And the agent still has one conversation

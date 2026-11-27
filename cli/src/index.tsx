@@ -5,7 +5,7 @@ import { App } from './App.js';
 import { loadConfig } from './config.js';
 import { tuiAdapterService, ThreadSummary } from './tui-adapter.js';
 import { detectTerminalGraphics } from './images/terminal-graphics.js';
-import { OpenThread, parseLaunchArgs, resolveThreadLaunch } from './launch.js';
+import { Launch, OpenThread, parseLaunchArgs, resolveContinueLaunch, resolveThreadLaunch } from './launch.js';
 
 // The CLI doesn't know — and isn't told — the userId or agentId. The
 // runtime owns both and substitutes them when our envelopes omit them.
@@ -25,7 +25,8 @@ if (args.includes('--help') || args.includes('-h')) {
       '  acp            Serve the Agent Client Protocol on stdio, for an editor to start.\n' +
       '  --resume       Pick a previous conversation to resume instead of starting fresh.\n' +
       '                 An agent in single-thread mode always opens its one conversation.\n' +
-      '  --resume <id>  Open the conversation with this id.',
+      '  --resume <id>  Open the conversation with this id.\n' +
+      '  --continue     Open the most recently active conversation started in this directory.',
   );
   process.exit(0);
 }
@@ -42,6 +43,10 @@ if (args[0] === 'update') {
 function main(): void {
   const cfg = loadConfig();
   const launch = parseLaunchArgs(args);
+  if (launch.kind === 'invalid') {
+    console.error(launch.message);
+    process.exit(1);
+  }
   // Ink enters raw mode only when its input hooks mount, after the first frame. Raw mode
   // from the start keeps a Ctrl+C typed during boot a key press rather than a SIGINT.
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
@@ -85,23 +90,27 @@ function main(): void {
         await start();
         return;
       }
-      const sessions = await tuiAdapterService.listSessions();
+      // A runtime that does not answer has nothing to resume either.
+      const sessions = (await tuiAdapterService.listSessions()) ?? [];
       if (sessions.length === 0) {
         console.log('No sessions to resume.');
         process.exit(0);
       }
       await start({ resume: { sessions, cwd: process.cwd() } });
     })();
-  } else if (launch.kind === 'thread') {
+  } else if (launch.kind === 'thread' || launch.kind === 'continue') {
     void (async () => {
       // The launch can wait for the runtime, so it asks in cooked mode, where Ctrl+C
       // stops it. The terminal's answers to the graphics probe arrive in raw mode first.
       await graphics;
       if (process.stdin.isTTY) process.stdin.setRawMode(false);
-      const opened = await resolveThreadLaunch(launch.id, tuiAdapterService, onWait);
+      const opened: Launch =
+        launch.kind === 'thread'
+          ? await resolveThreadLaunch(launch.id, tuiAdapterService, onWait)
+          : await resolveContinueLaunch(process.cwd(), tuiAdapterService, onWait);
       if (opened.kind === 'exit') fail(opened.message);
       if (process.stdin.isTTY) process.stdin.setRawMode(true);
-      await start(opened.kind === 'thread' ? { thread: { id: opened.id } } : {});
+      await start(opened.kind === 'thread' ? { thread: opened } : {});
     })();
   } else {
     void start();

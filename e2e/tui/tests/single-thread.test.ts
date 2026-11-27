@@ -1,9 +1,10 @@
 /**
  * `prism-cli` against a runtime in single-thread mode: every launch opens the
- * agent's one conversation with its history, `--resume` included, and no launch
+ * agent's one conversation with its history, `--resume` and `--continue` included, and no launch
  * creates a thread. No Bedrock interaction required.
  */
 
+import os from 'node:os';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
@@ -90,6 +91,22 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, AfterEachScen
     });
     And('the CLI showed no resume picker', () => {
       expect(session!.output()).not.toMatch(/Resume session/);
+    });
+    And('the agent still has one conversation', () => {
+      expect(webThreadCount(env.dbPath)).toBe(1);
+    });
+  });
+
+  Scenario('--continue opens the conversation', ({ Given, When, Then, And }) => {
+    Given("the agent's conversation holds \"single-thread-continue-marker\"", async () => {
+      await seedConversation('single-thread-continue-marker');
+    });
+    When('I launch the CLI with --continue in another directory', () => {
+      // The conversation did not start here: single-thread mode opens it anyway.
+      session = startPrism({ env: env.prismEnv, runtime: env.runtime, args: ['--continue'], cwd: os.tmpdir() });
+    });
+    Then('the CLI shows "single-thread-continue-marker"', async () => {
+      await session!.waitForFrame(/single-thread-continue-marker/, BOOT_FRAME_TIMEOUT_MS);
     });
     And('the agent still has one conversation', () => {
       expect(webThreadCount(env.dbPath)).toBe(1);

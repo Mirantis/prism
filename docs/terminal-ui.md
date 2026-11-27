@@ -25,9 +25,12 @@ When your provider needs setup, `prism` lists its requirements under **Connect a
   the working directory (and git branch) it was started in. Select one with the
   arrow keys and Enter; Escape cancels. To open one conversation without the
   picker, run `prism --resume <id>` with the id the picker shows.
+- **Continue.** Run `prism --continue` to open the most recently active
+  conversation started in the current directory, with no picker.
 - **One conversation.** When the agent keeps
   [one conversation](web-ui.md#one-conversation), `prism` always opens it with its
-  recent history, and `--resume` shows no picker. Its commands run where the
+  recent history: `--resume` shows no picker, and `--resume <id>` and
+  `--continue` open it too. Its commands run where the
   conversation started, whatever directory you start `prism` in: the agent's
   workspace, or the directory of the `prism` session that created it.
 

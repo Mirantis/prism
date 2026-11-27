@@ -3,8 +3,8 @@
  * agent-runtime: listing prior threads (with git-branch labels), resuming a
  * selected thread (asserted authoritatively by its replayed history, plus that
  * the latest-thread pointer is left untouched — resuming pins by id, it does
- * NOT bump createdAt), opening a thread by id, Escape to exit, and the
- * empty-state message. No Bedrock interaction required.
+ * NOT bump createdAt), opening a thread by id or with `--continue`, Escape to
+ * exit, and the empty-state message. No Bedrock interaction required.
  */
 
 import fs from 'node:fs';
@@ -46,6 +46,18 @@ function seedMessage(dbPath: string, threadId: string, content: string): void {
        SELECT ?, id, 'AGENT', ?, 'USER_INPUT', 0, createdAt
        FROM conversation_threads WHERE id = ?`,
     ).run(`msg-${threadId}`, content, threadId);
+  } finally {
+    db.close();
+  }
+}
+
+/** Make `threadId` the most recently updated thread. The column holds epoch milliseconds. */
+function touchThread(dbPath: string, threadId: string): void {
+  const db = new Database(dbPath);
+  try {
+    db.prepare(
+      'UPDATE conversation_threads SET updatedAt = (SELECT MAX(updatedAt) FROM conversation_threads) + 60000 WHERE id = ?',
+    ).run(threadId);
   } finally {
     db.close();
   }
@@ -227,6 +239,42 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
     Then('the CLI reports that no conversation has that id', async () => {
       await session!.waitForFrame(/No conversation with id no-such-thread\./, BOOT_FRAME_TIMEOUT_MS);
+    });
+    And('the CLI shuts down with a non-zero exit code', async () => {
+      const code = await session!.waitForExit(30_000);
+      expect(code).not.toBe(0);
+    });
+  });
+
+  Scenario('--continue opens the most recently updated thread of the directory', ({ Given, When, Then, And }) => {
+    Given('two prior conversation threads exist in one directory', async () => {
+      olderThreadId = await seedThread(env.port, plainDir);
+      newerThreadId = await seedThread(env.port, plainDir);
+      seedMessage(env.dbPath, olderThreadId, RESUMED_MARKER);
+    });
+    And('the older thread was updated last', () => {
+      touchThread(env.dbPath, olderThreadId);
+    });
+    When('I launch the CLI with --continue in that directory', () => {
+      session = startPrism({ env: env.prismEnv, runtime: env.runtime, args: ['--continue'], cwd: plainDir });
+    });
+    Then('that thread becomes the active conversation', async () => {
+      await session!.waitForFrame(new RegExp(RESUMED_MARKER), BOOT_FRAME_TIMEOUT_MS);
+    });
+    And('the resume picker is not shown', () => {
+      expect(session!.output()).not.toContain('Resume session');
+    });
+  });
+
+  Scenario('--continue in a directory without a thread exits with an error', ({ Given, When, Then, And }) => {
+    Given('a prior conversation thread exists', async () => {
+      olderThreadId = await seedThread(env.port, plainDir);
+    });
+    When('I launch the CLI with --continue in a directory without a thread', () => {
+      session = startPrism({ env: env.prismEnv, runtime: env.runtime, args: ['--continue'], cwd: gitRepoDir });
+    });
+    Then('the CLI reports that there is no conversation to continue', async () => {
+      await session!.waitForFrame(/No conversation to continue in/, BOOT_FRAME_TIMEOUT_MS);
     });
     And('the CLI shuts down with a non-zero exit code', async () => {
       const code = await session!.waitForExit(30_000);

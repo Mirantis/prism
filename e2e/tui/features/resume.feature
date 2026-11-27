@@ -36,3 +36,16 @@ Feature: Resuming a previous conversation with --resume
     When I launch the CLI with --resume and an unknown id
     Then the CLI reports that no conversation has that id
     And the CLI shuts down with a non-zero exit code
+
+  Scenario: --continue opens the most recently updated thread of the directory
+    Given two prior conversation threads exist in one directory
+    And the older thread was updated last
+    When I launch the CLI with --continue in that directory
+    Then that thread becomes the active conversation
+    And the resume picker is not shown
+
+  Scenario: --continue in a directory without a thread exits with an error
+    Given a prior conversation thread exists
+    When I launch the CLI with --continue in a directory without a thread
+    Then the CLI reports that there is no conversation to continue
+    And the CLI shuts down with a non-zero exit code

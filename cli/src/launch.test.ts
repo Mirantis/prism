@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseLaunchArgs, resolveThreadLaunch, untilAnswered } from './launch.js';
+import type { ThreadSummary } from './tui-adapter.js';
+import { latestUpdated, parseLaunchArgs, resolveContinueLaunch, resolveThreadLaunch, untilAnswered } from './launch.js';
 
 describe('parseLaunchArgs', () => {
   it('starts a new conversation without a launch flag', () => {
@@ -15,6 +16,17 @@ describe('parseLaunchArgs', () => {
 
   it('opens the named conversation for --resume <id>', () => {
     expect(parseLaunchArgs(['--resume', 'thread-1'])).toEqual({ kind: 'thread', id: 'thread-1' });
+  });
+
+  it('continues the newest conversation of the directory for --continue', () => {
+    expect(parseLaunchArgs(['--continue'])).toEqual({ kind: 'continue' });
+  });
+
+  it('refuses --resume with --continue', () => {
+    expect(parseLaunchArgs(['--resume', '--continue'])).toEqual({
+      kind: 'invalid',
+      message: 'Use --resume or --continue, not both.',
+    });
   });
 });
 
@@ -42,6 +54,7 @@ describe('resolveThreadLaunch', () => {
   const runtimeWith = (threadMode: 'single' | 'multi', status: 'found' | 'missing') => ({
     threadMode: vi.fn().mockResolvedValue(threadMode),
     threadStatus: vi.fn().mockResolvedValue(status),
+    listSessions: vi.fn(),
   });
 
   it('opens a conversation the runtime has', async () => {
@@ -49,6 +62,7 @@ describe('resolveThreadLaunch', () => {
     await expect(resolveThreadLaunch('thread-1', runtime, vi.fn(), 0)).resolves.toEqual({
       kind: 'thread',
       id: 'thread-1',
+      contextUsage: null,
     });
     expect(runtime.threadStatus).toHaveBeenCalledWith('thread-1');
   });
@@ -70,11 +84,97 @@ describe('resolveThreadLaunch', () => {
     const runtime = {
       threadMode: vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce('multi'),
       threadStatus: vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce('found'),
+      listSessions: vi.fn(),
     };
     const onWait = vi.fn();
     await expect(resolveThreadLaunch('thread-1', runtime, onWait, 0)).resolves.toMatchObject({
       kind: 'thread',
     });
+    expect(onWait).toHaveBeenCalledTimes(1);
+  });
+});
+
+const summary = (id: string, updatedAt: string): ThreadSummary => ({
+  id,
+  title: null,
+  updatedAt,
+  workspaceRoot: '/work/repo',
+  branch: null,
+  contextUsage: null,
+});
+
+describe('latestUpdated', () => {
+  it('picks the most recently updated conversation, not the newest created', () => {
+    // The runtime lists the newest created first.
+    const sessions = [summary('created-last', '2026-11-27T08:00:00.000Z'), summary('updated-last', '2026-11-27T09:00:00.000Z')];
+    expect(latestUpdated(sessions)?.id).toBe('updated-last');
+  });
+
+  it('keeps the first listed on a tie, and has none for an empty list', () => {
+    const at = '2026-11-27T08:00:00.000Z';
+    expect(latestUpdated([summary('first', at), summary('second', at)])?.id).toBe('first');
+    expect(latestUpdated([])).toBeUndefined();
+  });
+});
+
+describe('resolveContinueLaunch', () => {
+  const usage = { threadId: 'b', modelId: 'm', usedTokens: 10, windowTokens: 100, usedPercent: 10 };
+
+  it('opens the most recently updated conversation of the directory, with its context reading', async () => {
+    const runtime = {
+      threadMode: vi.fn().mockResolvedValue('multi'),
+      threadStatus: vi.fn(),
+      listSessions: vi.fn().mockResolvedValue([
+        summary('a', '2026-11-27T08:00:00.000Z'),
+        { ...summary('b', '2026-11-27T09:00:00.000Z'), contextUsage: usage },
+      ]),
+    };
+    await expect(resolveContinueLaunch('/work/repo', runtime, vi.fn(), 0)).resolves.toEqual({
+      kind: 'thread',
+      id: 'b',
+      contextUsage: usage,
+    });
+    expect(runtime.listSessions).toHaveBeenCalledWith('/work/repo');
+  });
+
+  it('exits with an error when the directory has no conversation', async () => {
+    const runtime = {
+      threadMode: vi.fn().mockResolvedValue('multi'),
+      threadStatus: vi.fn(),
+      listSessions: vi.fn().mockResolvedValue([]),
+    };
+    await expect(resolveContinueLaunch('/work/empty', runtime, vi.fn(), 0)).resolves.toEqual({
+      kind: 'exit',
+      message: 'No conversation to continue in /work/empty.',
+    });
+  });
+
+  it("leaves out another directory's threads that an older runtime lists", async () => {
+    const runtime = {
+      threadMode: vi.fn().mockResolvedValue('multi'),
+      threadStatus: vi.fn(),
+      listSessions: vi.fn().mockResolvedValue([
+        { ...summary('elsewhere', '2026-11-27T10:00:00.000Z'), workspaceRoot: '/work/other' },
+        summary('here', '2026-11-27T08:00:00.000Z'),
+      ]),
+    };
+    await expect(resolveContinueLaunch('/work/repo', runtime, vi.fn(), 0)).resolves.toMatchObject({ id: 'here' });
+  });
+
+  it("opens the agent's one conversation in single-thread mode", async () => {
+    const runtime = { threadMode: vi.fn().mockResolvedValue('single'), threadStatus: vi.fn(), listSessions: vi.fn() };
+    await expect(resolveContinueLaunch('/work/repo', runtime, vi.fn(), 0)).resolves.toEqual({ kind: 'session' });
+    expect(runtime.listSessions).not.toHaveBeenCalled();
+  });
+
+  it('waits for a runtime that does not answer yet', async () => {
+    const runtime = {
+      threadMode: vi.fn().mockResolvedValue('multi'),
+      threadStatus: vi.fn(),
+      listSessions: vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce([summary('a', '2026-11-27T08:00:00.000Z')]),
+    };
+    const onWait = vi.fn();
+    await expect(resolveContinueLaunch('/work/repo', runtime, onWait, 0)).resolves.toMatchObject({ id: 'a' });
     expect(onWait).toHaveBeenCalledTimes(1);
   });
 });

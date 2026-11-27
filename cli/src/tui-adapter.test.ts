@@ -500,7 +500,7 @@ describe('TuiAdapter inbound events', () => {
   });
 });
 
-describe('TuiAdapter.listSessions context usage', () => {
+describe('TuiAdapter.listSessions', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -535,6 +535,25 @@ describe('TuiAdapter.listSessions context usage', () => {
     );
   });
 
+  it("lists only one directory's threads when asked", async () => {
+    respond([]);
+
+    await tuiAdapterService.listSessions('/work/my repo');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://example.test:3003/threads?workspaceRoot=%2Fwork%2Fmy+repo',
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it('has no list while the runtime does not answer', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 503 } as unknown as Response);
+    await expect(tuiAdapterService.listSessions()).resolves.toBeUndefined();
+
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
+    await expect(tuiAdapterService.listSessions()).resolves.toBeUndefined();
+  });
+
   it('carries a thread snapshot through so a resumed session shows a percentage', async () => {
     const contextUsage = {
       threadId: 'thread-a',
@@ -547,7 +566,7 @@ describe('TuiAdapter.listSessions context usage', () => {
 
     const sessions = await tuiAdapterService.listSessions();
 
-    expect(sessions[0]?.contextUsage).toEqual(contextUsage);
+    expect(sessions?.[0]?.contextUsage).toEqual(contextUsage);
   });
 
   it('nulls the snapshot for a thread that has not run a turn', async () => {
@@ -555,7 +574,7 @@ describe('TuiAdapter.listSessions context usage', () => {
 
     const sessions = await tuiAdapterService.listSessions();
 
-    expect(sessions[0]?.contextUsage).toBeNull();
+    expect(sessions?.[0]?.contextUsage).toBeNull();
   });
 
   it('nulls a partial snapshot rather than rendering NaN', async () => {
@@ -565,7 +584,7 @@ describe('TuiAdapter.listSessions context usage', () => {
 
     const sessions = await tuiAdapterService.listSessions();
 
-    expect(sessions[0]?.contextUsage).toBeNull();
+    expect(sessions?.[0]?.contextUsage).toBeNull();
   });
 
   it('nulls the snapshot when an older runtime omits the field entirely', async () => {
@@ -573,7 +592,7 @@ describe('TuiAdapter.listSessions context usage', () => {
 
     const sessions = await tuiAdapterService.listSessions();
 
-    expect(sessions[0]).toMatchObject({ id: 'thread-a', contextUsage: null });
+    expect(sessions?.[0]).toMatchObject({ id: 'thread-a', contextUsage: null });
   });
 });
 
