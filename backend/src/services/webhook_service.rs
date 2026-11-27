@@ -10,7 +10,9 @@
 //! A subscription with a coalescing window gives its deliveries one agent run, whose
 //! prompt holds every event. The run starts when the window after its first delivery
 //! ends, or when the previous run ends if that is later. The deliveries that arrive
-//! until it starts join it, at most `WEBHOOK_MAX_COALESCED`.
+//! until it starts join it, at most `WEBHOOK_MAX_COALESCED` events and
+//! `WEBHOOK_MAX_COALESCED_CHARS` of prompt. A run posts where the subscription
+//! allows when the run starts.
 //!
 //! Deliveries arrive on the webhook port, which a deployment exposes to senders.
 //! A subscription may require its sender to prove itself (generic token/HMAC
@@ -147,6 +149,11 @@ pub const WEBHOOK_MAX_PENDING: usize = 10;
 /// Max events one coalesced agent run handles, which bounds its prompt. A delivery
 /// that finds the open run full opens the next one.
 pub const WEBHOOK_MAX_COALESCED: usize = 10;
+
+/// Max prompt length of one coalesced agent run, in UTF-16 code units: the longest
+/// message a person can send in chat (`MAX_MESSAGE_CHARS`). An event whose prompt does
+/// not fit opens the next run, so one large event fails no other event's run.
+pub const WEBHOOK_MAX_COALESCED_CHARS: usize = 200_000;
 
 // Hermes truncation caps for payload rendering.
 const RAW_PAYLOAD_MAX_CHARS: usize = 4000;
@@ -434,34 +441,57 @@ struct Member {
 /// The events one agent run handles. More join it until the run starts.
 type Batch = Arc<parking_lot::Mutex<Vec<Member>>>;
 
-/// The run that still takes events, with the subscription as it read when the run
-/// opened: the run posts with those settings.
-struct OpenRun {
-    batch: Batch,
-    subscription: WebhookSubscription,
-}
-
 /// A subscription's waiting runs, and the one that still takes events.
 #[derive(Default)]
 struct SubscriptionQueue {
     runs: VecDeque<QueuedRun>,
-    open: Option<OpenRun>,
+    open: Option<Batch>,
 }
 
 impl SubscriptionQueue {
-    /// The open run a delivery to `subscription` joins: one with room, opened with the
-    /// same window, delivery target and channels.
-    fn joinable(&self, subscription: &WebhookSubscription) -> Option<Batch> {
-        let open = self.open.as_ref()?;
-        let opened = &open.subscription;
-        let same = subscription.coalesce_seconds.is_some()
-            && opened.coalesce_seconds == subscription.coalesce_seconds
-            && opened.deliver_to == subscription.deliver_to
-            && opened.slack_channel_ids == subscription.slack_channel_ids;
-        if !same || open.batch.lock().len() >= WEBHOOK_MAX_COALESCED {
+    /// The open run an event with `prompt` joins: one with room for another event and
+    /// for its prompt, on a subscription that still has a window.
+    fn joinable(&self, subscription: &WebhookSubscription, prompt: &str) -> Option<Batch> {
+        let has_window = subscription.coalesce_seconds.is_some();
+        let batch = self.open.as_ref().filter(|_| has_window)?;
+        let members = batch.lock();
+        let used: usize = members.iter().map(|member| js::len16(&member.prompt)).sum();
+        let full = members.len() >= WEBHOOK_MAX_COALESCED;
+        if full || used + js::len16(prompt) > WEBHOOK_MAX_COALESCED_CHARS {
             return None;
         }
-        Some(Arc::clone(&open.batch))
+        Some(Arc::clone(batch))
+    }
+}
+
+/// The subscription as stored now, so a run posts with the settings of its start. A
+/// subscription deleted since keeps the settings its run opened with.
+async fn as_stored(subscription: WebhookSubscription) -> anyhow::Result<WebhookSubscription> {
+    let stored = find_subscription(None, Some(subscription.id.clone())).await?;
+    Ok(stored.unwrap_or(subscription))
+}
+
+/// The invoke request of an agent run over `members`, the first one leading: every
+/// event's prompt in order, and the restart flag when any event ran before a restart.
+fn run_request(
+    agent_id: &str,
+    user_id: &str,
+    subscription: &WebhookSubscription,
+    members: &[Member],
+) -> InvokeRequest {
+    let prompts: Vec<&str> = members
+        .iter()
+        .map(|member| member.prompt.as_str())
+        .collect();
+    InvokeRequest {
+        user_id: user_id.to_string(),
+        agent_id: agent_id.to_string(),
+        mode: InvokeMode::Webhook,
+        source_id: Some(subscription.id.clone()),
+        prompt: render_webhook_batch_prompt(&prompts),
+        after_restart: members.iter().any(|member| member.after_restart),
+        abort_signal: Some(PENDING_WORK_SERVICE.shutdown_signal()),
+        ..InvokeRequest::default()
     }
 }
 
@@ -705,7 +735,7 @@ impl WebhookService {
             let mut pending = self.pending.lock();
             let queue = pending.entry(subscription.id.clone()).or_default();
             // An event that joins the open run takes no queue slot.
-            let open = queue.joinable(&subscription);
+            let open = queue.joinable(&subscription, &prompt);
             if open.is_none() && queue.runs.len() >= WEBHOOK_MAX_PENDING {
                 log_warn!(
                     "[Webhook] '{}' queue is full ({} pending) — rejecting with 429",
@@ -808,7 +838,10 @@ impl WebhookService {
                 let mut open_until: Option<DateTime<Utc>> = None;
                 for (member, accepted_at) in members {
                     let joins = open_until.is_some_and(|end| accepted_at <= end);
-                    match queue.joinable(&subscription).filter(|_| joins) {
+                    match queue
+                        .joinable(&subscription, &member.prompt)
+                        .filter(|_| joins)
+                    {
                         Some(batch) => batch.lock().push(member),
                         None => {
                             open_until = window_end(subscription.coalesce_seconds, accepted_at);
@@ -843,10 +876,7 @@ impl WebhookService {
         starts_at: Option<tokio::time::Instant>,
     ) {
         let batch: Batch = Arc::new(parking_lot::Mutex::new(vec![member]));
-        queue.open = starts_at.map(|_| OpenRun {
-            batch: Arc::clone(&batch),
-            subscription: subscription.clone(),
-        });
+        queue.open = starts_at.map(|_| Arc::clone(&batch));
         queue
             .runs
             .push_back(self.batch_run(subscription.clone(), batch, starts_at));
@@ -876,6 +906,7 @@ impl WebhookService {
                         members.push(member);
                     }
                 }
+                let subscription = as_stored(subscription).await?;
                 self.run_agent(&subscription, &members).await
             }
             .boxed()
@@ -889,7 +920,7 @@ impl WebhookService {
             && queue
                 .open
                 .as_ref()
-                .is_some_and(|open| Arc::ptr_eq(&open.batch, batch))
+                .is_some_and(|open| Arc::ptr_eq(open, batch))
         {
             queue.open = None;
         }
@@ -951,22 +982,10 @@ impl WebhookService {
         let run_ids: Vec<String> = members.iter().map(|member| member.run_id.clone()).collect();
         let run_id = lead.run_id.as_str();
         let start_time = lead.start_time;
-        let prompts: Vec<&str> = members
-            .iter()
-            .map(|member| member.prompt.as_str())
-            .collect();
-        let prompt = render_webhook_batch_prompt(&prompts);
-        let after_restart = members.iter().any(|member| member.after_restart);
         WEBHOOK_RUN_SERVICE.start(&run_ids).await;
 
         let outcome = match self
-            .invoke_and_deliver(
-                &agent.id,
-                &agent.user_id,
-                subscription,
-                &prompt,
-                after_restart,
-            )
+            .invoke_and_deliver(&agent.id, &agent.user_id, subscription, members)
             .await
         {
             Ok(outcome) => outcome,
@@ -1047,8 +1066,7 @@ impl WebhookService {
         agent_id: &str,
         user_id: &str,
         subscription: &WebhookSubscription,
-        prompt: &str,
-        after_restart: bool,
+        members: &[Member],
     ) -> anyhow::Result<Option<RunOutcome>> {
         let shutdown = PENDING_WORK_SERVICE.shutdown_signal();
         let posting_ceiling = DELIVERY_TARGET_SERVICE
@@ -1061,15 +1079,8 @@ impl WebhookService {
             )
             .await?;
         let result = invoke(InvokeRequest {
-            user_id: user_id.to_string(),
-            agent_id: agent_id.to_string(),
-            mode: InvokeMode::Webhook,
-            source_id: Some(subscription.id.clone()),
-            prompt: prompt.to_string(),
-            after_restart,
-            abort_signal: Some(shutdown.clone()),
             posting_ceiling: Some(posting_ceiling),
-            ..InvokeRequest::default()
+            ..run_request(agent_id, user_id, subscription, members)
         })
         .await?;
         let sent = !sent_message_list(&result.tool_calls).is_empty();
@@ -1739,13 +1750,13 @@ mod tests {
         let Some(queue) = pending.get(id) else {
             return (0, 0);
         };
-        let open = queue.open.as_ref().map_or(0, |run| run.batch.lock().len());
+        let open = queue.open.as_ref().map_or(0, |batch| batch.lock().len());
         (queue.runs.len(), open)
     }
 
     fn open_batch(id: &str) -> Batch {
         let pending = WEBHOOK_SERVICE.pending.lock();
-        Arc::clone(&pending[id].open.as_ref().unwrap().batch)
+        Arc::clone(pending[id].open.as_ref().unwrap())
     }
 
     /// Edit the stored subscription, as a PATCH does.
@@ -1876,17 +1887,71 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn opens_a_new_run_when_the_delivery_settings_change() {
+    async fn runs_with_the_settings_stored_when_the_run_starts() {
         let fixture = fixture(true).await;
         let id = subscribe(&fixture, |row| row.coalesce_seconds = Some(600)).await;
         hold(&id);
         deliver("run-1").await;
-        let first = open_batch(&id);
+        let opened = find_subscription(None, Some(id.clone()))
+            .await
+            .unwrap()
+            .unwrap();
         change(&id, |changes| changes.deliver_to = Some("none".into())).await;
         deliver("run-2").await;
-        assert_eq!(queue_of(&id), (2, 1));
-        assert_eq!(first.lock().len(), 1);
+        assert_eq!(queue_of(&id), (1, 2));
+        assert_eq!(as_stored(opened.clone()).await.unwrap().deliver_to, "none");
+
+        let gone = id.clone();
+        crate::db::run(move |conn| {
+            diesel::delete(ws::webhook_subscriptions.filter(ws::id.eq(&gone))).execute(conn)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert_eq!(as_stored(opened).await.unwrap().deliver_to, "all");
         forget(&id);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn opens_the_next_run_when_the_prompt_budget_is_spent() {
+        let fixture = fixture(true).await;
+        let id = subscribe(&fixture, |row| row.coalesce_seconds = Some(600)).await;
+        hold(&id);
+        deliver("run-1").await;
+        *open_batch(&id).lock() = vec![Member {
+            prompt: "x".repeat(WEBHOOK_MAX_COALESCED_CHARS - 1),
+            ..member("large")
+        }];
+        deliver("run-2").await;
+        assert_eq!(queue_of(&id), (2, 1));
+        forget(&id);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn sends_every_event_of_a_run_to_the_agent_in_order() {
+        let fixture = fixture(true).await;
+        let id = subscribe(&fixture, |row| row.coalesce_seconds = Some(600)).await;
+        let subscription = find_subscription(None, Some(id.clone()))
+            .await
+            .unwrap()
+            .unwrap();
+        let mut members: Vec<Member> = ["A1", "B2", "C3"]
+            .into_iter()
+            .map(|marker| Member {
+                prompt: format!("marker {marker}"),
+                ..member(marker)
+            })
+            .collect();
+        members[2].after_restart = true;
+
+        let request = run_request(&fixture.agent_id, "user-1", &subscription, &members);
+        let at = |marker: &str| request.prompt.find(marker).unwrap();
+        assert!(at("marker A1") < at("marker B2"));
+        assert!(at("marker B2") < at("marker C3"));
+        assert!(request.after_restart);
+        assert_eq!(request.source_id.as_deref(), Some(id.as_str()));
     }
 
     #[tokio::test]
