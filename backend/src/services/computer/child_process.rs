@@ -26,6 +26,9 @@ pub(crate) fn process_env(extra: &IndexMap<String, String>) -> IndexMap<String, 
 /// Node's `maxBuffer` default for `execFile`.
 pub(crate) const DEFAULT_MAX_BUFFER: usize = 1024 * 1024;
 
+/// How long one of the desktop's helper commands gets to finish.
+pub(crate) const COMMAND_TIMEOUT_MS: u64 = 10_000;
+
 /// How `exec_file` runs a command.
 pub(crate) struct ExecFileOptions<'a> {
     /// The whole environment the command gets.

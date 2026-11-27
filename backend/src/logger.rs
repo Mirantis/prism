@@ -101,12 +101,6 @@ pub fn enabled(level: Level) -> bool {
     (level as u8) >= THRESHOLD.load(Ordering::Relaxed) && level != Level::Silent
 }
 
-/// Sets the threshold at runtime (tests and the `LOG_LEVEL` reload path).
-pub fn set_level(level: Level) {
-    LazyLock::force(&SETTINGS);
-    THRESHOLD.store(level as u8, Ordering::Relaxed);
-}
-
 /// Writes one line. `fields` is an object merged into the line, or anything else
 /// logged under `value`; `err` is reduced by the redacting serializer.
 pub fn write(level: Level, fields: Option<Value>, msg: &str) {

@@ -490,21 +490,6 @@ impl LlmProvider {
     }
 }
 
-/// A configuration of `pairs` on the built-in defaults, never the developer's
-/// environment, for the vendor factories' tests.
-#[cfg(test)]
-pub(crate) fn test_config(pairs: &[(&str, &str)]) -> crate::config::Config {
-    let mut env: crate::config::Env = crate::config::Env::new();
-    env.insert(
-        "PRISM_SETTINGS_PATH".to_string(),
-        "/nonexistent/prism-settings.json".to_string(),
-    );
-    for (key, value) in pairs {
-        env.insert(key.to_string(), value.to_string());
-    }
-    crate::config::Config::load(&env, &mut |_, _| {}).expect("the test configuration loads")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

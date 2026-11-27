@@ -21,16 +21,14 @@ use std::sync::LazyLock;
 
 use async_trait::async_trait;
 use base64::Engine;
-use indexmap::IndexMap;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use url::Url;
 
-use crate::config::CONFIG;
 use crate::constants::{MAX_ATTACHMENTS_PER_MESSAGE, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB};
 use crate::lib::log_redaction::err_json;
-use crate::lib::telemetry::track_event;
+use crate::lib::telemetry::{agent_props, track_event};
 use crate::log_info;
 use crate::log_warn;
 use crate::services::attachment_service::{
@@ -455,10 +453,7 @@ async fn read_one(
 
 /// Emits `teams attachment failed` with `attachment.kind` and `failure.reason`.
 fn track_failure(read: &FileToRead, code: &str) {
-    let mut props = IndexMap::new();
-    if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-        props.insert("agent.id".to_string(), agent_id);
-    }
+    let mut props = agent_props();
     props.insert(
         "attachment.kind".to_string(),
         read.kind.as_str().to_string(),

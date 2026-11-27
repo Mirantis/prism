@@ -126,7 +126,7 @@ pub async fn missing_provider_settings() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lib::llm_providers::llm_provider::test_config;
+    use crate::config::test_config;
 
     const GATEWAY: (&str, &str) = ("NEXUS_API_URL", "https://gateway.example.com");
     const BEDROCK_MOUNT: &str = "https://gateway.example.com/llm/bedrock/us-east-1";

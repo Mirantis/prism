@@ -13,7 +13,7 @@ use crate::ai::ApiCallError;
 use crate::ai::json::{js_stringify, normalize_numbers};
 use crate::ai::provider::{EmbeddingModelV4CallOptions, LanguageModelV4CallOptions};
 
-fn fixtures() -> Value {
+pub(super) fn fixtures() -> Value {
     serde_json::from_str(include_str!("testdata/sdk_requests.json")).unwrap()
 }
 
@@ -21,8 +21,17 @@ fn no_env() -> EnvLookup {
     Arc::new(|_: &str| None)
 }
 
+/// An environment holding only `pairs`.
+pub(super) fn env(pairs: &[(&str, &str)]) -> EnvLookup {
+    let map: std::collections::HashMap<String, String> = pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    Arc::new(move |name: &str| map.get(name).cloned())
+}
+
 /// A `fetch` that records each request and answers with the case's response.
-fn fake_fetch(response: &Value, seen: Arc<Mutex<Vec<FetchRequest>>>) -> FetchFunction {
+pub(super) fn fake_fetch(response: &Value, seen: Arc<Mutex<Vec<FetchRequest>>>) -> FetchFunction {
     let status = response["status"].as_u64().unwrap_or(200) as u16;
     let status_text = response["statusText"].as_str().unwrap_or("OK").to_string();
     let mut headers: Vec<(String, String)> = response["headers"]

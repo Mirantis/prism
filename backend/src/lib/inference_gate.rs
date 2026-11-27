@@ -15,9 +15,7 @@ use std::sync::LazyLock;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-/// The error a wait ends with when its caller aborts: the text of the DOM
-/// `AbortError` an aborted signal throws.
-pub const ABORTED_MESSAGE: &str = "This operation was aborted";
+use crate::ai::errors::ABORTED_MESSAGE;
 
 pub struct InferenceGate {
     /// Whether the gate is held. Waiters watch it fall to `false`.

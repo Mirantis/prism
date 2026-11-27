@@ -35,7 +35,7 @@ use crate::db::schema::conversation_messages::dsl as m;
 use crate::db::schema::conversation_threads::dsl as t;
 use crate::db::sql_types::DbDateTime;
 use crate::lib::log_redaction::err_json;
-use crate::lib::telemetry::track_event;
+use crate::lib::telemetry::{agent_props, track_event};
 use crate::prompts::agent_message_prompt::{AgentMessageColumns, agent_message_origin};
 use crate::prompts::context_builder::with_sender_tag;
 use crate::prompts::task_notification_prompt::task_notification_origin;
@@ -126,7 +126,8 @@ impl InboundMessageError {
     }
 }
 
-const STARTING: &str = "The agent is still starting. Try again shortly.";
+/// The refusal of a message that arrives before the agent is loaded.
+pub const STARTING: &str = "The agent is still starting. Try again shortly.";
 
 /// How a turn ended, as every client is told it.
 #[derive(Debug, Clone)]
@@ -215,10 +216,7 @@ fn engine_input(message: &InboundMessage, agent_id: String) -> UserMessageInput 
 
 /// One event per message received, a person's or another agent's, whether or not it came before.
 fn track_received(message: &InboundMessage, duplicate: bool) {
-    let mut props = IndexMap::new();
-    if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-        props.insert("agent.id".to_string(), agent_id);
-    }
+    let mut props = agent_props();
     props.insert("thread.id".to_string(), message.thread_id.clone());
     let owner = CONFIG.owner_user_id();
     if let Some(origin) = &message.agent_message {

@@ -3,18 +3,10 @@ import { describe, it, expect, vi } from 'vitest';
 import { render } from 'ink-testing-library';
 import { SchedulesPanel } from './SchedulesPanel.js';
 import type { ApiClient } from '../api-client.js';
+import { flush, type } from '../testing/ink-keys.js';
 
-const flush = () => new Promise((resolve) => setImmediate(resolve));
 const TAB = '\t';
 const ENTER = '\r';
-
-/** Ink parses one write per render, so each key needs the render it belongs to. */
-async function type(stdin: { write: (data: string) => void }, ...keys: string[]): Promise<void> {
-  for (const key of keys) {
-    stdin.write(key);
-    await flush();
-  }
-}
 
 describe('the terminal schedules panel', () => {
   it('creates a task only once it has an instruction', async () => {

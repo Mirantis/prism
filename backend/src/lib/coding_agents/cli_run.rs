@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -280,6 +280,14 @@ impl CodingAgentRun for CliRun {
 
     fn stop(&self) {
         terminate(&self.proc, &self.task_id)
+    }
+}
+
+/// A stream line's field as text: a string as it is, any other value as `String(value)`.
+pub fn js_string(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
     }
 }
 

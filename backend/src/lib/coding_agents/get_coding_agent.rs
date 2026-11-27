@@ -11,7 +11,8 @@ use super::codex::codex_agent::create_codex_agent;
 use super::coding_agent::CodingAgent;
 use crate::config::{CONFIG, CodingAgentName};
 
-fn factory(name: CodingAgentName) -> Arc<dyn CodingAgent> {
+/// A new adapter for `name`, whether or not it is available.
+pub(super) fn factory(name: CodingAgentName) -> Arc<dyn CodingAgent> {
     match name {
         CodingAgentName::ClaudeCode => create_claude_code_agent(None),
         CodingAgentName::Codex => create_codex_agent(None),

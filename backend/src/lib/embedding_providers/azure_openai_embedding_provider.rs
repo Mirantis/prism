@@ -67,19 +67,12 @@ fn azure_settings(config: &Config, base_url: Option<&str>) -> AzureOpenAIProvide
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::test_config;
     use crate::lib::llm_providers::llm_provider::provider_options_json;
-
-    fn config(pairs: &[(&str, &str)]) -> Config {
-        let env = pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        Config::load(&env, &mut |_, _| {}).unwrap()
-    }
 
     #[test]
     fn direct_routing_derives_the_endpoint_from_the_resource_name() {
-        let c = config(&[
+        let c = test_config(&[
             ("AZURE_API_KEY", "azure-key"),
             ("AZURE_RESOURCE_NAME", "my-resource"),
         ]);
@@ -92,7 +85,7 @@ mod tests {
 
     #[test]
     fn forwards_the_api_version_when_set() {
-        let c = config(&[("AZURE_API_VERSION", "2024-10-21")]);
+        let c = test_config(&[("AZURE_API_VERSION", "2024-10-21")]);
         assert_eq!(
             azure_settings(&c, None).api_version.as_deref(),
             Some("2024-10-21")
@@ -102,12 +95,12 @@ mod tests {
     #[test]
     fn nexus_routing_rides_the_gateway_openai_mount() {
         let mount = "https://nexus.example/llm/azure/openai/v1";
-        let s = azure_settings(&config(&[]), Some(mount));
+        let s = azure_settings(&test_config(&[]), Some(mount));
         assert_eq!(s.api_key.as_deref(), Some("managed"));
         assert_eq!(s.base_url.as_deref(), Some(mount));
         assert_eq!(s.resource_name, None);
 
-        let s = azure_settings(&config(&[("AZURE_API_KEY", "azure-key")]), Some(mount));
+        let s = azure_settings(&test_config(&[("AZURE_API_KEY", "azure-key")]), Some(mount));
         assert_eq!(s.api_key.as_deref(), Some("azure-key"));
     }
 

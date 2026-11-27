@@ -30,7 +30,7 @@ use crate::protocol::chat_protocol::{
 use crate::services::agent_conversation_service::AGENT_CONVERSATION_SERVICE;
 use crate::services::conversation_service::CONVERSATION_SERVICE;
 use crate::services::inbound_message_service::{
-    INBOUND_MESSAGE_SERVICE, InboundMessage, InboundMessageError,
+    INBOUND_MESSAGE_SERVICE, InboundMessage, InboundMessageError, STARTING,
 };
 use crate::support::http::{JsonBody, error_json, json};
 use crate::support::js;
@@ -438,7 +438,7 @@ async fn receive_agent_message(headers: HeaderMap, body: JsonBody) -> Response {
     };
 
     let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) else {
-        return error_json(503, "The agent is still starting. Try again shortly.");
+        return error_json(503, STARTING);
     };
 
     match store(&agent_id, &body).await {

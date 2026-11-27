@@ -22,10 +22,11 @@ use crate::db::schema::llm_calls::dsl as l;
 use crate::lib::llm_providers::llm_provider::{CacheTtl, cache_ttl_for};
 use crate::lib::log_redaction::err_json;
 use crate::lib::model_catalog::ModelPrice;
-use crate::lib::model_pricing::{PricedTokens, cost_micro_usd, js_round, price_for};
+use crate::lib::model_pricing::{PricedTokens, cost_micro_usd, price_for};
 use crate::lib::spend_context::{SpendContext, SpendSource, current_spend_context};
 use crate::lib::step_usage::to_step_usage;
 use crate::services::channel_adapter_interface::{CHAT_PLATFORMS, ChatPlatform};
+use crate::support::js::round as js_round;
 use crate::{log_error, log_info, log_warn};
 
 /// What a call was for: an invoke mode, or a named side call.
@@ -359,7 +360,7 @@ fn cost_of(
     }
     if let Some(reported) = input.reported_cost_usd.filter(|cost| cost.is_finite()) {
         return (
-            Some(js_round(reported * 1_000_000.0)),
+            Some(js_round(reported * 1_000_000.0) as i64),
             Some("reported".into()),
         );
     }
@@ -1241,7 +1242,10 @@ mod tests {
             ]
         );
         let haiku = price_for("claude-haiku-5-5").unwrap();
-        assert_eq!(rows[1].cost_micro_usd, Some(js_round(1000.0 * haiku.input)));
+        assert_eq!(
+            rows[1].cost_micro_usd,
+            Some(js_round(1000.0 * haiku.input) as i64)
+        );
     }
 
     #[tokio::test]

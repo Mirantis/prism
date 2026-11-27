@@ -5,7 +5,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use futures::StreamExt;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use serde_json::{Value, json};
@@ -16,7 +15,7 @@ use crate::lib::coding_agents::coding_agent::{CodingAgentMcpServer, Effort, Mode
 use crate::lib::coding_agents::shared_skills_home::prepare_shared_skills_home;
 use crate::lib::coding_agents::subscription_switch::set_subscription_in_memory_for_tests;
 use crate::lib::coding_agents::testing::{
-    DIR_STAT, FakeChild, FakeEnvironment, FakeFiles, env_of, fake_paths, wait_for,
+    DIR_STAT, FakeChild, FakeEnvironment, FakeFiles, collect, env_of, fake_paths, result, wait_for,
 };
 use crate::lib::execution_environments::execution_environment::{ProcessMark, RunOptions};
 use crate::lib::execution_environments::get_execution_environment::set_execution_environment_for_tests;
@@ -58,12 +57,17 @@ struct Started {
     asked: Arc<AtomicUsize>,
 }
 
+/// The one launch, once the work before it is done.
+async fn only_launch(launches: &Arc<Mutex<Vec<Launch>>>) -> Launch {
+    let watched = launches.clone();
+    wait_for(move || watched.lock().len() == 1).await;
+    launches.lock()[0].clone()
+}
+
 impl Started {
     /// The task's own launch, once the work before it is done.
     async fn launched(&self) -> Launch {
-        let launches = self.launches.clone();
-        wait_for(move || launches.lock().len() == 1).await;
-        self.launches.lock()[0].clone()
+        only_launch(&self.launches).await
     }
 }
 
@@ -139,10 +143,6 @@ fn count(args: &[String], flag: &str) -> usize {
     args.iter().filter(|arg| *arg == flag).count()
 }
 
-async fn collect(run: &Arc<dyn CodingAgentRun>) -> Vec<CodingAgentEvent> {
-    run.take_events().unwrap().collect().await
-}
-
 /// Feed stream-json lines to a fake `claude` and collect what the adapter reads.
 async fn events_for(lines: &[Value], task: CodingAgentTask) -> Vec<CodingAgentEvent> {
     let started = start(task, None);
@@ -152,15 +152,6 @@ async fn events_for(lines: &[Value], task: CodingAgentTask) -> Vec<CodingAgentEv
     }
     child.finish(Some(0));
     collect(&started.run).await
-}
-
-fn result(stop_reason: CodingAgentStopReason, turns: i64, message: &str) -> CodingAgentEvent {
-    CodingAgentEvent::Result {
-        stop_reason,
-        turns,
-        message: message.to_string(),
-        refusals: None,
-    }
 }
 
 fn deployment() -> Settings {
@@ -715,9 +706,7 @@ impl McpHarness {
     }
 
     async fn launched(&self) -> Launch {
-        let launches = self.launches.clone();
-        wait_for(move || launches.lock().len() == 1).await;
-        self.launches.lock()[0].clone()
+        only_launch(&self.launches).await
     }
 
     fn dirs(&self) -> Vec<String> {

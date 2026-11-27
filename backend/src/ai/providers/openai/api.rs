@@ -6,15 +6,19 @@ use std::sync::{Arc, LazyLock};
 
 use bytes::Bytes;
 use futures::future::BoxFuture;
-use rand::Rng;
 use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::ai::errors::{AbortError, ApiCallError, InvalidArgumentError, LoadApiKeyError};
 use crate::ai::fetch_timeouts::{CONNECT_TIMEOUT, READ_TIMEOUT};
+pub use crate::ai::generate_text::generate_id;
 use crate::ai::generate_text::with_user_agent_suffix;
 use crate::ai::json::{js_stringify, secure_json_parse};
 use crate::ai::provider::Headers;
+use crate::ai::providers::provider_utils::innermost_message;
+pub use crate::ai::providers::provider_utils::{
+    EnvLookup, combine_headers, load_optional_setting, process_env,
+};
 
 /// One request as the SDK's `fetch` receives it: always a POST with a JSON body.
 #[derive(Debug, Clone)]
@@ -77,15 +81,6 @@ static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .expect("HTTP client builds")
 });
 
-/// The innermost message of an error chain: undici's `cause.message`.
-fn innermost_message(err: &(dyn std::error::Error + 'static)) -> String {
-    let mut current = err;
-    while let Some(source) = current.source() {
-        current = source;
-    }
-    current.to_string()
-}
-
 /// The global `fetch`: a POST, the whole body read.
 pub fn default_fetch() -> FetchFunction {
     Arc::new(|request: FetchRequest| {
@@ -129,14 +124,6 @@ pub fn default_fetch() -> FetchFunction {
     })
 }
 
-/// Reads an environment variable, as `process.env[name]`.
-pub type EnvLookup = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
-
-/// The process environment.
-pub fn process_env() -> EnvLookup {
-    Arc::new(|name: &str| std::env::var(name).ok())
-}
-
 /// `loadApiKey`: the key, else the environment variable, else an error.
 pub fn load_api_key(
     api_key: Option<&str>,
@@ -154,18 +141,6 @@ pub fn load_api_key(
     })
 }
 
-/// `loadOptionalSetting`: the setting, else the environment variable.
-pub fn load_optional_setting(
-    setting_value: Option<&str>,
-    environment_variable_name: &str,
-    env: &EnvLookup,
-) -> Option<String> {
-    match setting_value {
-        Some(value) => Some(value.to_string()),
-        None => env(environment_variable_name),
-    }
-}
-
 /// `validateBaseURL`: a base URL of only whitespace is refused.
 pub fn validate_base_url(base_url: Option<String>) -> Result<Option<String>, InvalidArgumentError> {
     match base_url {
@@ -181,27 +156,6 @@ pub fn validate_base_url(base_url: Option<String>) -> Result<Option<String>, Inv
 /// `withoutTrailingSlash`.
 pub fn without_trailing_slash(url: &str) -> String {
     url.strip_suffix('/').unwrap_or(url).to_string()
-}
-
-/// `combineHeaders`: later headers replace earlier ones of the same name.
-pub fn combine_headers(parts: &[Option<&Headers>]) -> Headers {
-    let mut combined = Headers::new();
-    for headers in parts.iter().flatten() {
-        for (name, value) in headers.iter() {
-            combined.insert(name.clone(), value.clone());
-        }
-    }
-    combined
-}
-
-const ID_ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-
-/// `generateId()`: 16 random alphanumeric characters.
-pub fn generate_id() -> String {
-    let mut rng = rand::rng();
-    (0..16)
-        .map(|_| ID_ALPHABET[rng.random_range(0..ID_ALPHABET.len())] as char)
-        .collect()
 }
 
 /// `postJsonToApi` up to the response: the body as `JSON.stringify` writes it,

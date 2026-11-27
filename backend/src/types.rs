@@ -127,11 +127,7 @@ impl InvokeMode {
     }
 }
 
-impl fmt::Display for InvokeMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+crate::support::display_as_str!(InvokeMode);
 
 /// Mid-turn steering source, awaited at every step boundary.
 pub type SteeringSource = Arc<dyn Fn() -> BoxFuture<'static, Vec<SteeringMessage>> + Send + Sync>;
@@ -356,6 +352,17 @@ pub struct ToolCallRecord {
     /// Present only when the model-facing view was cut.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub truncated: Option<ToolOutputTruncation>,
+}
+
+/// A stored `toolCalls` column as records; an entry that is not one is skipped.
+pub fn stored_tool_calls(stored: Option<&serde_json::Value>) -> Vec<ToolCallRecord> {
+    match stored {
+        Some(serde_json::Value::Array(entries)) => entries
+            .iter()
+            .filter_map(|entry| serde_json::from_value(entry.clone()).ok())
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

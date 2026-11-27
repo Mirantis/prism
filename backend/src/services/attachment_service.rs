@@ -24,7 +24,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::config::CONFIG;
 use crate::constants::MAX_ATTACHMENTS_PER_MESSAGE;
 use crate::db::models::{ConversationMessage, MessageAttachment, NewMessageAttachment};
 use crate::db::schema::message_attachments::dsl as a;
@@ -34,7 +33,7 @@ use crate::lib::log_redaction::err_json;
 use crate::lib::media_store::{
     list_media_files, read_media_file, remove_media_file, write_media_file,
 };
-use crate::lib::telemetry::track_event;
+use crate::lib::telemetry::{agent_props, track_event};
 use crate::services::channel_adapter_interface::ChatPlatform;
 use crate::{log_error, log_warn};
 
@@ -505,15 +504,6 @@ fn record_not_found() -> anyhow::Error {
     anyhow::anyhow!(
         "An operation failed because it depends on one or more records that were required but not found. No record was found for an update."
     )
-}
-
-/// `{ 'agent.id': config.agentId }` when an agent id is set, as the first prop.
-fn agent_props() -> IndexMap<String, String> {
-    let mut props = IndexMap::new();
-    if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-        props.insert("agent.id".to_string(), agent_id);
-    }
-    props
 }
 
 impl AttachmentService {

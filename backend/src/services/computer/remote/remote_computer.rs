@@ -42,19 +42,19 @@ use crate::services::computer::computer_tools::{
 };
 use crate::services::computer::desktop_control::{MouseButton, ScrollDirection};
 use crate::services::computer::desktop_input::{
-    InputFrame, MetaAs, chord_for, input_frame, paste_text,
+    InputFrame, MAX_WHEEL_CLICKS, MOVE_FLUSH_MS, MetaAs, WHEEL_PIXELS_PER_CLICK, chord_for,
+    input_frame, paste_text,
 };
 use crate::services::computer::desktop_windows::find_windows;
 use crate::services::computer::picture_stream::{FrameSink, ScreenFrame, StreamEncoding};
 use crate::services::computer::screen_elements::{ScreenElement, describe_elements, find_elements};
-use crate::services::computer::screen_size::{
-    MAX_SCREEN, ScreenSize, bounded_picture_for, math_round,
-};
+use crate::services::computer::screen_size::{MAX_SCREEN, ScreenSize, bounded_picture_for};
 use crate::services::computer::screen_text::{find_text, read_screen_words, upscale_for_ocr};
 use crate::services::computer::sign_in_form::SignInCredentials;
 use crate::services::meeting::browser_control::{BrowserCommand, BrowserResult};
 use crate::services::meeting::realtime_session::decode_base64_lenient;
 use crate::support::js;
+use crate::support::js::round as js_round;
 use crate::{log_info, log_warn};
 
 /// How long an input request may take on the computer, and a read of its screen or controls.
@@ -65,10 +65,6 @@ const TYPE_MS_PER_CHAR: u64 = 50;
 const TYPE_TIMEOUT_CAP_MS: u64 = 120_000;
 /// How many pointer positions a drag walks through between press and release.
 const DRAG_STEPS: i64 = 10;
-/// How long a viewer's movement is gathered before one position goes out.
-const MOVE_FLUSH_MS: u64 = 16;
-const WHEEL_PIXELS_PER_CLICK: f64 = 60.0;
-const MAX_WHEEL_CLICKS: i64 = 10;
 /// The picture quality the model's screenshots are asked for.
 const CAPTURE_QUALITY: i64 = 80;
 
@@ -128,14 +124,14 @@ impl DisplayPoint {
 /// A position held to the display: rounded, and inside it.
 fn clamp_to(display: &RemoteDisplay, x: f64, y: f64) -> DisplayPoint {
     DisplayPoint {
-        x: ((display.width - 1) as f64).min(0f64.max(math_round(x))) as i64,
-        y: ((display.height - 1) as f64).min(0f64.max(math_round(y))) as i64,
+        x: ((display.width - 1) as f64).min(0f64.max(js_round(x))) as i64,
+        y: ((display.height - 1) as f64).min(0f64.max(js_round(y))) as i64,
     }
 }
 
 /// `Math.round(n)` as an integer, for the numbers a message shows.
 fn rounded(n: f64) -> i64 {
-    math_round(n) as i64
+    js_round(n) as i64
 }
 
 /// The screen stream the viewers watch.
@@ -538,10 +534,10 @@ impl RemoteComputer {
                     app: e.app,
                     role: e.role,
                     name: e.name,
-                    x: math_round(x),
-                    y: math_round(y),
-                    width: math_round(right - x),
-                    height: math_round(bottom - y),
+                    x: js_round(x),
+                    y: js_round(y),
+                    width: js_round(right - x),
+                    height: js_round(bottom - y),
                 }
             })
             .collect())
@@ -560,10 +556,10 @@ impl RemoteComputer {
                 let (x, y) = self.to_picture(w.x, w.y);
                 let (right, bottom) = self.to_picture(w.x + w.width, w.y + w.height);
                 RemoteWindow {
-                    x: math_round(x),
-                    y: math_round(y),
-                    width: math_round(right - x),
-                    height: math_round(bottom - y),
+                    x: js_round(x),
+                    y: js_round(y),
+                    width: js_round(right - x),
+                    height: js_round(bottom - y),
                     ..w
                 }
             })

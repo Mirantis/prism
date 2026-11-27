@@ -23,6 +23,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
+use crate::ai::json::js_stringify;
 use crate::ai::{
     GenerateObjectOptions, ModelMessage, Tool, ToolExecuteFunction, ToolExecutionOptions, ToolSet,
     error_name, json_schema,
@@ -942,7 +943,7 @@ pub fn evidence_json(input: &ToolRiskEvaluationInput) -> String {
                 input.tool_description.as_deref().unwrap_or(""),
                 MAX_TOOL_DESCRIPTION_CHARS,
             ),
-            "input": truncate_for_classification(&stringify_input(&input.input), MAX_TOOL_INPUT_CHARS),
+            "input": truncate_for_classification(&js_stringify(&input.input), MAX_TOOL_INPUT_CHARS),
         }),
     );
     serde_json::to_string(&Value::Object(evidence)).unwrap_or_default()
@@ -1011,11 +1012,6 @@ fn user_message_text(message: &Value) -> String {
             .join("\n"),
         _ => String::new(),
     }
-}
-
-/// `JSON.stringify(input)`.
-fn stringify_input(input: &Value) -> String {
-    crate::ai::json::js_stringify(input)
 }
 
 /// Preserve both ends: destructive shell suffixes often matter as much as prefixes.

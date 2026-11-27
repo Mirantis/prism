@@ -310,11 +310,7 @@ impl CodingAgentName {
     }
 }
 
-impl std::fmt::Display for CodingAgentName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+crate::support::display_as_str!(CodingAgentName);
 
 /// Fixed or Auto model selection, as the deployment default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -829,6 +825,27 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
     config.set_available_coding_agents(vec![CodingAgentName::ClaudeCode]);
     config
 });
+
+/// A configuration of `pairs` on the built-in defaults, never the developer's
+/// environment.
+#[cfg(test)]
+pub fn test_config(pairs: &[(&str, &str)]) -> Config {
+    let mut env = Env::new();
+    env.insert(
+        "PRISM_SETTINGS_PATH".to_string(),
+        "/nonexistent/prism-settings.json".to_string(),
+    );
+    for (key, value) in pairs {
+        env.insert(key.to_string(), value.to_string());
+    }
+    Config::load(&env, &mut |_, _| {}).expect("the test configuration loads")
+}
+
+/// [`test_config`] with `gateway.example.com` as the gateway.
+#[cfg(test)]
+pub fn gateway_test_config(pairs: &[(&str, &str)]) -> Config {
+    test_config(&[&[("NEXUS_API_URL", "https://gateway.example.com")], pairs].concat())
+}
 
 /// The configuration of this process (`CONFIG`).
 pub fn config() -> &'static Config {

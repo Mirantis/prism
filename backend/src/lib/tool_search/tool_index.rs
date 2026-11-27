@@ -213,12 +213,16 @@ impl ToolIndex {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use serde_json::json;
 
     use super::*;
 
-    fn define(name: &str, description: &str) -> DeferredToolDefinition {
+    /// A deferred tool with no parameters.
+    pub(in crate::lib::tool_search) fn define(
+        name: &str,
+        description: &str,
+    ) -> DeferredToolDefinition {
         DeferredToolDefinition {
             name: name.into(),
             description: description.into(),

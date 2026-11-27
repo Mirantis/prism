@@ -3,14 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { runtimeApi } from '@/api/runtime-client';
 import { useChatSocket } from '@/hooks/use-chat-socket';
 import { useAgent } from '@/lib/agent-context';
-import { agentStatusTone, TONE_DOT } from '@/lib/tones';
+import { agentStatusLabel, agentStatusTone, TONE_DOT } from '@/lib/tones';
 import { cn } from '@/lib/utils';
-
-const LABELS: Record<string, string> = {
-  RUNNING: 'Working',
-  IDLE: 'Idle',
-  ERROR: 'Error',
-};
 
 /**
  * A presence dot on the corner of the agent's mark: what it is doing right now, on every page.
@@ -39,7 +33,7 @@ export function AgentPresence({ className }: { className?: string }) {
   if (!status) return null;
 
   const tone = agentStatusTone(status);
-  const label = LABELS[status] ?? status;
+  const label = agentStatusLabel(status);
   return (
     <span
       role="img"

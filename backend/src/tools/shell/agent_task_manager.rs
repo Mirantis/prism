@@ -1237,11 +1237,6 @@ pub fn get_agent_task_manager() -> Arc<AgentTaskManager> {
         .clone()
 }
 
-/// Test-only: replace the singleton with a manager built on a stub agent.
-pub fn set_agent_task_manager_for_tests(manager: Option<Arc<AgentTaskManager>>) {
-    *AGENT_TASK_MANAGER.write() = manager;
-}
-
 /// Record the tokens a run reported against the request and thread that started its task.
 fn record_usage(params: &AgentTaskParams, usage: &CodingAgentUsage) {
     let prompt = usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens;

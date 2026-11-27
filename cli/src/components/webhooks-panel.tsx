@@ -11,6 +11,7 @@ import {
   WebhookSubscriptionUpdate,
 } from '../api-client.js';
 import { editText, resolveEditor, type EditResult } from '../editor.js';
+import { fitColumn } from './fit-column.js';
 
 type Mode = 'list' | 'edit';
 type LoadState = 'loading' | 'ready' | 'error';
@@ -90,12 +91,6 @@ function formFrom(s: WebhookSubscription): Form {
     deliverOnly: s.deliverOnly,
     prompt: s.prompt ?? '',
   };
-}
-
-function fit(s: string, width: number): string {
-  const max = width - 2;
-  if (s.length <= max) return s;
-  return s.slice(0, Math.max(0, max - 1)) + '…';
 }
 
 function errorText(err: unknown, fallback: string): string {
@@ -490,10 +485,10 @@ export const WebhooksPanel: React.FC<Props> = ({ api, onClose, suspendInput, inp
                 <Text color="cyan" bold>{isSelected ? '▸' : ' '}</Text>
               </Box>
               <Box width={COL_NAME}>
-                <Text bold={isSelected}>{fit(s.name, COL_NAME)}</Text>
+                <Text bold={isSelected}>{fitColumn(s.name, COL_NAME)}</Text>
               </Box>
               <Box width={COL_DELIVER}>
-                <Text bold={isSelected}>{fit(deliverLabel(s.deliverTo), COL_DELIVER)}</Text>
+                <Text bold={isSelected}>{fitColumn(deliverLabel(s.deliverTo), COL_DELIVER)}</Text>
               </Box>
               <Box width={COL_MODE}>
                 <Text bold={isSelected}>{s.deliverOnly ? 'direct' : 'agent'}</Text>

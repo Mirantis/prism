@@ -6,7 +6,7 @@
 
 use crate::db::models::MessageRole;
 use crate::prompts::context_builder::{ConversationMessage, break_tag};
-use crate::support::js::{len16, slice16};
+use crate::support::js::{len16, slice16, trim as js_trim};
 use crate::tools::conversation_history::COMPACTED_HISTORY_TOOL_NAME;
 
 const TAG: &str = "conversation-so-far";
@@ -26,11 +26,6 @@ pub struct VoiceHistoryInput {
     pub messages: Vec<ConversationMessage>,
     /// Whether `read_compacted_history` can read this thread's compacted messages.
     pub history_readable: bool,
-}
-
-/// `String.prototype.trim`.
-fn js_trim(text: &str) -> &str {
-    text.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
 }
 
 /// The fenced block, or `None` when the thread holds nothing to continue.

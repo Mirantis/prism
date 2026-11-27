@@ -50,15 +50,24 @@ use super::tool::{
 use super::usage::LanguageModelUsage;
 use super::warnings::log_warnings;
 
-const ID_ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+/// The base-62 digits generated ids are written in.
+pub const ID_ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+fn random_id(size: usize) -> String {
+    let mut rng = rand::rng();
+    (0..size)
+        .map(|_| ID_ALPHABET[rng.random_range(0..ID_ALPHABET.len())] as char)
+        .collect()
+}
 
 /// `createIdGenerator({ prefix, size })()`: `prefix-` and `size` random characters.
 pub fn create_id(prefix: &str, size: usize) -> String {
-    let mut rng = rand::rng();
-    let body: String = (0..size)
-        .map(|_| ID_ALPHABET[rng.random_range(0..ID_ALPHABET.len())] as char)
-        .collect();
-    format!("{prefix}-{body}")
+    format!("{prefix}-{}", random_id(size))
+}
+
+/// `generateId()`: 16 random alphanumeric characters.
+pub fn generate_id() -> String {
+    random_id(16)
 }
 
 /// `withUserAgentSuffix`: header names lowercased and sorted, with the suffix
@@ -656,20 +665,6 @@ impl StepResult {
             .collect()
     }
 
-    pub fn static_tool_calls(&self) -> Vec<&TypedToolCall> {
-        self.tool_calls()
-            .into_iter()
-            .filter(|c| c.dynamic != Some(true))
-            .collect()
-    }
-
-    pub fn dynamic_tool_calls(&self) -> Vec<&TypedToolCall> {
-        self.tool_calls()
-            .into_iter()
-            .filter(|c| c.dynamic == Some(true))
-            .collect()
-    }
-
     pub fn tool_results(&self) -> Vec<&TypedToolResult> {
         self.content
             .iter()
@@ -677,20 +672,6 @@ impl StepResult {
                 ContentPart::ToolResult(result) => Some(result),
                 _ => None,
             })
-            .collect()
-    }
-
-    pub fn static_tool_results(&self) -> Vec<&TypedToolResult> {
-        self.tool_results()
-            .into_iter()
-            .filter(|r| r.dynamic != Some(true))
-            .collect()
-    }
-
-    pub fn dynamic_tool_results(&self) -> Vec<&TypedToolResult> {
-        self.tool_results()
-            .into_iter()
-            .filter(|r| r.dynamic == Some(true))
             .collect()
     }
 

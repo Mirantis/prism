@@ -6,7 +6,6 @@
 //! per-channel answer through the optional members here and never names the
 //! channel itself.
 
-use std::fmt;
 use std::sync::LazyLock;
 
 use async_trait::async_trait;
@@ -44,11 +43,7 @@ impl ChatPlatform {
     }
 }
 
-impl fmt::Display for ChatPlatform {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+crate::support::display_as_str!(ChatPlatform);
 
 /// Every channel: the runtime's own chat socket and each chat platform. One adapter each.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -95,11 +90,7 @@ impl From<ChatPlatform> for ChannelName {
     }
 }
 
-impl fmt::Display for ChannelName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+crate::support::display_as_str!(ChannelName);
 
 /// Whether `value` names one of the chat platforms.
 pub fn is_chat_platform(value: &str) -> bool {

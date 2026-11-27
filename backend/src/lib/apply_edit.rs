@@ -6,7 +6,7 @@
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize, Serializer};
 
-use crate::support::js::len16;
+use crate::support::js::{len16, trim as js_trim};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -191,9 +191,4 @@ fn line_trimmed_matches(content: &str, find: &str) -> Vec<(usize, usize)> {
     }
 
     found
-}
-
-/// `String.prototype.trim`: JavaScript's white space and line terminators.
-fn js_trim(text: &str) -> &str {
-    text.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
 }

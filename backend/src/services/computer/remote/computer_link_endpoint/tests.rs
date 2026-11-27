@@ -9,21 +9,12 @@ use super::*;
 use crate::services::computer::computer_access::ComputerCaller;
 use crate::services::computer::computer_service::ComputerConnection;
 use crate::services::computer::remote::computer_link::tests::{FakeClient, Handler, eventually};
+use crate::services::computer::remote::link_protocol::tests::hello;
 use crate::services::computer::remote::remote_computer_service::AddComputerInput;
 use crate::services::computer::remote::remote_computer_service::tests::agent_row;
 
 /// A 1×1 JPEG, as base64: what the client answers a capture with.
 const PIXEL: &str = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==";
-
-fn hello() -> Value {
-    json!({
-        "protocolVersion": 1,
-        "client": { "name": "test-client", "version": "1.2.3" },
-        "platform": "macos",
-        "displays": [{ "id": "main", "width": 2560, "height": 1440, "scale": 2, "primary": true }],
-        "capabilities": ["screen", "input", "windows", "stream", "teleport"],
-    })
-}
 
 /// The endpoint on a server of its own, and the agent with one computer, "Work laptop".
 struct Fixture {

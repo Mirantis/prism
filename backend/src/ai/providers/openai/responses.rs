@@ -24,7 +24,7 @@ use super::responses_options::{
     IncludeValue, Logprobs, OpenAIResponsesOptions, ReasoningContext, ReasoningMode, ServiceTier,
     SystemMessageModeOption, TOP_LOGPROBS_MAX, parse_provider_options,
 };
-use super::responses_tools::{ToolNameMapping, prepare_responses_tools};
+use super::responses_tools::{PROVIDER_TOOL_NAMES, ToolNameMapping, prepare_responses_tools};
 use super::tools::TOOL_SEARCH_ID;
 use crate::ai::errors::{ApiCallError, UnsupportedFunctionalityError};
 use crate::ai::json::{js_stringify, normalize_numbers};
@@ -37,6 +37,7 @@ use crate::ai::provider::{
     LanguageModelV4StreamResult, LanguageModelV4Tool, LanguageModelV4Usage, ProviderMetadata,
     ReasoningEffort, SupportedUrls, Warning,
 };
+use crate::support::js::number;
 
 /// How one provider reaches the OpenAI API (`OpenAIConfig`).
 #[derive(Clone)]
@@ -79,14 +80,6 @@ pub struct PreparedRequest {
     pub provider_options_name: String,
     /// The `store` provider option.
     pub store: Option<bool>,
-}
-
-fn unsupported_with_message(functionality: &str, message: &str) -> anyhow::Error {
-    UnsupportedFunctionalityError {
-        message: message.to_string(),
-        functionality: functionality.to_string(),
-    }
-    .into()
 }
 
 fn reasoning_effort_text(reasoning: ReasoningEffort) -> &'static str {
@@ -159,10 +152,6 @@ impl Args {
 
 pub(super) fn string(value: impl Into<String>) -> Value {
     Value::String(value.into())
-}
-
-fn number(value: f64) -> Value {
-    crate::support::js::number(value)
 }
 
 /// `prepareRequest`: the request body, the warnings, and what parsing the response
@@ -256,7 +245,7 @@ pub fn prepare_request(
     }
 
     let tools = options.tools.as_deref();
-    let tool_name_mapping = ToolNameMapping::new(tools);
+    let tool_name_mapping = ToolNameMapping::new(tools, PROVIDER_TOOL_NAMES);
     let prepared_tools = prepare_responses_tools(
         tools,
         options.tool_choice.as_ref(),
@@ -322,10 +311,11 @@ pub fn prepare_request(
         if let Some(effort) = update_effort(item)
             && let Some(reason) = update_effort_unsupported_reason(Some(&effort))
         {
-            return Err(unsupported_with_message(
+            return Err(UnsupportedFunctionalityError::with_message(
                 "Message-level reasoningEffortUpdate",
                 &reason,
-            ));
+            )
+            .into());
         }
     }
 

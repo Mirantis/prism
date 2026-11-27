@@ -6,13 +6,12 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use axum::body::Body;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{FromRequest, Request};
 use axum::response::{IntoResponse, Response};
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
-use http::{HeaderMap, StatusCode, header};
+use http::{StatusCode, header};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,7 +26,7 @@ use crate::lib::origin_guard::is_allowed_origin;
 use crate::services::voice::voice_chat_service::{
     RecordingFrame, VOICE_CHAT_SERVICE, is_recording_frame,
 };
-use crate::services::websocket_upgrades::serve_upgrades;
+use crate::services::websocket_upgrades::{joined_header, refuse, serve_upgrades};
 use crate::{log_info, log_warn};
 
 pub const COMPUTER_PATH: &str = "/api/computer";
@@ -205,25 +204,6 @@ impl ComputerViewer for SocketViewer {
         self.socket
             .send(Message::Binary(tagged(DESKTOP_AUDIO_FRAME, &pcm, 0)));
     }
-}
-
-/// An upgrade refused before it is upgraded, with the connection closed.
-fn refuse(status: StatusCode) -> Response {
-    let mut response = (status, Body::empty()).into_response();
-    response
-        .headers_mut()
-        .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
-    response
-}
-
-/// A header as Node gives it: repeated values joined with `, `.
-fn joined_header(headers: &HeaderMap, name: header::HeaderName) -> Option<String> {
-    let values: Vec<&str> = headers
-        .get_all(name)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .collect();
-    (!values.is_empty()).then(|| values.join(", "))
 }
 
 /// `searchParams.get('computer') || LOCAL_COMPUTER_ID`.

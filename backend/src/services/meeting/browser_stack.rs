@@ -2365,11 +2365,11 @@ impl PageHandle {
     /// Sleep for `ms` milliseconds. Fails when the tab is closed, before or during the wait.
     pub async fn wait_for_timeout(&self, ms: u64) -> anyhow::Result<()> {
         if self.is_closed() {
-            anyhow::bail!("Target page, context or browser has been closed");
+            anyhow::bail!("{CLOSED_MESSAGE}");
         }
         tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
         if self.is_closed() {
-            anyhow::bail!("Target page, context or browser has been closed");
+            anyhow::bail!("{CLOSED_MESSAGE}");
         }
         Ok(())
     }
@@ -2542,11 +2542,6 @@ impl FrameHandle {
     /// The frame's committed URL.
     pub fn url(&self) -> String {
         self.inner.url.lock().clone()
-    }
-
-    /// Whether the frame has left its tab.
-    pub fn is_detached(&self) -> bool {
-        self.inner.detached.load(Ordering::SeqCst)
     }
 
     /// Call a JavaScript function, given as its source, with `arg` in this frame, and
@@ -2944,22 +2939,6 @@ impl Locator {
             json!({ "type": "inputValue" }),
             None,
             |value| Probe::Done(Ok(value["value"].as_str().unwrap_or_default().to_string())),
-        )
-        .await
-    }
-
-    /// Dispatch a DOM event of this type on the element.
-    pub async fn dispatch_event(
-        &self,
-        event_type: &str,
-        timeout_ms: Option<u64>,
-    ) -> anyhow::Result<()> {
-        self.poll_one(
-            "locator.dispatchEvent",
-            timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS),
-            json!({ "type": "dispatch", "eventType": event_type }),
-            None,
-            |_| Probe::Done(Ok(())),
         )
         .await
     }

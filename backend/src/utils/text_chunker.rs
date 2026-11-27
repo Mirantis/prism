@@ -9,15 +9,10 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::support::js::len16;
+use crate::support::js::{len16, trim as js_trim};
 
 static PARAGRAPH_BREAK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\n\n+").expect("valid regex"));
-
-/// `String.prototype.trim`.
-pub(crate) fn js_trim(text: &str) -> &str {
-    crate::support::js::trim(text)
-}
 
 /// Split content into chunks respecting paragraph boundaries.
 pub fn split_content(text: &str, max_length: usize) -> Vec<String> {

@@ -105,17 +105,11 @@ pub fn docker_base_env(base: Option<&ProcessEnv>) -> ProcessEnv {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn env(pairs: &[(&str, &str)]) -> ProcessEnv {
-        pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect()
-    }
+    use crate::lib::execution_environments::execution_environment::env_of;
 
     #[test]
     fn keeps_the_runtimes_own_credentials_out_of_the_container() {
-        let result = docker_base_env(Some(&env(&[
+        let result = docker_base_env(Some(&env_of(&[
             ("SLACK_BOT_TOKEN", "xoxb-test"),
             ("SLACK_APP_TOKEN", "xapp-test"),
             ("TEAMS_APP_ID", "test-app-id"),
@@ -135,7 +129,7 @@ mod tests {
 
     #[test]
     fn keeps_the_credentials_the_agent_works_with() {
-        let result = docker_base_env(Some(&env(&[
+        let result = docker_base_env(Some(&env_of(&[
             ("AWS_BEARER_TOKEN_BEDROCK", "test-token"),
             ("ANTHROPIC_API_KEY", "test-key"),
             ("OPENAI_API_KEY", "test-key"),
@@ -156,7 +150,7 @@ mod tests {
 
     #[test]
     fn drops_the_runtimes_own_server_wiring() {
-        let result = docker_base_env(Some(&env(&[
+        let result = docker_base_env(Some(&env_of(&[
             ("PORT", "3003"),
             ("PRISM_HOST", "0.0.0.0"),
             ("PRISM_ALLOWED_ORIGINS", "https://app.example.com"),
@@ -166,7 +160,7 @@ mod tests {
 
     #[test]
     fn drops_a_variable_that_names_a_path_or_socket_on_this_machine() {
-        let result = docker_base_env(Some(&env(&[
+        let result = docker_base_env(Some(&env_of(&[
             ("KUBECONFIG", "/Users/me/.kube/config"),
             ("AWS_PROFILE", "work"),
             ("AWS_CONFIG_FILE", "/Users/me/.aws/config"),

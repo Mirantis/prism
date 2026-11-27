@@ -26,7 +26,7 @@ pub fn router() -> Router {
     Router::new()
         .route("/agents/chatgpt-auth/status", get(status))
         .route("/agents/chatgpt-auth/start", post(start))
-        .route("/agents/chatgpt-auth/callback", get(callback))
+        .route(CALLBACK_PATH, get(callback))
         .route("/agents/chatgpt-auth/sign-out", post(sign_out))
 }
 

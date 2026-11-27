@@ -11,6 +11,7 @@
 
 import {
   EVAL_USER_ID,
+  clip,
   heartbeatRunPrompt,
   postingCeiling as ceilingOf,
   runTurn,
@@ -174,9 +175,4 @@ export function placesOf(outcome: Outcome): Set<Place> {
 export function reachedUser(outcome: Outcome): boolean {
   const places = placesOf(outcome);
   return places.has('web chat') || places.has('DM');
-}
-
-function clip(text: string, max: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }

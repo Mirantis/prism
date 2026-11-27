@@ -128,19 +128,6 @@ impl LanguageModelUsage {
     }
 }
 
-/// `asLanguageModelUsage`.
-pub fn as_language_model_usage(usage: &LanguageModelV4Usage) -> LanguageModelUsage {
-    LanguageModelUsage::from_v4(usage)
-}
-
-/// `addLanguageModelUsage`.
-pub fn add_language_model_usage(
-    a: &LanguageModelUsage,
-    b: &LanguageModelUsage,
-) -> LanguageModelUsage {
-    a.add(b)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -214,7 +214,8 @@ fn missing_lite_llm_settings_for(config: &Config) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lib::llm_providers::llm_provider::{provider_options_json, test_config};
+    use crate::config::test_config;
+    use crate::lib::llm_providers::llm_provider::provider_options_json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     const PROXY: &str = "https://litellm.example.com/v1";

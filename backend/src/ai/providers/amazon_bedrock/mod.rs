@@ -25,7 +25,7 @@ use self::api::{EnvLookup, FetchFunction, default_fetch, process_env};
 use self::auth::{SessionTokenFallback, authorized_fetch, resolve_auth};
 use self::converse::{AmazonBedrockChatLanguageModel, ChatConfig};
 use self::embedding::{AmazonBedrockEmbeddingModel, EmbeddingConfig};
-use crate::ai::generate_text::with_user_agent_suffix;
+use crate::ai::generate_text::{generate_id, with_user_agent_suffix};
 use crate::ai::provider::Headers;
 use crate::ai::{EmbeddingModel, LanguageModel};
 
@@ -104,16 +104,6 @@ pub fn supports_native_structured_output(model_id: &str) -> bool {
         && !MODELS_WITHOUT_RELIABLE_NATIVE_STRUCTURED_OUTPUT
             .iter()
             .any(|model| model_id.contains(model))
-}
-
-/// `generateId`: 16 random letters and digits.
-pub fn generate_id() -> String {
-    use rand::Rng;
-    const ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    let mut rng = rand::rng();
-    (0..16)
-        .map(|_| ALPHABET[rng.random_range(0..ALPHABET.len())] as char)
-        .collect()
 }
 
 /// The provider `createAmazonBedrock` returns.

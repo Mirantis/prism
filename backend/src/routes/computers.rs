@@ -57,7 +57,7 @@ pub fn router() -> Router {
 /// `/agents` request that reaches this router: those no router mounted before it
 /// answered, including the routes of the routers mounted after it. Here it covers this
 /// router's own routes.
-async fn require_agent(req: Request, next: Next) -> Response {
+pub(super) async fn require_agent(req: Request, next: Next) -> Response {
     if CONFIG.agent_id().is_none() {
         return json(503, json!({ "error": "Agent is not initialized." }));
     }
@@ -202,7 +202,7 @@ pub struct ErrorBody {
     pub error: String,
 }
 
-fn refusal(status: u16, error: impl Into<String>) -> Response {
+pub(super) fn refusal(status: u16, error: impl Into<String>) -> Response {
     json(
         status,
         ErrorBody {

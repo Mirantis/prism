@@ -60,24 +60,15 @@ fn openrouter_settings(config: &Config, base_url: &str) -> OpenAIProviderSetting
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::gateway_test_config;
     use crate::lib::llm_providers::llm_provider::provider_options_json;
 
     const OPENROUTER_DIRECT: &str = "https://openrouter.ai/api/v1";
 
-    /// A configuration whose gateway is `gateway.example.com`.
-    fn config(pairs: &[(&str, &str)]) -> Config {
-        let env = [("NEXUS_API_URL", "https://gateway.example.com")]
-            .iter()
-            .chain(pairs)
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        Config::load(&env, &mut |_, _| {}).unwrap()
-    }
-
     #[test]
     fn sends_requests_to_the_endpoint_it_is_given() {
         let s = openrouter_settings(
-            &config(&[("OPENROUTER_API_KEY", "sk-or-test")]),
+            &gateway_test_config(&[("OPENROUTER_API_KEY", "sk-or-test")]),
             OPENROUTER_DIRECT,
         );
         assert_eq!(s.api_key.as_deref(), Some("sk-or-test"));
@@ -87,14 +78,17 @@ mod tests {
     #[test]
     fn a_gateway_endpoint_without_a_local_key_falls_back_to_a_decoy() {
         let mount = "https://gateway.example.com/llm/openrouter/openai/v1";
-        let s = openrouter_settings(&config(&[]), mount);
+        let s = openrouter_settings(&gateway_test_config(&[]), mount);
         assert_eq!(s.api_key.as_deref(), Some("managed"));
         assert_eq!(s.base_url.as_deref(), Some(mount));
     }
 
     #[test]
     fn an_endpoint_off_the_gateway_host_without_a_key_sends_no_decoy() {
-        let s = openrouter_settings(&config(&[]), "https://proxy.example/openrouter/v1");
+        let s = openrouter_settings(
+            &gateway_test_config(&[]),
+            "https://proxy.example/openrouter/v1",
+        );
         assert_eq!(s.api_key, None);
     }
 

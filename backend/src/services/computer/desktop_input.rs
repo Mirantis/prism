@@ -29,8 +29,8 @@ use tokio::sync::mpsc;
 
 use super::child_process::{ChildHandle, Pipes, StopSignal, on_chunks, process_env, spawn_child};
 use super::desktop_control::{DesktopControl, MouseButton};
-use super::screen_size::math_round;
 use crate::lib::log_redaction::err_json;
+use crate::support::js::round as js_round;
 use crate::{log_debug, log_warn};
 
 /// One input frame from the page.
@@ -130,11 +130,11 @@ pub fn paste_text(text: &str) -> String {
     text.chars().take(MAX_PASTE_CHARS).collect()
 }
 
-/// How long movement is gathered before one `mousemove` goes out.
-const MOVE_FLUSH_MS: u64 = 16;
+/// How long a viewer's movement is gathered before one position goes out.
+pub const MOVE_FLUSH_MS: u64 = 16;
 /// Wheel pixels per wheel click, so a flick is a few clicks and not fifty.
-const WHEEL_PIXELS_PER_CLICK: f64 = 60.0;
-const MAX_WHEEL_CLICKS: i64 = 10;
+pub const WHEEL_PIXELS_PER_CLICK: f64 = 60.0;
+pub const MAX_WHEEL_CLICKS: i64 = 10;
 
 /// Browser key names with a different X keysym.
 fn named_key(key: &str) -> Option<&'static str> {
@@ -389,7 +389,7 @@ impl DesktopInput {
                 self.write(format!("{verb} {}", button.x11()));
             }
             InputFrame::Wheel { dy } => {
-                let clicks = math_round(dy.abs() / WHEEL_PIXELS_PER_CLICK)
+                let clicks = js_round(dy.abs() / WHEEL_PIXELS_PER_CLICK)
                     .max(1.0)
                     .min(MAX_WHEEL_CLICKS as f64) as i64;
                 self.flush_move();
@@ -478,8 +478,8 @@ impl DesktopInput {
         let width = self.screen.width();
         let height = self.screen.height();
         let mut state = self.state.lock();
-        state.x = ((width - 1) as f64).min(math_round(x).max(0.0)) as i64;
-        state.y = ((height - 1) as f64).min(math_round(y).max(0.0)) as i64;
+        state.x = ((width - 1) as f64).min(js_round(x).max(0.0)) as i64;
+        state.y = ((height - 1) as f64).min(js_round(y).max(0.0)) as i64;
     }
 
     fn schedule_move(&self) {

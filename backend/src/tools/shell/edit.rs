@@ -4,6 +4,8 @@
 //! Exact-match replacement with a whitespace-tolerant line-trimmed
 //! fallback. Behavior mirrors upstream verbatim.
 
+use crate::support::js::trim as js_trim;
+
 /// The edited content, or why the edit was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditOutcome {
@@ -95,32 +97,6 @@ fn count_occurrences(haystack: &str, needle: &str) -> usize {
         return 0;
     }
     haystack.matches(needle).count()
-}
-
-/// JavaScript's `String.prototype.trim`: white space and line terminators.
-fn js_trim(text: &str) -> &str {
-    let is_js_space = |c: char| {
-        matches!(
-            c,
-            '\u{0009}'
-                | '\u{000A}'
-                | '\u{000B}'
-                | '\u{000C}'
-                | '\u{000D}'
-                | '\u{0020}'
-                | '\u{00A0}'
-                | '\u{1680}'
-                | '\u{2000}'
-                ..='\u{200A}'
-                    | '\u{2028}'
-                    | '\u{2029}'
-                    | '\u{202F}'
-                    | '\u{205F}'
-                    | '\u{3000}'
-                    | '\u{FEFF}'
-        )
-    };
-    text.trim_matches(is_js_space)
 }
 
 /// Every place `find` matches `content` line by line after trimming each line,

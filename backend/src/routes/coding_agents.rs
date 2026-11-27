@@ -38,11 +38,6 @@ pub fn router() -> Router {
         .route("/agents/coding-agents/{agent}/sign-out", post(sign_out))
 }
 
-/// The coding agent a path segment names, or `None` for any other text.
-fn agent_param(value: &str) -> Option<CodingAgentName> {
-    CodingAgentName::parse(value)
-}
-
 /// The `code` field as zod reads `z.string().trim().min(1).max(2048)`: a string,
 /// trimmed, of 1 to 2048 UTF-16 units. Anything else (a missing key, another
 /// type, blank text) is `None`.
@@ -72,7 +67,7 @@ async fn list_coding_agents() -> Response {
 /// `SignInAttempt` from `start(agent)`; a `SignInUnavailableError` answers 409 with
 /// its message, and any other error reaches the default error handler.
 async fn start_sign_in(Path(agent): Path<String>) -> Response {
-    let Some(agent) = agent_param(&agent) else {
+    let Some(agent) = CodingAgentName::parse(&agent) else {
         return error_json(404, "No such coding agent.");
     };
     match CODING_AGENT_SIGN_IN_SERVICE.start(agent).await {
@@ -90,8 +85,8 @@ async fn start_sign_in(Path(agent): Path<String>) -> Response {
 /// `That sign-in has ended. Get a new link.` when the agent is unknown or the
 /// attempt is gone.
 async fn read_sign_in(Path((agent, id)): Path<(String, String)>) -> Response {
-    let attempt =
-        agent_param(&agent).and_then(|agent| CODING_AGENT_SIGN_IN_SERVICE.get(agent, &id));
+    let attempt = CodingAgentName::parse(&agent)
+        .and_then(|agent| CODING_AGENT_SIGN_IN_SERVICE.get(agent, &id));
     match attempt {
         Some(attempt) => json(200, attempt),
         None => error_json(404, "That sign-in has ended. Get a new link."),
@@ -126,7 +121,7 @@ async fn submit_code(Path(id): Path<String>, body: JsonBody) -> Response {
 /// (`[CodingAgents] Sign-out failed`, with `err` and `agent`) and answers 500
 /// `The sign-out failed. Try again.`.
 async fn sign_out(Path(agent): Path<String>) -> Response {
-    let Some(agent) = agent_param(&agent) else {
+    let Some(agent) = CodingAgentName::parse(&agent) else {
         return error_json(404, "No such coding agent.");
     };
     match CODING_AGENT_SIGN_IN_SERVICE.sign_out(agent).await {

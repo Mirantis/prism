@@ -10,12 +10,10 @@
 use axum::Router;
 use axum::response::Response;
 use axum::routing::get;
-use indexmap::IndexMap;
 use serde_json::json;
 
-use crate::config::CONFIG;
 use crate::lib::log_redaction::err_json;
-use crate::lib::telemetry::track_event;
+use crate::lib::telemetry::{agent_props, track_event};
 use crate::log_error;
 use crate::services::agent_status_service::{AGENT_STATUS_SERVICE, HeartbeatDeliveryChanges};
 use crate::support::http::{JsonBody, error_json, json};
@@ -64,10 +62,7 @@ async fn update_heartbeat_delivery(body: JsonBody) -> Response {
         Ok(delivery) => delivery,
         Err(refusal) => return error_json(400, refusal),
     };
-    let mut props = IndexMap::new();
-    if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-        props.insert("agent.id".to_string(), agent_id);
-    }
+    let mut props = agent_props();
     props.insert(
         "heartbeat.deliver_to".to_string(),
         delivery.deliver_to.clone(),

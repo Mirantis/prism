@@ -14,7 +14,6 @@ use bytes::Bytes;
 use futures::future::BoxFuture;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
-use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Value, json};
 
 use super::computer::{Computer, CredentialFields, SignInFormInfo};
@@ -31,9 +30,7 @@ use super::desktop_session::DesktopSession;
 use super::desktop_windows::{WindowAction, act_on_window, find_windows, list_windows};
 use super::picture_stream::{FrameSink, PictureStream};
 use super::screen_elements::{describe_elements, find_elements, read_screen_elements};
-use super::screen_size::{
-    DEFAULT_SCREEN, OCR_SCALE, ScreenSize, clamp_screen, math_round, size_text,
-};
+use super::screen_size::{DEFAULT_SCREEN, OCR_SCALE, ScreenSize, clamp_screen, size_text};
 use super::screen_text::{find_text, read_lines, read_screen_words, upscale_for_ocr};
 use super::secure_window::clear_password_fields;
 use super::sign_in_form::{
@@ -53,6 +50,7 @@ use crate::services::meeting::browser_stack::{
     BrowserStack, BrowserStackOptions, GotoOptions, LoadState, PageHandle,
 };
 use crate::support::js;
+use crate::support::js::round as js_round;
 use crate::support::now_ms;
 use crate::{log_debug, log_error, log_info, log_warn};
 
@@ -122,18 +120,6 @@ fn is_silent(pcm: &[u8]) -> bool {
     pcm.iter().all(|&byte| byte == 0)
 }
 
-/// What `encodeURIComponent` leaves as it is.
-const URI_COMPONENT: &AsciiSet = &NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'_')
-    .remove(b'.')
-    .remove(b'!')
-    .remove(b'~')
-    .remove(b'*')
-    .remove(b'\'')
-    .remove(b'(')
-    .remove(b')');
-
 /// What the agent's working tab shows before it goes anywhere. A page with content, so
 /// the screen stream has a picture from the first second; `about:blank` never repaints
 /// and so never produces a frame.
@@ -143,10 +129,7 @@ static START_PAGE: LazyLock<String> = LazyLock::new(|| {
         "<body style=\"margin:0;height:100vh;display:flex;align-items:center;justify-content:center;",
         "background:#18181b;color:#a1a1aa;font:24px system-ui,sans-serif\">Ready</body>",
     );
-    format!(
-        "data:text/html,{}",
-        utf8_percent_encode(html, URI_COMPONENT)
-    )
+    format!("data:text/html,{}", js::encode_uri_component(html))
 });
 
 /// The label a screenshot goes into the session with; see `meeting_bot_service.rs`.
@@ -220,7 +203,7 @@ fn detail(err: &anyhow::Error) -> String {
 
 /// `Math.round(n)` as a template literal writes it.
 fn rounded(n: f64) -> String {
-    js::number_text(math_round(n))
+    js::number_text(js_round(n))
 }
 
 /// A value from the page as a template literal writes it.
@@ -574,8 +557,8 @@ impl AgentComputer {
                         TextLocation {
                             text: e.name,
                             line: format!("{} in {}", e.role, e.app),
-                            x: math_round(x) as i64,
-                            y: math_round(y) as i64,
+                            x: js_round(x) as i64,
+                            y: js_round(y) as i64,
                         }
                     })
                     .collect());
@@ -589,8 +572,8 @@ impl AgentComputer {
                     TextLocation {
                         text: m.text,
                         line: m.line,
-                        x: math_round(x) as i64,
-                        y: math_round(y) as i64,
+                        x: js_round(x) as i64,
+                        y: js_round(y) as i64,
                     }
                 })
                 .collect())
@@ -1209,7 +1192,7 @@ impl ComputerUserScreen for AgentComputer {
         let shown = self
             .channel()
             .is_some_and(|channel| channel.show_image(&data_url(&shared.jpeg), USER_SCREEN_NOTE));
-        let age_seconds = math_round((now_ms() - shared.at) as f64 / 1000.0) as i64;
+        let age_seconds = js_round((now_ms() - shared.at) as f64 / 1000.0) as i64;
         let text = self.read_user_screen_text(shared.jpeg.clone()).await;
         let message = if shown {
             format!(

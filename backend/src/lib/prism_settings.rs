@@ -34,12 +34,19 @@ pub struct AgentModelDefaults {
     pub cron_model: Option<String>,
 }
 
-/// Mirror the format rule enforced by the model-override API/UI
-/// (agent-workspace.service). Validate here so a typo in the settings file
-/// degrades to "no default" rather than persisting a bad id on the agent row.
+// Letters, digits and a few separators cover Bedrock inference-profile ids,
+// region-prefixed ids and bare vendor SKUs. Membership in a curated list is not
+// checked, so a user can choose a model the runtime has not been told about.
 static MODEL_ID_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z0-9._:\-/]+$").expect("valid regex"));
-const MODEL_ID_MAX_LEN: usize = 200;
+pub const MODEL_ID_MAX_LEN: usize = 200;
+
+/// The format rule for a model id, which the per-agent model override and the
+/// settings file share. A typo in the settings file degrades to "no default"
+/// rather than persisting a bad id on the agent row.
+pub fn is_valid_model_id(id: &str) -> bool {
+    crate::support::js::len16(id) <= MODEL_ID_MAX_LEN && MODEL_ID_PATTERN.is_match(id)
+}
 
 /// `PRISM_SETTINGS_PATH`, else `~/.prism/settings.json`.
 pub fn prism_settings_path() -> PathBuf {
@@ -82,8 +89,7 @@ fn pick_model_id(obj: &Map<String, Value>, key: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    if crate::support::js::len16(trimmed) > MODEL_ID_MAX_LEN || !MODEL_ID_PATTERN.is_match(trimmed)
-    {
+    if !is_valid_model_id(trimmed) {
         stderr_line(&format!(
             "[prism-settings] '{key}' is not a valid model id; ignoring\n"
         ));

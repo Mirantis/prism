@@ -25,13 +25,13 @@
 //! when its mtime changes, so a skill the user drops in appears without a restart.
 
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 
 use parking_lot::Mutex;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::lib::execution_environments::execution_environment::{DirEntry, ExecutionFiles};
+use crate::lib::execution_environments::execution_environment::DirEntry;
 use crate::lib::execution_environments::get_execution_environment::{
     files_for, get_execution_environment,
 };
@@ -39,12 +39,6 @@ use crate::log_warn;
 use crate::services::plugin_catalog_service::PLUGIN_CATALOG_SERVICE;
 use crate::support::js;
 use indexmap::IndexMap;
-
-/// The filesystem holding a path. A thread rooted in a host repository has its
-/// workspace skills on the host even when the deployment runs in a container.
-fn files(dir: &str) -> Arc<dyn ExecutionFiles> {
-    files_for(dir)
-}
 
 /// Where a skill was discovered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -207,7 +201,7 @@ impl SkillCatalogService {
         let Some(entry) = self.find(name, workspace_root).await else {
             return Ok(None);
         };
-        let raw = files(&entry.skill_md_path)
+        let raw = files_for(&entry.skill_md_path)
             .read_text(&entry.skill_md_path, None)
             .await?;
         Ok(Some(SkillBody {
@@ -220,7 +214,7 @@ impl SkillCatalogService {
     /// directory that doesn't exist (e.g. a repo with no `.agents/skills`) caches
     /// `{ mtime_ms: -1, entries: [] }` and scans as empty.
     async fn scan_cached(&self, root: &SkillRoot) -> Vec<SkillEntry> {
-        let mtime_ms = match files(&root.dir).stat(&root.dir).await {
+        let mtime_ms = match files_for(&root.dir).stat(&root.dir).await {
             Ok(st) => st.mtime_ms,
             Err(_) => {
                 self.cache.lock().insert(
@@ -265,7 +259,7 @@ impl SkillCatalogService {
     /// sort order`.
     async fn scan(&self, root: &SkillRoot) -> Vec<SkillEntry> {
         let dir = &root.dir;
-        let dirents: Vec<DirEntry> = match files(dir).read_dir(dir).await {
+        let dirents: Vec<DirEntry> = match files_for(dir).read_dir(dir).await {
             Ok(dirents) => dirents,
             Err(_) => return Vec::new(),
         };
@@ -280,7 +274,7 @@ impl SkillCatalogService {
         for dir_name in subdirs {
             let bundle_dir = join(dir, &dir_name);
             let skill_md_path = join(&bundle_dir, "SKILL.md");
-            let skill_files = files(&skill_md_path);
+            let skill_files = files_for(&skill_md_path);
 
             // lstat the final component so a SKILL.md that is itself a symlink is
             // rejected — that would let a bundle read an arbitrary file outside the

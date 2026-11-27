@@ -29,6 +29,7 @@ use crate::services::meeting::resampler::pcm16_bytes_duration_ms;
 
 pub use crate::services::meeting::realtime_session::RecordingSegment;
 use crate::services::meeting::resampler::{Downsampler, REALTIME_SAMPLE_RATE};
+use crate::support::js::round as js_round;
 
 /// The longest recording the runtime keeps. The page stops itself at the same figure.
 pub const MAX_RECORDING_MS: i64 = 5 * 60_000;
@@ -85,16 +86,6 @@ pub struct ScreenRecordingOptions {
 pub fn format_offset(ms: f64) -> String {
     let total = (ms / 1000.0).floor().max(0.0) as i64;
     format!("{}:{:02}", total / 60, total % 60)
-}
-
-/// `Math.round`: the nearest integer, halves toward positive infinity.
-fn js_round(value: f64) -> f64 {
-    let floor = value.floor();
-    if value - floor >= 0.5 {
-        floor + 1.0
-    } else {
-        floor
-    }
 }
 
 /// The window an offset falls in.

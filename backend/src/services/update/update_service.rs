@@ -66,11 +66,7 @@ impl UpdateDisabledReason {
     }
 }
 
-impl std::fmt::Display for UpdateDisabledReason {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+crate::support::display_as_str!(UpdateDisabledReason);
 
 /// A second apply was requested while one is running — the route maps it to 409.
 #[derive(Debug, Clone, Copy, thiserror::Error)]

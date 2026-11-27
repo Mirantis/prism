@@ -13,7 +13,6 @@ use chrono::{DateTime, Utc};
 use diesel::SqliteConnection;
 use diesel::prelude::*;
 use indexmap::IndexMap;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
@@ -29,21 +28,15 @@ use crate::lib::agent_name::{AGENT_NAME_RULE, normalise_agent_name};
 use crate::lib::model_selection::{
     MODEL_TIERS, ModelTier, StoredModelSelection, missing_auto_tiers, resolve_model_selection,
 };
+use crate::lib::prism_settings::{MODEL_ID_MAX_LEN, is_valid_model_id};
 use crate::lib::telemetry::track_event;
 use crate::lib::workspace_docs::{DocumentWriteActor, DocumentWriteMethod, WorkspaceDocField};
 use crate::lib::workspace_seed::WorkspaceSeed;
 use crate::log_info;
 use crate::services::document_revision_service::{DOCUMENT_REVISION_SERVICE, RecordRevisionInput};
 use crate::services::voice::agent_voice::warm_voice;
+use crate::support::js::trim as js_trim;
 use crate::templates::default_workspace::get_default_workspace_files;
-
-// Format-only validation for the per-agent model override. Letters/digits and
-// a small set of separators cover Bedrock inference-profile IDs, region-prefixed
-// IDs, and bare vendor SKUs. Membership in any curated list is intentionally
-// NOT enforced — users can opt into models the runtime hasn't been told about.
-static MODEL_ID_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[A-Za-z0-9._:\-/]+$").expect("valid model id pattern"));
-const MODEL_ID_MAX_LEN: usize = 200;
 
 /// Resolve the effective model ID from a stored per-agent override: the
 /// override when set, otherwise the runtime's env-configured default. Single
@@ -65,11 +58,6 @@ pub fn resolve_scoped_model(scoped: Option<&str>, main: Option<&str>) -> String 
     resolve_effective_model(scoped.or(main))
 }
 
-/// `String.prototype.trim`: JavaScript's whitespace and line terminators.
-fn js_trim(text: &str) -> &str {
-    crate::support::js::trim(text)
-}
-
 /// Validate and normalize a model-override input. Accepts a non-empty string
 /// (format-checked, trimmed) or `null` to clear. Fails with `ValidationError` on
 /// anything else. Shared by every model setter so the format rule lives once.
@@ -78,8 +66,7 @@ fn normalize_model_override(model: &Value) -> Result<Option<String>, ValidationE
         Value::Null => Ok(None),
         Value::String(text) => {
             let trimmed = js_trim(text);
-            let length = crate::support::js::len16(trimmed);
-            if length == 0 || length > MODEL_ID_MAX_LEN || !MODEL_ID_PATTERN.is_match(trimmed) {
+            if !is_valid_model_id(trimmed) {
                 return Err(ValidationError::new(format!(
                     "model must be 1-{MODEL_ID_MAX_LEN} chars of [A-Za-z0-9._:-/], or null to clear"
                 )));
@@ -609,15 +596,6 @@ impl AgentWorkspaceService {
     pub fn get_agent_in(&self, conn: &mut SqliteConnection) -> anyhow::Result<AgentWorkspace> {
         let agent_id = configured_agent_id()?;
         find_agent(conn, &agent_id)?.ok_or_else(|| anyhow::anyhow!("Agent {agent_id} not found"))
-    }
-
-    pub async fn get_all_agents(&self) -> anyhow::Result<Vec<AgentWorkspace>> {
-        crate::db::read(|conn| {
-            Ok(w::agent_workspaces
-                .select(AgentWorkspace::as_select())
-                .load(conn)?)
-        })
-        .await
     }
 
     /// Rename the agent. Shared by the management `PATCH /agents/name`

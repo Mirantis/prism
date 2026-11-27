@@ -38,6 +38,7 @@ use crate::services::meeting::realtime_usage::{
 };
 use crate::services::meeting::resampler::REALTIME_SAMPLE_RATE;
 use crate::services::voice::socket_audio::{is_audio_frame_usable, max_frame_bytes};
+use crate::support::js::round as js_round;
 
 /// Five minutes. Past it the session transcribes what it has, as if committed: by the audio
 /// received, and by the clock, for a client that stops sending without letting go.
@@ -619,7 +620,7 @@ impl DictationSession {
         props.insert("status".to_string(), outcome.as_str().to_string());
         props.insert(
             "audio_ms".to_string(),
-            js_round(audio_bytes as f64 / BYTES_PER_MS as f64).to_string(),
+            (js_round(audio_bytes as f64 / BYTES_PER_MS as f64) as i64).to_string(),
         );
         props.insert(
             "elapsed_ms".to_string(),
@@ -649,16 +650,6 @@ impl DictationSession {
             Say::Result(text) => self.options.signal.result(&text),
         }
     }
-}
-
-/// `Math.round`: the nearest integer, halves toward positive infinity.
-fn js_round(value: f64) -> i64 {
-    let floor = value.floor();
-    (if value - floor >= 0.5 {
-        floor + 1.0
-    } else {
-        floor
-    }) as i64
 }
 
 #[cfg(test)]

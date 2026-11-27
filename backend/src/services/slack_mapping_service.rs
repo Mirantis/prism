@@ -165,38 +165,6 @@ impl SlackMappingService {
         .await
     }
 
-    /// Find all user mappings for a Lens user, each with the Slack connection's
-    /// workspace. A mapping is left out while no Slack connection is configured.
-    pub async fn find_user_mappings_by_lens_user_id(
-        &self,
-        lens_user_id: &str,
-    ) -> anyhow::Result<Vec<SlackUserMappingWithTeam>> {
-        let lens_user_id = lens_user_id.to_string();
-        let mappings: Vec<SlackMapping> = crate::db::read(move |conn| {
-            Ok(m::slack_mappings
-                .filter(m::lens_user_id.eq(&lens_user_id))
-                .filter(m::slack_user_id.is_not_null()) // User mappings only
-                .select(SlackMapping::as_select())
-                .load(conn)?)
-        })
-        .await?;
-
-        let mut results = Vec::new();
-        for mapping in mappings {
-            if let Some(conn) = get_slack_connection().await? {
-                results.push(SlackUserMappingWithTeam {
-                    mapping,
-                    connection: MappingTeam {
-                        team_id: conn.team_id,
-                        team_name: conn.team_name,
-                        is_active: conn.is_active,
-                    },
-                });
-            }
-        }
-        Ok(results)
-    }
-
     /// Create or update a user mapping (DM mode). A created row has its channel
     /// fields null.
     pub async fn upsert_user_mapping(

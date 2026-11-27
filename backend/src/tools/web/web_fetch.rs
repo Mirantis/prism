@@ -20,6 +20,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+use crate::ai::errors::ABORTED_MESSAGE;
 use crate::ai::{Tool, ToolSet, execute_fn, tool, zod_schema};
 use crate::lib::html_to_markdown::{MarkdownExtractor, html_to_markdown};
 use crate::lib::public_url::{PrivateAddressError, PublicResolver, assert_public_literal};
@@ -325,7 +326,7 @@ async fn read_page(address: &str, deps: &WebFetchDeps) -> anyhow::Result<Read> {
                 Ok(step) => step,
                 Err(_) => Err(TimedOut.into()),
             },
-            () = abort.cancelled() => anyhow::bail!("This operation was aborted"),
+            () = abort.cancelled() => anyhow::bail!(ABORTED_MESSAGE),
         }
     };
     let fetched = match step {

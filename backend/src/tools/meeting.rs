@@ -509,7 +509,7 @@ pub fn get_meeting_tools(input: MeetingToolsInput) -> ToolSet {
 
     let user_id = input.user_id.clone();
     tools.insert(
-        "read_meeting_chat".to_string(),
+        MEETING_READ_TOOL_NAME.to_string(),
         meeting_tool(
             read_meeting_chat_description(),
             empty_input_schema(),

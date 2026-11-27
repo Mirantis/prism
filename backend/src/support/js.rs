@@ -47,6 +47,17 @@ pub fn is_js_whitespace(ch: char) -> bool {
     )
 }
 
+/// `Math.round`: halves round up, toward positive infinity. `value - value.floor()`
+/// is exact, so a value just under a half rounds down.
+pub fn round(value: f64) -> f64 {
+    let floor = value.floor();
+    if value - floor >= 0.5 {
+        floor + 1.0
+    } else {
+        floor
+    }
+}
+
 /// `string.trim()`.
 pub fn trim(text: &str) -> &str {
     text.trim_matches(is_js_whitespace)
@@ -169,6 +180,23 @@ pub fn number_from(text: &str) -> Option<f64> {
     trimmed.parse::<f64>().ok()
 }
 
+/// What `encodeURIComponent` leaves as it is: letters, digits and `-_.!~*'()`.
+const URI_COMPONENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'!')
+    .remove(b'~')
+    .remove(b'*')
+    .remove(b'\'')
+    .remove(b'(')
+    .remove(b')');
+
+/// `encodeURIComponent`.
+pub fn encode_uri_component(text: &str) -> String {
+    percent_encoding::utf8_percent_encode(text, URI_COMPONENT).to_string()
+}
+
 /// `JSON.parse` of a UTF-8 frame. `JSON.parse` accepts a lone surrogate escape such as
 /// `\ud83d`, which `JSON.stringify` writes for a text holding half of an emoji pair;
 /// `serde_json` refuses it, and a Rust string cannot hold it. A text that fails to parse
@@ -242,6 +270,18 @@ fn replace_lone_surrogate_escapes(bytes: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rounds_like_math_round() {
+        assert_eq!(round(0.49999999999999994), 0.0);
+        assert_eq!(round(0.5), 1.0);
+        assert_eq!(round(2.5), 3.0);
+        assert_eq!(round(-2.5), -2.0);
+        assert_eq!(round(-2.6), -3.0);
+        assert_eq!(round(-0.4), 0.0);
+        assert_eq!(round(4_503_599_627_370_497.0) as i64, 4_503_599_627_370_497);
+        assert_eq!(round(f64::NAN) as i64, 0);
+    }
 
     #[test]
     fn parses_lone_surrogate_escapes_as_json_parse_does() {

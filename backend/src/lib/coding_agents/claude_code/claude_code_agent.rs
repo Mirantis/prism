@@ -25,7 +25,7 @@ use super::credentials::has_claude_code_credentials;
 use super::environment::claude_code_launch_environment;
 use super::mcp_config::start_with_mcp_config;
 use crate::config::{CONFIG, ClaudeCodeTierModel, CodingAgentName, TierSet};
-use crate::lib::coding_agents::cli_run::{CliRunSpec, run_cli};
+use crate::lib::coding_agents::cli_run::{CliRunSpec, js_string, run_cli};
 use crate::lib::coding_agents::coding_agent::{
     CodingAgent, CodingAgentEvent, CodingAgentHome, CodingAgentMode, CodingAgentRefusal,
     CodingAgentRun, CodingAgentStopReason, CodingAgentTask, CodingAgentUnconnectedServer,
@@ -344,14 +344,6 @@ fn text<'a>(line: &'a Value, key: &str) -> Option<&'a str> {
 /// A field's value unless it is `null` or absent, as `??` reads it.
 fn present<'a>(line: &'a Value, key: &str) -> Option<&'a Value> {
     line.get(key).filter(|value| !value.is_null())
-}
-
-/// `String(value)`.
-fn js_string(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        other => other.to_string(),
-    }
 }
 
 /// One stream line to events. Warns when the opening `init` line reports a

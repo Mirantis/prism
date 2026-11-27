@@ -221,15 +221,8 @@ fn sign_request(
 #[cfg(test)]
 mod tests {
     use super::super::AwsCredentials;
+    use super::super::tests::env;
     use super::*;
-
-    fn env(pairs: &[(&str, &str)]) -> EnvLookup {
-        let map: std::collections::HashMap<String, String> = pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        Arc::new(move |name: &str| map.get(name).cloned())
-    }
 
     async fn credentials(auth: Auth) -> anyhow::Result<SigningCredentials> {
         match auth {

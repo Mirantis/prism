@@ -56,6 +56,7 @@ use crate::services::voice::voice_instructions::{
 };
 use crate::services::voice::voice_session_lock::{VOICE_SESSION_LOCK, VoiceSessionKind};
 use crate::support::js::len16;
+use crate::support::js::round as js_round;
 use crate::support::now_ms;
 use crate::utils::with_timeout::with_timeout;
 use crate::{log_debug, log_error, log_info, log_warn};
@@ -449,16 +450,6 @@ enum ShareDirection {
     Stop,
 }
 
-/// `Math.round`: the nearest integer, halves toward positive infinity.
-fn js_round(value: f64) -> i64 {
-    let floor = value.floor();
-    (if value - floor >= 0.5 {
-        floor + 1.0
-    } else {
-        floor
-    }) as i64
-}
-
 /// Share of the room's utterances that came with a speaker, as a whole percentage.
 ///
 /// Zero rather than absent when nothing was judged, for the reason `mean_gate_latency_ms`
@@ -469,7 +460,7 @@ fn attribution_rate(stats: Option<&VoiceConversationStats>) -> i64 {
     if total == 0 {
         return 0;
     }
-    js_round((attributed as f64 / total as f64) * 100.0)
+    js_round((attributed as f64 / total as f64) * 100.0) as i64
 }
 
 /// The fence the chat text sits inside, so the model can see where other people's words end.

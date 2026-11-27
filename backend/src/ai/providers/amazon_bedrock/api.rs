@@ -14,34 +14,18 @@ use crate::ai::errors::{ApiCallError, InvalidArgumentError, LoadSettingError};
 use crate::ai::generate_text::with_user_agent_suffix;
 use crate::ai::json::{js_stringify, secure_json_parse};
 use crate::ai::provider::Headers;
+pub use crate::ai::providers::provider_utils::{
+    EnvLookup, combine_headers, load_optional_setting, process_env,
+};
 
 pub use crate::ai::providers::anthropic::{
     FetchFunction, FetchRequest, FetchResponse, PROVIDER_UTILS_VERSION, default_fetch,
 };
+pub use crate::support::js::encode_uri_component;
 
 /// The body of a response as text, as `TextDecoder` decodes it.
 pub fn response_text(response: &FetchResponse) -> String {
     String::from_utf8_lossy(&response.body).into_owned()
-}
-
-/// Reads an environment variable, as `process.env[name]`.
-pub type EnvLookup = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
-
-/// The process environment.
-pub fn process_env() -> EnvLookup {
-    Arc::new(|name: &str| std::env::var(name).ok())
-}
-
-/// `loadOptionalSetting`: the setting, else the environment variable.
-pub fn load_optional_setting(
-    setting_value: Option<&str>,
-    environment_variable_name: &str,
-    env: &EnvLookup,
-) -> Option<String> {
-    match setting_value {
-        Some(value) => Some(value.to_string()),
-        None => env(environment_variable_name),
-    }
 }
 
 /// `loadSetting`: the setting, else the environment variable, else an error.
@@ -116,32 +100,6 @@ pub fn resolve_bedrock_runtime_base_url(
     Ok(without_trailing_slash(&format!(
         "https://bedrock-runtime.{region}.{dns_suffix}"
     )))
-}
-
-/// `combineHeaders`: later headers replace earlier ones of the same name.
-pub fn combine_headers(parts: &[Option<&Headers>]) -> Headers {
-    let mut combined = Headers::new();
-    for headers in parts.iter().flatten() {
-        for (name, value) in headers.iter() {
-            combined.insert(name.clone(), value.clone());
-        }
-    }
-    combined
-}
-
-/// `encodeURIComponent`.
-pub fn encode_uri_component(text: &str) -> String {
-    const COMPONENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
-        .remove(b'-')
-        .remove(b'_')
-        .remove(b'.')
-        .remove(b'!')
-        .remove(b'~')
-        .remove(b'*')
-        .remove(b'\'')
-        .remove(b'(')
-        .remove(b')');
-    percent_encoding::utf8_percent_encode(text, COMPONENT).to_string()
 }
 
 /// `postJsonToApi` up to the response: the body as `JSON.stringify` writes it,
@@ -272,15 +230,8 @@ pub fn normalize_headers(headers: &Headers) -> Headers {
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::env;
     use super::*;
-
-    fn env(pairs: &[(&str, &str)]) -> EnvLookup {
-        let map: std::collections::HashMap<String, String> = pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        Arc::new(move |name: &str| map.get(name).cloned())
-    }
 
     #[test]
     fn derives_the_runtime_host_from_the_region() {

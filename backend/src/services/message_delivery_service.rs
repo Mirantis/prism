@@ -456,18 +456,6 @@ impl MessageDeliveryService {
             }
         }
     }
-
-    /// Check if any adapter has an active connection for a user
-    pub async fn is_user_connected_to_any(&self, user_id: &str) -> bool {
-        let adapters = self.adapters.read().clone();
-        for adapter in adapters {
-            // Errors are ignored; the next adapter is asked.
-            if let Ok(true) = adapter.is_user_connected(user_id).await {
-                return true;
-            }
-        }
-        false
-    }
 }
 
 impl Default for MessageDeliveryService {

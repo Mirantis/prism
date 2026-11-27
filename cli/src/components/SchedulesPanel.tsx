@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { TextInput } from './TextInput.js';
 import { ApiClient, ApiError, CronTask } from '../api-client.js';
 import { Spinner } from './Spinner.js';
+import { fitColumn } from './fit-column.js';
 
 type Mode = 'list' | 'form' | 'confirmDelete';
 type LoadState = 'loading' | 'ready' | 'error';
@@ -13,15 +14,6 @@ const COL_NAME = 22;
 const COL_SCHEDULE = 22;
 const COL_NEXT = 22;
 const COL_ACTIVE = 8;
-
-// Truncate to fit a column, leaving room for an ellipsis. Cells are rendered
-// inside a fixed-width <Box>, but pre-truncating keeps ink from wrapping a
-// long value onto a second line and breaking row alignment.
-function fit(s: string, width: number): string {
-  const max = width - 2;
-  if (s.length <= max) return s;
-  return s.slice(0, Math.max(0, max - 1)) + '…';
-}
 
 // Render nextRunAt as a compact local timestamp, or '—' when unscheduled.
 function formatNextRun(iso: string | null): string {
@@ -382,13 +374,13 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = tr
                 <Text color="cyan" bold>{selected ? '▸' : ' '}</Text>
               </Box>
               <Box width={COL_NAME}>
-                <Text bold={selected}>{fit(task.name, COL_NAME)}</Text>
+                <Text bold={selected}>{fitColumn(task.name, COL_NAME)}</Text>
               </Box>
               <Box width={COL_SCHEDULE}>
-                <Text bold={selected}>{fit(task.schedule, COL_SCHEDULE)}</Text>
+                <Text bold={selected}>{fitColumn(task.schedule, COL_SCHEDULE)}</Text>
               </Box>
               <Box width={COL_NEXT}>
-                <Text bold={selected}>{fit(formatNextRun(task.nextRunAt), COL_NEXT)}</Text>
+                <Text bold={selected}>{fitColumn(formatNextRun(task.nextRunAt), COL_NEXT)}</Text>
               </Box>
               <Box width={COL_ACTIVE}>
                 <Text bold={selected} color={task.isActive ? 'green' : 'red'}>

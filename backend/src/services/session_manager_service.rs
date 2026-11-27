@@ -74,16 +74,7 @@ impl ResetReason {
     }
 }
 
-impl std::fmt::Display for ResetReason {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-/// `Math.round`: halves round up.
-fn js_round(value: f64) -> f64 {
-    (value + 0.5).floor()
-}
+crate::support::display_as_str!(ResetReason);
 
 /// Spawn `work` after `ms`, and answer the handle that cancels it.
 fn after(ms: i64, work: impl std::future::Future<Output = ()> + Send + 'static) -> AbortHandle {
@@ -383,7 +374,7 @@ impl SessionManagerService {
             state.daily_reset_timeout = Some(timeout);
         }
 
-        let hours_until = js_round(ms_until_reset as f64 / (1000.0 * 60.0 * 60.0) * 10.0) / 10.0;
+        let hours_until = js::round(ms_until_reset as f64 / (1000.0 * 60.0 * 60.0) * 10.0) / 10.0;
         log_info!(
             "Scheduled daily reset for user {} in {} hours",
             user_id,

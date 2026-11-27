@@ -15,7 +15,7 @@
  * short-lived runtime; here one runtime spans the whole suite.
  */
 
-const RUNTIME_PORT = 3003;
+import { RUNTIME_PORT } from './runtime-port';
 
 async function runtimeRequest<T>(
   method: 'GET' | 'DELETE' | 'PATCH',

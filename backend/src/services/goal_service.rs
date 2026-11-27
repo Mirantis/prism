@@ -63,7 +63,9 @@ use crate::services::outbound_message_service::{
 use crate::services::program_status_service::{PROGRAM_STATUS_SERVICE, TurnEnding, TurnHandle};
 use crate::services::thread_turn_service::THREAD_TURN_SERVICE;
 use crate::support::js;
-use crate::types::{InvokeErrorType, InvokeMode, InvokeRequest, TaskLastSend, ToolCallRecord};
+use crate::types::{
+    InvokeErrorType, InvokeMode, InvokeRequest, TaskLastSend, ToolCallRecord, stored_tool_calls,
+};
 use crate::{log_error, log_info, log_warn};
 
 /// How many of a goal's stored turns a turn reads for the messages the goal sent.
@@ -114,17 +116,6 @@ struct GoalTurn {
     tokens: i64,
     had_tool_calls: bool,
     budget_exceeded: bool,
-}
-
-/// A stored `toolCalls` column as records; an entry that is not one is skipped.
-fn stored_tool_calls(stored: Option<&Value>) -> Vec<ToolCallRecord> {
-    match stored {
-        Some(Value::Array(entries)) => entries
-            .iter()
-            .filter_map(|entry| serde_json::from_value(entry.clone()).ok())
-            .collect(),
-        _ => Vec::new(),
-    }
 }
 
 async fn find_goal(goal_id: &str) -> anyhow::Result<Option<Goal>> {
@@ -288,10 +279,6 @@ impl GoalService {
                 .optional()?)
         })
         .await
-    }
-
-    pub async fn get_goal_by_id(&self, goal_id: &str) -> anyhow::Result<Option<Goal>> {
-        find_goal(goal_id).await
     }
 
     /// All goals for an agent, newest first (management/list view).

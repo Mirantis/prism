@@ -613,23 +613,6 @@ async (input, userFn) => {
     case 'focus':
       el.focus();
       return { count, ok: true };
-    case 'dispatch': {
-      const view = el.ownerDocument.defaultView;
-      const init = { bubbles: true, cancelable: true, composed: true };
-      const type = op.eventType;
-      let event;
-      if (['click', 'dblclick', 'mousedown', 'mouseup', 'mouseover', 'mouseout', 'mousemove', 'mouseenter', 'mouseleave', 'contextmenu', 'auxclick'].includes(type)) {
-        event = new view.MouseEvent(type, init);
-      } else if (['keydown', 'keyup', 'keypress'].includes(type)) {
-        event = new view.KeyboardEvent(type, init);
-      } else if (['focus', 'blur', 'focusin', 'focusout'].includes(type)) {
-        event = new view.FocusEvent(type, init);
-      } else {
-        event = new view.Event(type, init);
-      }
-      el.dispatchEvent(event);
-      return { count, ok: true };
-    }
     case 'evaluate':
       return { count, value: await userFn(el, op.arg) };
     case 'fill': {

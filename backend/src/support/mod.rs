@@ -10,6 +10,18 @@ pub mod serde_iso;
 
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 
+/// `Display` that writes the type's `as_str`.
+macro_rules! display_as_str {
+    ($ty:ty) => {
+        impl std::fmt::Display for $ty {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+    };
+}
+pub(crate) use display_as_str;
+
 /// Milliseconds since the epoch, as `Date.now()`.
 pub fn now_ms() -> i64 {
     Utc::now().timestamp_millis()

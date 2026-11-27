@@ -1,11 +1,5 @@
 import { cn } from '@/lib/utils';
-import { agentStatusTone, TONE_DOT } from '@/lib/tones';
-
-const LABELS: Record<string, string> = {
-  RUNNING: 'Working',
-  IDLE: 'Idle',
-  ERROR: 'Error',
-};
+import { agentStatusLabel, agentStatusTone, TONE_DOT } from '@/lib/tones';
 
 /** What the agent is doing right now, as a dot and a word. */
 export function StatusPill({ status, className }: { status: string; className?: string }) {
@@ -24,7 +18,7 @@ export function StatusPill({ status, className }: { status: string; className?: 
         )}
         <span className={cn('relative inline-flex size-2 rounded-full', TONE_DOT[tone])} />
       </span>
-      {LABELS[status] ?? status}
+      {agentStatusLabel(status)}
     </span>
   );
 }

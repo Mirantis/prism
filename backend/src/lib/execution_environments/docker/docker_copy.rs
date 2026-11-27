@@ -8,14 +8,13 @@
 
 use serde_json::json;
 
+use super::container::CONTROL_TIMEOUT_MS;
 use super::docker_environment::exec_image;
 use super::engine::{EngineCallOptions, engine_call, engine_call_args, engine_failure};
 use super::volumes::volume_mounts;
 use crate::config::CONFIG;
 use crate::log_info;
 use crate::support::js;
-
-pub const CONTROL_TIMEOUT_MS: u64 = 60_000;
 
 /// A large workspace crossing the engine's pipe is the slow case.
 pub const COPY_TIMEOUT_MS: u64 = 30 * 60_000;

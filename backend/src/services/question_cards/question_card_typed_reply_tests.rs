@@ -18,6 +18,7 @@ use crate::services::conversation_engine_service::{
 };
 use crate::services::conversation_service::{CONVERSATION_SERVICE, MessageInput};
 use crate::services::inbound_message_service::{INBOUND_MESSAGE_SERVICE, InboundMessage};
+use crate::services::question_cards::question_card_schema::ASK_QUESTIONS_TOOL_NAME;
 use crate::types::{
     AgentMessageOrigin, InvokeRequest, InvokeStep, PromptSource, TaskNotificationOrigin,
     ToolCallRecord,
@@ -42,7 +43,7 @@ fn model(steps: Vec<InvokeStep>) {
 
 fn asked(success: bool) -> ToolCallRecord {
     serde_json::from_value(json!({
-        "tool": "ask_questions",
+        "tool": ASK_QUESTIONS_TOOL_NAME,
         "input": "{}",
         "output": "",
         "success": success,

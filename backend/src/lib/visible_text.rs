@@ -3,6 +3,8 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
+use crate::support::js::trim as js_trim;
+
 /// Whitespace and format characters such as a zero-width space, which a reader
 /// cannot see. The whitespace class is JavaScript's `\s`.
 static INVISIBLE_ONLY: LazyLock<Regex> = LazyLock::new(|| {
@@ -12,28 +14,13 @@ static INVISIBLE_ONLY: LazyLock<Regex> = LazyLock::new(|| {
     .expect("invisible-only pattern")
 });
 
-/// JavaScript's `String.prototype.trim` whitespace: `\s` plus the line terminators.
-pub(crate) fn is_js_whitespace(c: char) -> bool {
-    matches!(
-        c,
-        '\t' | '\n' | '\u{000B}' | '\u{000C}' | '\r' | ' ' | '\u{00A0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200A}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202F}'
-                | '\u{205F}'
-                | '\u{3000}'
-                | '\u{FEFF}'
-    )
-}
-
 /// The text trimmed, or empty when nothing in it is visible. A model told to end
 /// with an empty reply can write a lone zero-width space, which `trim()` keeps.
 pub fn visible_text(text: &str) -> String {
     if INVISIBLE_ONLY.is_match(text) {
         return String::new();
     }
-    text.trim_matches(is_js_whitespace).to_string()
+    js_trim(text).to_string()
 }
 
 #[cfg(test)]

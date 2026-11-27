@@ -152,11 +152,6 @@ pub fn get_slack_heartbeat_throttle_queue() -> Arc<SlackHeartbeatThrottleQueue> 
         .clone()
 }
 
-/// Test-only: reset the singleton so each test starts clean.
-pub fn reset_slack_heartbeat_throttle_queue_for_tests() {
-    *INSTANCE.lock() = None;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

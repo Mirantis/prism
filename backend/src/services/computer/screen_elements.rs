@@ -19,7 +19,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::child_process::{ExecFileOptions, exec_file, process_env};
-use super::screen_size::math_round;
+use super::screen_text::normalize;
+use crate::support::js::round as js_round;
 
 /// One visible, named widget, in screen pixels.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -155,14 +156,6 @@ fn element_of(value: &Value) -> Option<ScreenElement> {
     })
 }
 
-/// Letters and digits only, lower case, the same as `screen_text.rs`.
-fn normalize(text: &str) -> String {
-    text.to_lowercase()
-        .chars()
-        .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-        .collect()
-}
-
 fn by_position(a: &ScreenElement, b: &ScreenElement) -> std::cmp::Ordering {
     a.y.partial_cmp(&b.y)
         .unwrap_or(std::cmp::Ordering::Equal)
@@ -237,8 +230,8 @@ pub fn describe_elements(elements: &[ScreenElement], filter: Option<&str>) -> St
                 .then_with(|| by_position(a, b))
         });
         for e in items {
-            let cx = math_round(e.x + e.width / 2.0) as i64;
-            let cy = math_round(e.y + e.height / 2.0) as i64;
+            let cx = js_round(e.x + e.width / 2.0) as i64;
+            let cy = js_round(e.y + e.height / 2.0) as i64;
             lines.push(format!("  {} \"{}\" at ({cx}, {cy})", e.role, e.name));
         }
     }

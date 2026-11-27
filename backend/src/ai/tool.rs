@@ -237,11 +237,6 @@ pub struct Tool {
 }
 
 impl Tool {
-    /// Whether the SDK runs this tool itself (`isExecutableTool`).
-    pub fn is_executable(&self) -> bool {
-        self.execute.is_some()
-    }
-
     pub fn is_dynamic(&self) -> bool {
         self.tool_type == ToolType::Dynamic
     }

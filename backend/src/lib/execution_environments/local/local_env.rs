@@ -46,17 +46,11 @@ pub fn local_base_env(base: Option<&ProcessEnv>) -> ProcessEnv {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn env(pairs: &[(&str, &str)]) -> ProcessEnv {
-        pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect()
-    }
+    use crate::lib::execution_environments::execution_environment::env_of;
 
     #[test]
     fn strips_node_env_from_the_returned_environment() {
-        let result = local_base_env(Some(&env(&[
+        let result = local_base_env(Some(&env_of(&[
             ("NODE_ENV", "production"),
             ("PATH", "/usr/bin"),
             ("HOME", "/root"),
@@ -66,13 +60,13 @@ mod tests {
 
     #[test]
     fn strips_husky_so_cloned_repos_keep_their_own_git_hooks() {
-        let result = local_base_env(Some(&env(&[("HUSKY", "0"), ("PATH", "/usr/bin")])));
+        let result = local_base_env(Some(&env_of(&[("HUSKY", "0"), ("PATH", "/usr/bin")])));
         assert!(!result.contains_key("HUSKY"));
     }
 
     #[test]
     fn preserves_path_home_and_other_vars() {
-        let result = local_base_env(Some(&env(&[
+        let result = local_base_env(Some(&env_of(&[
             ("NODE_ENV", "production"),
             ("PATH", "/usr/bin"),
             ("HOME", "/home/user"),
@@ -87,7 +81,7 @@ mod tests {
 
     #[test]
     fn does_not_change_the_base() {
-        let base = env(&[("NODE_ENV", "production"), ("PATH", "/usr/bin")]);
+        let base = env_of(&[("NODE_ENV", "production"), ("PATH", "/usr/bin")]);
         local_base_env(Some(&base));
         assert_eq!(base["NODE_ENV"], "production");
     }

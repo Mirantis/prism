@@ -6,7 +6,6 @@ use std::sync::{Arc, LazyLock};
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use indexmap::{IndexMap, IndexSet};
-use rand::Rng;
 use regex::Regex;
 use serde_json::{Map, Value, json};
 
@@ -21,7 +20,8 @@ use super::response::{
     CitationDocument, ContentContext, convert_anthropic_usage, map_anthropic_stop_reason,
     map_content, parse_response, response_metadata,
 };
-use super::tools::{PrepareToolsInput, ToolNameMapping, prepare_tools};
+use super::tools::{PROVIDER_TOOL_NAMES, PrepareToolsInput, ToolNameMapping, prepare_tools};
+use crate::ai::generate_text::generate_id;
 use crate::ai::json::js_number_text;
 use crate::ai::{
     Headers, InvalidArgumentError, LanguageModel, LanguageModelV4CallOptions,
@@ -30,6 +30,7 @@ use crate::ai::{
     LanguageModelV4ResponseFormat, LanguageModelV4Tool, LanguageModelV4ToolChoice, ReasoningEffort,
     SupportedUrls, Warning,
 };
+use crate::support::js::number;
 
 /// The request headers a model sends, resolved on each call; resolving can fail
 /// (a missing API key).
@@ -277,13 +278,6 @@ pub fn has_dynamic_filtering_web_tool_without_code_execution(tools: Option<&Valu
     has_dynamic_filtering_web_tool && !has_code_execution_tool
 }
 
-fn unsupported(feature: &str, details: Option<String>) -> Warning {
-    Warning::Unsupported {
-        feature: feature.to_string(),
-        details,
-    }
-}
-
 fn compatibility(feature: &str, details: String) -> Warning {
     Warning::Compatibility {
         feature: feature.to_string(),
@@ -433,11 +427,7 @@ const DESCRIPTION_CONSTRAINT_KEYS: &[&str] = &[
 
 /// `sanitizeJsonSchema`: the schema without the keywords Anthropic rejects in
 /// `output_config.format.schema`; their constraints move into the description.
-pub fn sanitize_json_schema(schema: &Value) -> Value {
-    sanitize_definition(schema)
-}
-
-fn sanitize_definition(definition: &Value) -> Value {
+pub fn sanitize_json_schema(definition: &Value) -> Value {
     match definition {
         Value::Object(schema) => Value::Object(sanitize_schema(schema)),
         other => other.clone(),
@@ -448,7 +438,7 @@ fn sanitize_map(definitions: &Value) -> Value {
     match definitions {
         Value::Object(map) => Value::Object(
             map.iter()
-                .map(|(name, definition)| (name.clone(), sanitize_definition(definition)))
+                .map(|(name, definition)| (name.clone(), sanitize_json_schema(definition)))
                 .collect(),
         ),
         other => other.clone(),
@@ -457,7 +447,7 @@ fn sanitize_map(definitions: &Value) -> Value {
 
 fn sanitize_list(definitions: &Value) -> Value {
     match definitions {
-        Value::Array(items) => Value::Array(items.iter().map(sanitize_definition).collect()),
+        Value::Array(items) => Value::Array(items.iter().map(sanitize_json_schema).collect()),
         other => other.clone(),
     }
 }
@@ -511,7 +501,7 @@ fn sanitize_schema(schema: &Map<String, Value>) -> Map<String, Value> {
     if let Some(items) = present("items") {
         let items = match items {
             Value::Array(_) => sanitize_list(items),
-            other => sanitize_definition(other),
+            other => sanitize_json_schema(other),
         };
         result.insert("items".into(), items);
     }
@@ -562,19 +552,6 @@ fn format_constraint_name(key: &str) -> String {
     out
 }
 
-/// `generateId()`: 16 random alphanumeric characters.
-fn generate_id() -> String {
-    const ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    let mut rng = rand::rng();
-    (0..16)
-        .map(|_| ALPHABET[rng.random_range(0..ALPHABET.len())] as char)
-        .collect()
-}
-
-fn number(value: f64) -> Value {
-    crate::support::js::number(value)
-}
-
 impl AnthropicMessagesLanguageModel {
     pub fn new(model_id: impl Into<String>, config: AnthropicMessagesConfig) -> Self {
         Self {
@@ -599,13 +576,13 @@ impl AnthropicMessagesLanguageModel {
         let mut warnings: Vec<Warning> = Vec::new();
 
         if options.frequency_penalty.is_some() {
-            warnings.push(unsupported("frequencyPenalty", None));
+            warnings.push(Warning::unsupported("frequencyPenalty", None));
         }
         if options.presence_penalty.is_some() {
-            warnings.push(unsupported("presencePenalty", None));
+            warnings.push(Warning::unsupported("presencePenalty", None));
         }
         if options.seed.is_some() {
-            warnings.push(unsupported("seed", None));
+            warnings.push(Warning::unsupported("seed", None));
         }
 
         let mut temperature = options.temperature;
@@ -613,7 +590,7 @@ impl AnthropicMessagesLanguageModel {
         let mut top_p = options.top_p;
         if let Some(value) = temperature {
             if value > 1.0 {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "temperature",
                     Some(format!(
                         "{} exceeds anthropic maximum of 1.0. clamped to 1.0",
@@ -622,7 +599,7 @@ impl AnthropicMessagesLanguageModel {
                 ));
                 temperature = Some(1.0);
             } else if value < 0.0 {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "temperature",
                     Some(format!(
                         "{} is below anthropic minimum of 0. clamped to 0",
@@ -636,7 +613,7 @@ impl AnthropicMessagesLanguageModel {
         let json_schema = match &options.response_format {
             Some(LanguageModelV4ResponseFormat::Json { schema, .. }) => {
                 if schema.is_none() {
-                    warnings.push(unsupported(
+                    warnings.push(Warning::unsupported(
                         "responseFormat",
                         Some(
                             "JSON response format requires a schema. The response format is ignored."
@@ -684,7 +661,7 @@ impl AnthropicMessagesLanguageModel {
 
         if capabilities.rejects_sampling_parameters {
             if temperature.is_some() {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "temperature",
                     Some(format!(
                         "temperature is not supported by {model_id} and will be ignored"
@@ -693,7 +670,7 @@ impl AnthropicMessagesLanguageModel {
                 temperature = None;
             }
             if top_k.is_some() {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "topK",
                     Some(format!(
                         "topK is not supported by {model_id} and will be ignored"
@@ -702,7 +679,7 @@ impl AnthropicMessagesLanguageModel {
                 top_k = None;
             }
             if top_p.is_some() {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "topP",
                     Some(format!(
                         "topP is not supported by {model_id} and will be ignored"
@@ -732,7 +709,7 @@ impl AnthropicMessagesLanguageModel {
             && supports_structured_output
             && json_schema.is_some()
         {
-            warnings.push(unsupported(
+            warnings.push(Warning::unsupported(
                 "providerOptions.anthropic.structuredOutputMode",
                 Some(format!(
                     "structuredOutputMode 'jsonTool' is not supported by {model_id} because it rejects forced tool use. Using 'outputFormat' instead."
@@ -755,7 +732,7 @@ impl AnthropicMessagesLanguageModel {
         if json_response_tool.is_some()
             && anthropic_options.disable_parallel_tool_use == Some(false)
         {
-            warnings.push(unsupported(
+            warnings.push(Warning::unsupported(
                 "providerOptions.anthropic.disableParallelToolUse",
                 Some(
                     "`disableParallelToolUse: false` is ignored when using the JSON response tool. Parallel tool use is disabled to ensure a single coherent JSON tool call."
@@ -776,7 +753,7 @@ impl AnthropicMessagesLanguageModel {
 
         // One validator tracks the breakpoints across tools and messages.
         let mut cache_control_validator = CacheControlValidator::new();
-        let tool_name_mapping = ToolNameMapping::new(options.tools.as_deref());
+        let tool_name_mapping = ToolNameMapping::new(options.tools.as_deref(), PROVIDER_TOOL_NAMES);
         let toolset_names = get_anthropic_toolset_names(options.tools.as_deref());
 
         let converted = convert_to_anthropic_prompt(
@@ -817,7 +794,7 @@ impl AnthropicMessagesLanguageModel {
             let disabled = anthropic_options.thinking.as_ref().and_then(|t| t.kind)
                 == Some(ThinkingType::Disabled);
             if disabled && capabilities.supports_between_tools_thinking {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "providerOptions.anthropic.thinking",
                     Some(format!(
                         "thinking cannot be disabled for {model_id}. Using 'between_tools' thinking, the lowest thinking setting, instead."
@@ -825,7 +802,7 @@ impl AnthropicMessagesLanguageModel {
                 ));
                 anthropic_options.thinking = Some(Thinking::of(ThinkingType::BetweenTools));
             } else if disabled {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "providerOptions.anthropic.thinking",
                     Some(format!(
                         "thinking cannot be disabled for {model_id}; it always uses adaptive thinking. The thinking setting has been removed. Lower 'effort' to reduce thinking."
@@ -850,7 +827,7 @@ impl AnthropicMessagesLanguageModel {
                     "budget-based thinking is not supported by {model_id}. Using adaptive thinking instead. Use 'effort' to control how much the model thinks."
                 )
             };
-            warnings.push(unsupported(
+            warnings.push(Warning::unsupported(
                 "providerOptions.anthropic.thinking",
                 Some(details),
             ));
@@ -866,7 +843,7 @@ impl AnthropicMessagesLanguageModel {
                 == Some(ThinkingType::Disabled)
             && high_effort(anthropic_options.effort)
         {
-            warnings.push(unsupported(
+            warnings.push(Warning::unsupported(
                 "providerOptions.anthropic.effort",
                 Some(format!(
                     "effort '{}' is not supported by {model_id} when thinking is disabled. The effort has been lowered to 'high'.",
@@ -882,7 +859,7 @@ impl AnthropicMessagesLanguageModel {
             == Some(ThinkingType::BetweenTools)
             && high_effort(anthropic_options.effort)
         {
-            warnings.push(unsupported(
+            warnings.push(Warning::unsupported(
                 "providerOptions.anthropic.effort",
                 Some(format!(
                     "effort '{}' is not supported with 'between_tools' thinking. The effort has been lowered to 'high'.",
@@ -951,21 +928,21 @@ impl AnthropicMessagesLanguageModel {
             }
             if sent_temperature.is_some() {
                 sent_temperature = None;
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "temperature",
                     Some("temperature is not supported when thinking is enabled".to_string()),
                 ));
             }
             if top_k.is_some() {
                 sent_top_k = None;
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "topK",
                     Some("topK is not supported when thinking is enabled".to_string()),
                 ));
             }
             if top_p.is_some() {
                 sent_top_p = None;
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "topP",
                     Some("topP is not supported when thinking is enabled".to_string()),
                 ));
@@ -975,7 +952,7 @@ impl AnthropicMessagesLanguageModel {
         } else if is_anthropic_model && top_p.is_some() && temperature.is_some() {
             // Only known Anthropic models refuse temperature and topP together;
             // other models behind the Anthropic API may require both.
-            warnings.push(unsupported(
+            warnings.push(Warning::unsupported(
                 "topP",
                 Some("topP is not supported when temperature is set. topP is ignored.".to_string()),
             ));
@@ -985,7 +962,7 @@ impl AnthropicMessagesLanguageModel {
         // A known model's own limit caps max tokens, so a model switch keeps working.
         if capabilities.is_known_model && sent_max_tokens > max_output_tokens_for_model as f64 {
             if options.max_output_tokens.is_some() {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "maxOutputTokens",
                     Some(format!(
                         "{} (maxOutputTokens + thinkingBudget) is greater than {model_id} {max_output_tokens_for_model} max output tokens. The max output tokens have been limited to {max_output_tokens_for_model}.",

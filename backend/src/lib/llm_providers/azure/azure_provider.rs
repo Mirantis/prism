@@ -126,7 +126,8 @@ fn missing_azure_settings_for(config: &Config) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lib::llm_providers::llm_provider::{provider_options_json, test_config};
+    use crate::config::test_config;
+    use crate::lib::llm_providers::llm_provider::provider_options_json;
 
     const FOUNDRY: &str = "https://my-resource.services.ai.azure.com/anthropic/v1";
     const GATEWAY: (&str, &str) = ("NEXUS_API_URL", "https://gateway.example.com");

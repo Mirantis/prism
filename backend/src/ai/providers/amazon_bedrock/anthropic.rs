@@ -283,40 +283,11 @@ impl BedrockAnthropicProvider {
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::{fake_fetch, fixtures};
     use super::*;
     use crate::ai::provider::LanguageModelV4CallOptions;
     use crate::ai::{ApiCallError, json::js_stringify};
     use parking_lot::Mutex;
-
-    fn fixtures() -> Value {
-        serde_json::from_str(include_str!("testdata/sdk_requests.json")).unwrap()
-    }
-
-    fn fake_fetch(response: &Value, seen: Arc<Mutex<Vec<FetchRequest>>>) -> FetchFunction {
-        let status = response["status"].as_u64().unwrap_or(200) as u16;
-        let status_text = response["statusText"].as_str().unwrap_or("OK").to_string();
-        let mut headers: Vec<(String, String)> = response["headers"]
-            .as_object()
-            .unwrap()
-            .iter()
-            .map(|(k, v)| (k.to_lowercase(), v.as_str().unwrap().to_string()))
-            .collect();
-        headers.sort();
-        let body = match &response["body"] {
-            Value::String(text) => text.clone(),
-            other => js_stringify(other),
-        };
-        Arc::new(move |request: FetchRequest, _| {
-            seen.lock().push(request);
-            let response = FetchResponse {
-                status,
-                status_text: status_text.clone(),
-                headers: headers.iter().cloned().collect(),
-                body: bytes::Bytes::from(body.clone()),
-            };
-            Box::pin(async move { Ok(response) })
-        })
-    }
 
     fn sent_headers(request: &FetchRequest) -> Value {
         let mut headers = Map::new();

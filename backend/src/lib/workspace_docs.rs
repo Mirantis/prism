@@ -6,7 +6,6 @@
 //! discriminator for vector memory, and it answers a different question.
 
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 use crate::db::models::{AgentWorkspace, AgentWorkspaceChangeset};
 
@@ -118,11 +117,7 @@ impl WorkspaceDocField {
     }
 }
 
-impl fmt::Display for WorkspaceDocField {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+crate::support::display_as_str!(WorkspaceDocField);
 
 /// Narrow a path segment or a request field to one of the seven columns.
 pub fn is_workspace_doc_field(value: &str) -> bool {
@@ -154,11 +149,7 @@ impl DocumentWriteActor {
     }
 }
 
-impl fmt::Display for DocumentWriteActor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+crate::support::display_as_str!(DocumentWriteActor);
 
 /// How a revision was written. The middle four are the words the
 /// `agent config updated` event already carries.
@@ -198,11 +189,7 @@ impl DocumentWriteMethod {
     }
 }
 
-impl fmt::Display for DocumentWriteMethod {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+crate::support::display_as_str!(DocumentWriteMethod);
 
 #[cfg(test)]
 mod tests {

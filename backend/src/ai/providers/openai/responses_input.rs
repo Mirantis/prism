@@ -85,14 +85,6 @@ fn unsupported(functionality: &str) -> anyhow::Error {
     UnsupportedFunctionalityError::new(functionality).into()
 }
 
-fn unsupported_with_message(functionality: &str, message: &str) -> anyhow::Error {
-    UnsupportedFunctionalityError {
-        message: message.to_string(),
-        functionality: functionality.to_string(),
-    }
-    .into()
-}
-
 /// The options under the provider's name.
 fn named<'a>(options: Option<&'a ProviderOptions>, name: &str) -> Option<&'a Map<String, Value>> {
     options.and_then(|o| o.get(name)).and_then(Value::as_object)
@@ -728,10 +720,11 @@ pub fn convert_to_openai_responses_input(
                         options.configuration_update_unsupported_reason
                     };
                     if let Some(reason) = unsupported_reason {
-                        return Err(unsupported_with_message(
+                        return Err(UnsupportedFunctionalityError::with_message(
                             "Message-level reasoningEffortUpdate",
                             reason,
-                        ));
+                        )
+                        .into());
                     }
                     input.push(configuration_update(effort_text(effort)));
                     // The control is independent of systemMessageMode's text handling.

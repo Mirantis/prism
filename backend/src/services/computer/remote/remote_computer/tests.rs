@@ -128,7 +128,7 @@ async fn maps_coordinates_from_the_picture_the_model_saw_and_refuses_one_wider_t
         "input.click" => Ok(json!({})),
         "screen.capture" => {
             let width = shown.load(Ordering::SeqCst);
-            Ok(capture(width, math_round(width as f64 * 0.5625) as i64))
+            Ok(capture(width, js_round(width as f64 * 0.5625) as i64))
         }
         _ => Err(json!({ "code": -32601, "message": "no" })),
     });

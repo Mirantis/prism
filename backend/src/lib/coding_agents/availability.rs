@@ -17,24 +17,11 @@ use parking_lot::Mutex;
 use serde_json::json;
 use tokio::sync::OnceCell;
 
-use super::agy::agy_agent::create_agy_agent;
-use super::claude_code::claude_code_agent::create_claude_code_agent;
-use super::codex::codex_agent::create_codex_agent;
-use super::coding_agent::CodingAgent;
+use super::get_coding_agent::factory;
 use crate::config::{CODING_AGENTS, CONFIG, CodingAgentName};
 use crate::lib::execution_environments::get_execution_environment::get_execution_environment;
 use crate::lib::log_redaction::err_json;
 use crate::{log_info, log_warn};
-
-/// Every adapter, whether or not it is available — the availability check is
-/// what this module is about, so `get_coding_agent`'s would be circular.
-fn factory(name: CodingAgentName) -> Arc<dyn CodingAgent> {
-    match name {
-        CodingAgentName::ClaudeCode => create_claude_code_agent(None),
-        CodingAgentName::Codex => create_codex_agent(None),
-        CodingAgentName::Agy => create_agy_agent(None),
-    }
-}
 
 static PROBE: LazyLock<Mutex<Arc<OnceCell<()>>>> =
     LazyLock::new(|| Mutex::new(Arc::new(OnceCell::new())));

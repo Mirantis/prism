@@ -16,15 +16,14 @@ import {
 import { MOCK_REALTIME_PORT } from './support/mock-realtime-port';
 import { WEBHOOK_PORT } from './support/webhook-port';
 import { AGENT_MESSAGES_PORT } from './support/agent-messages-port';
+import { RUNTIME_PORT } from './support/runtime-port';
 import { noLlmProviderEnv } from './support/no-llm-provider-env';
 
 // Load e2e environment variables (.env.e2e.local overrides for secrets)
 config({ path: path.resolve(__dirname, '.env.e2e') });
 config({ path: path.resolve(__dirname, '.env.e2e.local'), override: true });
 
-// Match the ports baked into web/vite.config.ts so the SPA's built-in
-// dev-server proxy ("/agents" + "/api/ws" → :3003) just works.
-const RUNTIME_PORT = 3003;
+// Match the port baked into web/vite.config.ts.
 const WEB_PORT = 5173;
 /** An OpenAI key in the right form that the API refuses. */
 const REFUSED_OPENAI_KEY = 'sk-e2e-refused-key';

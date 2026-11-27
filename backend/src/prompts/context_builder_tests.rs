@@ -8,7 +8,7 @@ use crate::ai::json::js_stringify;
 use crate::ai::{SystemModelMessage, UserContent};
 use crate::config::ModelSelectionMode;
 use crate::lib::llm_providers::deferred_tools::{
-    ANTHROPIC_DEFERRED_TOOLS, OPENAI_DEFERRED_TOOLS, REALTIME_DEFERRED_TOOLS,
+    ANTHROPIC_DEFERRED_TOOLS, LOAD_TOOLS_NAME, OPENAI_DEFERRED_TOOLS, REALTIME_DEFERRED_TOOLS,
 };
 use crate::lib::llm_providers::llm_provider::{
     DeferredToolDefinition, DeferredToolProtocol, ReplayedToolLoad, StoredToolLoad, ToolLoad,
@@ -131,7 +131,7 @@ fn test_loader() -> ToolLoader {
 fn replay_for(protocol: &'static DeferredToolProtocol, sent: Vec<String>) -> ReplayToolCall {
     let loader = test_loader();
     Arc::new(move |call: &ReplayedToolCall| {
-        if call.tool != "load_tools" {
+        if call.tool != LOAD_TOOLS_NAME {
             return None;
         }
         let mut result = parse_stored_load(&call.output)?;

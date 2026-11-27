@@ -29,7 +29,7 @@ use crate::ai::provider::{
     LanguageModelV4Usage, ProviderOptions, SupportedUrls, Warning,
 };
 use crate::ai::providers::anthropic::{get_model_capabilities, sanitize_json_schema};
-use crate::support::js;
+use crate::support::js::{self, number};
 
 /// What a Converse model needs from its provider.
 pub struct ChatConfig {
@@ -205,18 +205,6 @@ struct Args {
     uses_json_response_tool: bool,
 }
 
-fn unsupported(feature: &str, details: Option<String>) -> Warning {
-    Warning::Unsupported {
-        feature: feature.to_string(),
-        details,
-    }
-}
-
-/// A JSON number as JavaScript writes it.
-fn number(value: f64) -> Value {
-    js::number(value)
-}
-
 /// `isNova2ReasoningModel`.
 fn is_nova2_reasoning_model(model_id: &str) -> bool {
     model_id.contains("amazon.nova-2-lite-v1:0")
@@ -273,13 +261,13 @@ impl AmazonBedrockChatLanguageModel {
         let capabilities = get_model_capabilities(&self.model_id);
 
         if options.frequency_penalty.is_some() {
-            warnings.push(unsupported("frequencyPenalty", None));
+            warnings.push(Warning::unsupported("frequencyPenalty", None));
         }
         if options.presence_penalty.is_some() {
-            warnings.push(unsupported("presencePenalty", None));
+            warnings.push(Warning::unsupported("presencePenalty", None));
         }
         if options.seed.is_some() {
-            warnings.push(unsupported("seed", None));
+            warnings.push(Warning::unsupported("seed", None));
         }
 
         let mut temperature = options.temperature;
@@ -288,7 +276,7 @@ impl AmazonBedrockChatLanguageModel {
         if capabilities.rejects_sampling_parameters {
             let model_id = &self.model_id;
             if temperature.is_some() {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "temperature",
                     Some(format!(
                         "temperature is not supported by {model_id} and will be ignored"
@@ -297,7 +285,7 @@ impl AmazonBedrockChatLanguageModel {
                 temperature = None;
             }
             if top_k.is_some() {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "topK",
                     Some(format!(
                         "topK is not supported by {model_id} and will be ignored"
@@ -306,7 +294,7 @@ impl AmazonBedrockChatLanguageModel {
                 top_k = None;
             }
             if top_p.is_some() {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "topP",
                     Some(format!(
                         "topP is not supported by {model_id} and will be ignored"
@@ -331,7 +319,7 @@ impl AmazonBedrockChatLanguageModel {
 
         if let Some(value) = temperature.filter(|_| should_normalize_temperature) {
             if value > 1.0 {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "temperature",
                     Some(format!(
                         "{} exceeds bedrock maximum of 1.0. clamped to 1.0",
@@ -340,7 +328,7 @@ impl AmazonBedrockChatLanguageModel {
                 ));
                 temperature = Some(1.0);
             } else if value < 0.0 {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "temperature",
                     Some(format!(
                         "{} is below bedrock minimum of 0. clamped to 0",
@@ -531,13 +519,13 @@ impl AmazonBedrockChatLanguageModel {
             }
         } else if !is_anthropic {
             if reasoning.budget_tokens.is_some() {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "budgetTokens",
                     Some("budgetTokens applies only to Anthropic models on Bedrock and will be ignored for this model.".to_string()),
                 ));
             }
             if thinking_type == Some(ThinkingType::Adaptive) {
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "adaptive thinking",
                     Some(
                         "adaptive thinking type applies only to Anthropic models on Bedrock."
@@ -595,7 +583,7 @@ impl AmazonBedrockChatLanguageModel {
             && inference_config.contains_key("maxTokens")
         {
             inference_config.shift_remove("maxTokens");
-            warnings.push(unsupported(
+            warnings.push(Warning::unsupported(
                 "maxOutputTokens",
                 Some(format!(
                     "maxOutputTokens is not supported by {} when high reasoning is enabled and will be ignored",
@@ -640,7 +628,7 @@ impl AmazonBedrockChatLanguageModel {
             ] {
                 if inference_config.contains_key(key) {
                     inference_config.shift_remove(key);
-                    warnings.push(unsupported(feature, Some(details.to_string())));
+                    warnings.push(Warning::unsupported(feature, Some(details.to_string())));
                 }
             }
         }
@@ -656,7 +644,7 @@ impl AmazonBedrockChatLanguageModel {
             for feature in features {
                 if inference_config.contains_key(*feature) {
                     inference_config.shift_remove(*feature);
-                    warnings.push(unsupported(
+                    warnings.push(Warning::unsupported(
                         feature,
                         Some(format!(
                             "{feature} is not supported by this OpenAI model on the Converse API"
@@ -704,7 +692,7 @@ impl AmazonBedrockChatLanguageModel {
                         Some(message)
                     })
                     .collect();
-                warnings.push(unsupported(
+                warnings.push(Warning::unsupported(
                     "toolContent",
                     Some("Tool calls and results removed from conversation because Bedrock does not support tool content without active tools.".to_string()),
                 ));

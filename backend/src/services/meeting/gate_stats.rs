@@ -7,16 +7,7 @@
 //! The stats type is imported for its shape only, so nothing here depends on the session.
 
 use crate::services::meeting::voice_conversation::VoiceConversationStats;
-
-/// `Math.round`: the nearest integer, halves toward positive infinity.
-fn js_round(value: f64) -> f64 {
-    let floor = value.floor();
-    if value - floor >= 0.5 {
-        floor + 1.0
-    } else {
-        floor
-    }
-}
+use crate::support::js::round as js_round;
 
 /// Mean time a verdict took, in whole milliseconds.
 ///

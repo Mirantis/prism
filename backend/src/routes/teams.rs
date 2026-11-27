@@ -17,14 +17,13 @@ use indexmap::IndexMap;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::config::CONFIG;
 use crate::db::models::{NewTeamsVerificationCode, TeamsMapping, TeamsVerificationType};
 use crate::db::schema::{
     agent_workspaces as aw, teams_mappings as tm, teams_verification_codes as tvc,
 };
 use crate::db::sql_types::DbDateTime;
 use crate::lib::teams_config::get_teams_config;
-use crate::lib::telemetry::track_event;
+use crate::lib::telemetry::{agent_props, track_event};
 use crate::services::teams::teams_mapping_service::TEAMS_MAPPING_SERVICE;
 use crate::support::http::{JsonBody, error_json, json};
 use crate::support::js::truthy;
@@ -121,15 +120,6 @@ pub struct DeletedResponse {
 #[serde(rename_all = "camelCase")]
 pub struct OkResponse {
     pub ok: bool,
-}
-
-/// `{ 'agent.id': config.agentId }` when an agent id is set.
-fn agent_props() -> IndexMap<String, String> {
-    let mut props = IndexMap::new();
-    if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-        props.insert("agent.id".to_string(), agent_id);
-    }
-    props
 }
 
 /// GET /agents/teams/workspaces

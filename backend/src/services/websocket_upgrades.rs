@@ -67,14 +67,24 @@ pub fn is_upgrade_request(req: &Request) -> bool {
     upgrades && websocket
 }
 
-/// The answer to an upgrade nobody serves. HTTP has no way to end a request
+/// An upgrade refused before it is upgraded. HTTP has no way to end a request
 /// without a status line, so the connection is closed right after this one.
-fn refuse() -> Response {
+pub fn refuse(status: http::StatusCode) -> Response {
     Response::builder()
-        .status(http::StatusCode::BAD_REQUEST)
+        .status(status)
         .header(http::header::CONNECTION, "close")
         .body(axum::body::Body::empty())
         .expect("a static response builds")
+}
+
+/// A header as Node gives it: repeated values joined with `, `.
+pub fn joined_header(headers: &http::HeaderMap, name: http::header::HeaderName) -> Option<String> {
+    let values: Vec<&str> = headers
+        .get_all(name)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .collect();
+    (!values.is_empty()).then(|| values.join(", "))
 }
 
 /// Serve WebSocket upgrades on `path` with `handler`.
@@ -84,13 +94,6 @@ fn refuse() -> Response {
 pub fn serve_upgrades(path: &str, handler: UpgradeHandler) {
     HANDLERS.write().insert(path.to_string(), handler);
     INSTALLED.store(true, Ordering::SeqCst);
-}
-
-/// Forget every registered path and stop dispatching. For tests, which build a
-/// server per case.
-pub fn reset_upgrades() {
-    HANDLERS.write().clear();
-    INSTALLED.store(false, Ordering::SeqCst);
 }
 
 /// The outermost layer of the runtime's HTTP server
@@ -104,7 +107,7 @@ pub async fn upgrade_middleware(req: Request, next: Next) -> Response {
         return next.run(req).await;
     }
     if !INSTALLED.load(Ordering::SeqCst) {
-        return refuse();
+        return refuse(http::StatusCode::BAD_REQUEST);
     }
     let handler = HANDLERS.read().get(&pathname_of(&req)).cloned();
     if let Some(handle) = handler {
@@ -116,5 +119,5 @@ pub async fn upgrade_middleware(req: Request, next: Next) -> Response {
         .map(|p| p.as_str().to_string())
         .unwrap_or_default();
     crate::log_debug!("Refused a WebSocket upgrade to {}", url);
-    refuse()
+    refuse(http::StatusCode::BAD_REQUEST)
 }

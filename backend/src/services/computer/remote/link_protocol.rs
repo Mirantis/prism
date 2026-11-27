@@ -751,11 +751,12 @@ pub const RPC_ERROR: RpcErrorCodes = RpcErrorCodes {
 };
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 
-    fn hello() -> Value {
+    /// A client's `hello` for a Mac with one display.
+    pub(crate) fn hello() -> Value {
         json!({
             "protocolVersion": 1,
             "client": { "name": "test-client", "version": "1.2.3" },

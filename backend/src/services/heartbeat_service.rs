@@ -51,6 +51,7 @@ use crate::support::{js, now_ms};
 use crate::types::{
     ChannelTriggerMessage, HeartbeatTrigger, InvokeErrorType, InvokeMode, InvokeRequest,
     InvokeResponse, InvokeStep, TaskLastSend, TaskReport, ToolCallRecord, TriggerPlace,
+    stored_tool_calls,
 };
 use crate::{log_error, log_info, log_warn};
 
@@ -183,17 +184,6 @@ fn with_reports(
         checks,
         sends,
         reports,
-    }
-}
-
-/// A stored `toolCalls` column as records; an entry that is not one is skipped.
-fn stored_tool_calls(stored: Option<&Value>) -> Vec<ToolCallRecord> {
-    match stored {
-        Some(Value::Array(entries)) => entries
-            .iter()
-            .filter_map(|entry| serde_json::from_value(entry.clone()).ok())
-            .collect(),
-        _ => Vec::new(),
     }
 }
 

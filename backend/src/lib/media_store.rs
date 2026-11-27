@@ -19,6 +19,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use crate::lib::data_dir::resolve_media_dir;
+use crate::support::js::trim as js_trim;
 
 const MAX_FILENAME_BYTES: usize = 255;
 
@@ -186,11 +187,6 @@ fn posix_basename(path: &str) -> &str {
         return "";
     }
     trimmed.rsplit('/').next().unwrap_or("")
-}
-
-/// `String.prototype.trim`: JavaScript's white space and line terminators.
-fn js_trim(text: &str) -> &str {
-    crate::support::js::trim(text)
 }
 
 #[cfg(test)]

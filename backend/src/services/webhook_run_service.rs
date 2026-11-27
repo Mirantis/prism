@@ -71,11 +71,7 @@ impl WebhookRunStatus {
     }
 }
 
-impl std::fmt::Display for WebhookRunStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+crate::support::display_as_str!(WebhookRunStatus);
 
 /// A run in these states still has a worker that will write to its row.
 const UNFINISHED: [WebhookRunStatus; 2] = [WebhookRunStatus::Queued, WebhookRunStatus::Running];

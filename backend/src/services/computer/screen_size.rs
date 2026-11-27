@@ -3,6 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::support::js::round as js_round;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ScreenSize {
     pub width: i64,
@@ -39,15 +41,9 @@ pub const OCR_SCALE: i64 = 2;
 /// The most pixels a picture of a remote display has; a vision model shrinks a larger one.
 const PICTURE_MAX_PIXELS: f64 = 1280.0 * 900.0;
 
-/// `Math.round`: halves round toward positive infinity.
-pub(crate) fn math_round(x: f64) -> f64 {
-    let floor = x.floor();
-    if x - floor >= 0.5 { floor + 1.0 } else { floor }
-}
-
 /// Even numbers, since a JPEG's chroma is stored for each pair of pixels.
 fn even(n: f64) -> i64 {
-    (math_round(n / 2.0) * 2.0).max(2.0) as i64
+    (js_round(n / 2.0) * 2.0).max(2.0) as i64
 }
 
 /// A size a client asked for, brought inside the bounds the display can serve.

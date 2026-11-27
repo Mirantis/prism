@@ -29,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::task::AbortHandle;
 
-use crate::config::CONFIG;
 use crate::db::models::{CronTask, CronTaskChangeset, MessageRole, MessageTrigger};
 use crate::db::schema::conversation_messages::dsl as m;
 use crate::db::schema::conversation_threads::dsl as t;
@@ -37,7 +36,7 @@ use crate::db::schema::cron_tasks::dsl as ct;
 use crate::db::sql_types::DbDateTime;
 use crate::invoke::invoke;
 use crate::lib::log_redaction::err_json;
-use crate::lib::telemetry::track_event;
+use crate::lib::telemetry::{agent_props, track_event};
 use crate::lib::timezone::{is_timezone, resolve_timezone};
 use crate::lib::visible_text::visible_text;
 use crate::prompts::scheduled_run_prompt::scheduled_run_prompt;
@@ -56,9 +55,11 @@ use crate::services::outbound_message_service::{
 use crate::services::pending_work_service::{
     MAX_RESUME_ATTEMPTS, PENDING_WORK_SERVICE, PendingWorkItem, PendingWorkKind,
 };
+use crate::support::js::round as js_round;
 use crate::support::{from_ms, iso, js, now_ms, parse_iso};
 use crate::types::{
     InvokeErrorType, InvokeMode, InvokeRequest, TaskLastSend, TaskReport, ToolCallRecord,
+    stored_tool_calls,
 };
 use crate::{log_error, log_info, log_warn};
 
@@ -482,22 +483,6 @@ fn warn_missed_execution(date: DateTime<Utc>) {
     );
 }
 
-/// A stored `toolCalls` column as records; an entry that is not one is skipped.
-fn stored_tool_calls(stored: Option<&Value>) -> Vec<ToolCallRecord> {
-    match stored {
-        Some(Value::Array(entries)) => entries
-            .iter()
-            .filter_map(|entry| serde_json::from_value(entry.clone()).ok())
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-/// `Math.round`: halves round up.
-fn js_round(value: f64) -> i64 {
-    (value + 0.5).floor() as i64
-}
-
 /// A `LIKE` pattern matching text that starts with `prefix`, with `\` escaping.
 fn starts_with_pattern(prefix: &str) -> String {
     let mut pattern = String::with_capacity(prefix.len() + 1);
@@ -844,7 +829,7 @@ impl CronSchedulerService {
                 log_info!(
                     "[CronScheduler] Scheduled one-shot \"{}\" in {}s",
                     name,
-                    js_round(delay as f64 / 1000.0)
+                    js_round(delay as f64 / 1000.0) as i64
                 );
             } else {
                 log_info!(
@@ -1121,10 +1106,7 @@ impl CronSchedulerService {
     pub fn unschedule_task(&self, task_id: &str, user_id: Option<&str>, invoke_mode: Option<&str>) {
         self.stop_job(task_id);
         self.last_send.lock().remove(task_id);
-        let mut props = IndexMap::new();
-        if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-            props.insert("agent.id".to_string(), agent_id);
-        }
+        let mut props = agent_props();
         props.insert("cron.task.id".to_string(), task_id.to_string());
         if let Some(mode) = invoke_mode.filter(|mode| !mode.is_empty()) {
             props.insert("invoke.mode".to_string(), mode.to_string());

@@ -15,10 +15,9 @@ import { expect, type BrowserContext, type Page } from '@playwright/test';
 import { HomePage } from '../pages/home.page';
 import * as dbHelper from '../support/db-helper';
 import { getCurrentAgentId } from './common.steps';
+import { DAY_MS } from '../fixtures/test-data';
 
 const { Given, When, Then, After } = createBdd();
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Scenarios run one at a time (workers: 1), so module state belongs to the current scenario.
 const threadIds = new Map<string, string>();

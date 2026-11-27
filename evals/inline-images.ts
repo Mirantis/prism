@@ -16,12 +16,6 @@ export interface ImageRef {
   target: string;
 }
 
-/** Shared with the attachment metadata the clients receive. */
-interface PlaceableAttachment {
-  id: string;
-  category: string;
-}
-
 const IMAGE = /!\[([^\]\n]*)\]\(\s*(<[^>\n]*>|[^\s()]+)(?:\s+"[^"\n]*")?\s*\)/g;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
@@ -57,41 +51,6 @@ export function attachmentRefId(target: string): string | null {
 /** True for a target on the agent's filesystem: one with no URL scheme. */
 export function isLocalPath(target: string): boolean {
   return !URL_SCHEME.test(target);
-}
-
-export function attachmentImage(alt: string, attachmentId: string): string {
-  return `![${alt}](${ATTACHMENT_SCHEME}${attachmentId})`;
-}
-
-/** `content` with each reference that `replace` answers for swapped for its answer. */
-export function replaceImageRefs(
-  content: string,
-  refs: ImageRef[],
-  replace: (ref: ImageRef) => string | null,
-): string {
-  let out = '';
-  let at = 0;
-  for (const ref of refs) {
-    const replacement = replace(ref);
-    if (replacement === null) continue;
-    out += content.slice(at, ref.start) + replacement;
-    at = ref.end;
-  }
-  return out + content.slice(at);
-}
-
-/** The images `content` shows inline: each attachment it references whose category is `image`. */
-export function placeAttachments<T extends PlaceableAttachment>(
-  content: string,
-  attachments: T[],
-): (T & { inline?: true })[] {
-  const placed = new Set(
-    findImageRefs(content)
-      .map((ref) => attachmentRefId(ref.target))
-      .filter((id): id is string => id !== null),
-  );
-  if (placed.size === 0) return attachments;
-  return attachments.map((a) => (placed.has(a.id) && a.category === 'image' ? { ...a, inline: true } : a));
 }
 
 /** `[from, to)` offsets of fenced code blocks and inline code spans. */

@@ -3,11 +3,9 @@ import { expect } from '@playwright/test';
 import { HomePage } from '../pages/home.page';
 import * as dbHelper from '../support/db-helper';
 import { getCurrentAgentId } from './common.steps';
-import { TEST_USER } from '../fixtures/test-data';
+import { DAY_MS, TEST_USER } from '../fixtures/test-data';
 
 const { Given, When, Then } = createBdd();
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 Given('a conversation thread rooted at {string}', async ({}, workspaceRoot: string) => {
   await dbHelper.createThread(getCurrentAgentId(), { workspaceRoot });

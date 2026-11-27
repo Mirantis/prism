@@ -206,7 +206,7 @@ pub fn read_lines(words: &[ScreenWord]) -> Vec<String> {
 }
 
 /// Letters and digits only, lower case: "Run Program..." and "run program" are one thing.
-fn normalize(text: &str) -> String {
+pub(super) fn normalize(text: &str) -> String {
     text.to_lowercase()
         .chars()
         .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
@@ -290,7 +290,7 @@ fn text_box(run: &[&ScreenWord], line: &[&ScreenWord]) -> TextMatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::computer::screen_size::math_round;
+    use crate::support::js::round as js_round;
 
     /// Rows Tesseract produced for the About dialog on the desktop, grabbed at twice the
     /// size: header, then level page block par line word left top width height conf text.
@@ -373,8 +373,8 @@ mod tests {
         let words = parse_tsv(&tsv(), 2);
         let found = find_text(&words, "GNU/Linux 12");
         assert_eq!(found[0].text, "GNU/Linux 12");
-        assert_eq!(math_round(found[0].x), 1025.0);
-        assert_eq!(math_round(found[0].y), 159.0);
+        assert_eq!(js_round(found[0].x), 1025.0);
+        assert_eq!(js_round(found[0].y), 159.0);
     }
 
     #[test]

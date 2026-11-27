@@ -32,7 +32,6 @@ use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use http::StatusCode;
-use indexmap::IndexMap;
 use parking_lot::Mutex;
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
@@ -43,7 +42,7 @@ use crate::config::CONFIG;
 use crate::lib::forwarded_sender::{ForwardedSender, header_of, sender_of};
 use crate::lib::log_redaction::err_json;
 use crate::lib::origin_guard::is_allowed_origin;
-use crate::lib::telemetry::track_event;
+use crate::lib::telemetry::{agent_props, track_event};
 use crate::lib::token_bucket::TokenBucket;
 use crate::protocol::chat_protocol::{
     AckPayload, CLOSE_CODES, ClientFrame, DirectFrame, HELLO_TIMEOUT_MS, MAX_FRAME_BYTES, NackCode,
@@ -1067,10 +1066,7 @@ impl WebSocketGatewayService {
                 unsubscribe();
             }
 
-            let mut props = IndexMap::new();
-            if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-                props.insert("agent.id".to_string(), agent_id);
-            }
+            let mut props = agent_props();
             if resume.is_none() {
                 props.insert(
                     "socket.client".to_string(),
