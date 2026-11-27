@@ -121,7 +121,8 @@ export const TextInput: React.FC<Props> = ({
         return;
       }
 
-      const target = editingKeyTarget(originalValue, cursorOffset, input, key);
+      // The drawn value, so a word move in a masked field shows no word boundaries.
+      const target = editingKeyTarget(shownValue, cursorOffset, input, key);
       if (target !== null) {
         if (showCursor) setCursorOffset(target);
         return;
