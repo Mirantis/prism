@@ -98,9 +98,10 @@ discovers the repository's `.claude/skills/` directory.
 
 Antigravity CLI (`agy`) reads global skills from `~/.gemini/config/skills/` and
 discovery manifests in `~/.gemini/config/skills.json`. At startup, Prism creates
-`~/.gemini/config/skills.json` pointing at your Prism skills directory when
-neither that file exists nor `~/.gemini/config/skills` already points there, so
-any user-owned `~/.gemini/config/skills/` folder or symlink keeps working
-alongside Prism's skills. Prism leaves an existing `skills.json` untouched; if
-you already have one, or later change `PRISM_SKILLS_DIR` or move the data
-directory, add or update the entry in `~/.gemini/config/skills.json` yourself.
+`~/.gemini/config/skills.json` pointing at the environment's skills directory
+when neither that file exists nor `~/.gemini/config/skills` already points
+there, so any user-owned `~/.gemini/config/skills/` folder or symlink keeps
+working alongside Prism's skills. Prism leaves an existing `skills.json`
+untouched; if you already have one — or, when the agent's commands run on this
+machine, you later change `PRISM_SKILLS_DIR` or move the data directory — add or
+update the entry in `~/.gemini/config/skills.json` yourself.
