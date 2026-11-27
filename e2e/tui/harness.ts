@@ -224,6 +224,12 @@ export interface StartPrismOptions {
 const PROBE_ANSWERS = {
   plain: '\x1b[?62;22c',
   kitty: '\x1b_Gi=31;OK\x1b\\\x1b[6;20;10t\x1bP>|kitty(0.36.4)\x1b\\\x1b[?62;c',
+  // Recorded from Rex 0.1.0-preview.23.
+  rex: '\x1b_Gi=31;OK\x1b\\\x1b_Gi=32;EINVAL: dimensions required\x1b\\\x1b[6;16;8t\x1bP>|rex 0.1.0-preview.23\x1b\\\x1b[?62;22c',
+  // Read from Rio's source: it ignores the feature query's `e` key.
+  rio: '\x1b_Gi=31;OK\x1b\\\x1b_Gi=32;EINVAL: dimensions required\x1b\\\x1b[6;20;10t\x1bP>|Rio 0.5.32\x1b\\\x1b[?62;4;6;22;52c',
+  // A terminal the CLI does not know by name that answers the feature query as kitty 0.50 does.
+  placeholders: '\x1b_Gi=31;OK\x1b\\\x1b_Gi=32,e=T,U=1;OK\x1b\\\x1b[6;20;10t\x1bP>|NewTerm 1.0\x1b\\\x1b[?62;c',
 };
 
 export interface TuiSession {
