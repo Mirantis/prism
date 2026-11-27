@@ -1,8 +1,13 @@
 /**
  * TextInput — a fork of `ink-text-input@6.0.0` (MIT). See `THIRD_PARTY_NOTICES`.
  *
- * One behavioural change from upstream: a key carrying **Ctrl**, and a lone
- * **Escape**, are ignored instead of being inserted as their bare letter.
+ * Behaviour changes from upstream:
+ *
+ * - A key carrying **Ctrl**, and a lone **Escape**, are ignored instead of being
+ *   inserted as their bare letter. The editing chords below are the exception.
+ * - Home, End, Ctrl+A, Ctrl+E and Cmd+Left/Right go to the start or end of the
+ *   line. Option+Left/Right, Meta+B/F and Ctrl+Left/Right move one word
+ *   (`cursor-motion.ts`).
  *
  * Why we vendor it. Upstream's guard only skips up/down/tab/shift+tab/ctrl+c, so
  * Ink hands Ctrl+O in as `input === 'o'` and it lands in the value. `App` also
@@ -26,6 +31,7 @@ import React, { useState, useEffect } from 'react';
 import { Text, useInput } from 'ink';
 import chalk from 'chalk';
 import { isLateProbeReply } from '../images/terminal-graphics.js';
+import { editingKeyTarget } from './cursor-motion.js';
 
 interface Props {
   value: string;
@@ -84,13 +90,20 @@ export const TextInput: React.FC<Props> = ({
         // App cancels the in-flight turn on Escape; upstream let it fall through
         // and clamp the cursor.
         key.escape ||
-        // The fix. Subsumes upstream's lone `ctrl && input === 'c'` case.
-        key.ctrl ||
         // The terminal's answer to the start-up graphics probe, arriving late over a slow link.
         isLateProbeReply(input)
       ) {
         return;
       }
+
+      const target = editingKeyTarget(originalValue, cursorOffset, input, key);
+      if (target !== null) {
+        if (showCursor) setCursorOffset(target);
+        return;
+      }
+
+      // The fix. Subsumes upstream's lone `ctrl && input === 'c'` case.
+      if (key.ctrl) return;
 
       if (key.return) {
         onSubmit?.(originalValue);

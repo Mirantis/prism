@@ -76,6 +76,8 @@ or **Enter** to complete the selection, then **Enter** to run.
 | `Esc` | Cancel the in-flight response while the agent is thinking. Leaves what you have typed alone. |
 | `Ctrl+O` | Expand / collapse tool calls in the latest agent message. |
 | `Up` / `Down` | Walk back/forward through your message history (from an empty input). |
+| `Home` / `End`, `Ctrl+A` / `Ctrl+E` | Move to the start or end of the line. `Cmd+Left` / `Cmd+Right` do the same in a terminal that passes them to the program. |
+| `Option+Left` / `Option+Right`, `Ctrl+Left` / `Ctrl+Right` | Move one word back or forward. |
 | `Ctrl+C` | Quit. |
 
 ### Command popup (while typing `/…`)
