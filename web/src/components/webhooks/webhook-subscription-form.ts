@@ -10,6 +10,8 @@ export interface WebhookSubscriptionFormValues extends WebhookAuthFormValues {
   /** The Slack channels a Slack delivery posts to; kept while another target is picked. */
   slackChannelIds: string[];
   deliverOnly: boolean;
+  /** Whole seconds as typed; empty = one agent run per delivery. */
+  coalesceSeconds: string;
   prompt: string;
 }
 
@@ -20,6 +22,7 @@ export const EMPTY_WEBHOOK_SUBSCRIPTION_FORM: WebhookSubscriptionFormValues = {
   deliverTo: 'all',
   slackChannelIds: [],
   deliverOnly: false,
+  coalesceSeconds: '',
   prompt: '',
   ...EMPTY_WEBHOOK_AUTH,
 };
@@ -36,6 +39,7 @@ export function subscriptionFormValues(subscription: WebhookSubscription): Webho
     deliverTo: subscription.deliverTo,
     slackChannelIds: subscription.slackChannelIds,
     deliverOnly: subscription.deliverOnly,
+    coalesceSeconds: subscription.coalesceSeconds?.toString() ?? '',
     prompt: subscription.prompt ?? '',
     authType: subscription.authType,
     authHeader: subscription.authHeader ?? '',
@@ -45,6 +49,12 @@ export function subscriptionFormValues(subscription: WebhookSubscription): Webho
     authSignedUrl: subscription.authSignedUrl ?? '',
     secret: '',
   };
+}
+
+/** The coalescing window to save: `null` for an empty field. The runtime checks the range. */
+export function coalesceSecondsToSave(values: WebhookSubscriptionFormValues): number | null {
+  const text = values.coalesceSeconds.trim();
+  return text === '' ? null : Number(text);
 }
 
 /** The channel list to save: the runtime accepts one for the Slack target only. */

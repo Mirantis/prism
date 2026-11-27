@@ -136,6 +136,31 @@ export function WebhookSubscriptionFields({
             error={fieldErrors.slackChannelIds}
           />
         )}
+        {!values.deliverOnly && (
+          <Field data-invalid={Boolean(fieldErrors.coalesceSeconds)}>
+            <FieldLabel htmlFor="webhook-coalesce-seconds">Coalescing window (seconds)</FieldLabel>
+            <Input
+              id="webhook-coalesce-seconds"
+              type="number"
+              min={1}
+              max={600}
+              step={1}
+              inputMode="numeric"
+              aria-invalid={Boolean(fieldErrors.coalesceSeconds) || undefined}
+              value={values.coalesceSeconds}
+              onChange={(e) => onChange('coalesceSeconds', e.target.value)}
+              placeholder="Off"
+              className="w-32"
+            />
+            {fieldErrors.coalesceSeconds ? (
+              <FieldError>{fieldErrors.coalesceSeconds}</FieldError>
+            ) : (
+              <FieldDescription>
+                Events that arrive within this many seconds of the first one get one agent run. Empty = one run per event.
+              </FieldDescription>
+            )}
+          </Field>
+        )}
         <Field data-invalid={Boolean(fieldErrors.prompt)}>
           <FieldLabel htmlFor="webhook-prompt">{values.deliverOnly ? 'Message template' : 'Prompt'}</FieldLabel>
           <Textarea

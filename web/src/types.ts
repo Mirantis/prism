@@ -400,6 +400,8 @@ export interface WebhookSubscription {
   slackChannelIds: string[];
   deliverOnly: boolean;
   isActive: boolean;
+  /** Seconds after an agent-mode delivery in which later deliveries join its run; null = one run per delivery. */
+  coalesceSeconds: number | null;
   authType: WebhookAuthType;
   /** Header carrying the token/signature; null when authType is 'none'. */
   authHeader: string | null;
@@ -635,6 +637,8 @@ export interface WebhookRunSummary {
     /** The thread is a web conversation, not a Slack or Teams destination's own thread. */
     inWebChat: boolean;
   } | null;
+  /** The id of the earlier event whose run also handled this one. */
+  coalescedInto: string | null;
 }
 
 export interface WebhookRunPage {

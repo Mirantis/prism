@@ -20,7 +20,10 @@ const STATUS: Record<WebhookRunStatus, { label: string; dot: string; badge: stri
   },
 };
 
-/** One webhook event: its name, event type, result and time, expanding to what it delivered. */
+/**
+ * One webhook event: its name, event type, result and time, expanding to what it
+ * delivered. An event handled by an earlier event's run says so.
+ */
 export function WebhookRunRow({ run }: { run: WebhookRunSummary }) {
   const [open, setOpen] = useState(false);
   const status = STATUS[run.status];
@@ -39,6 +42,11 @@ export function WebhookRunRow({ run }: { run: WebhookRunSummary }) {
         <span className="shrink-0 font-medium text-foreground">{run.name}</span>
         {run.event !== 'unknown' && (
           <span className="min-w-0 truncate font-mono text-muted-foreground">{run.event}</span>
+        )}
+        {run.coalescedInto && (
+          <span data-testid="activity-webhook-run-coalesced" className="shrink-0 text-muted-foreground">
+            Handled with an earlier event
+          </span>
         )}
         <span className="ml-auto flex shrink-0 items-center gap-2 pl-2 text-[11px] text-muted-foreground">
           <Badge variant="secondary" className={`h-4 px-1.5 text-[10px] font-normal ${status.badge}`}>

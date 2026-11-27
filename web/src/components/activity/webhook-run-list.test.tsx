@@ -36,6 +36,7 @@ function run(id: string, over: Partial<WebhookRunSummary> = {}): WebhookRunSumma
     createdAt: '2026-10-05T09:00:00.000Z',
     finishedAt: '2026-10-05T09:00:42.000Z',
     message: { id: `msg-${id}`, threadId: 'thread-1', threadTitle: 'Alerts', inWebChat: true },
+    coalescedInto: null,
     ...over,
   };
 }
@@ -178,6 +179,23 @@ describe('WebhookRunList', () => {
 
     expect(await screen.findByText('database is locked')).toBeInTheDocument();
     expect(screen.queryByTestId('activity-webhook-run-message')).not.toBeInTheDocument();
+  });
+
+  it('marks an event an earlier event\'s run handled, and shows that run', async () => {
+    const lead = run('a', { event: 'pull_request_review' });
+    const member = run('b', { event: 'pull_request_review_comment', message: null, coalescedInto: 'a' });
+    mockListWebhookRuns.mockResolvedValue(page([member, lead], null));
+    mockGetWebhookRun.mockResolvedValue(detail(lead));
+
+    renderList();
+    const rows = await screen.findAllByTestId('activity-webhook-run');
+    expect(rows[0]).toHaveTextContent('Handled with an earlier event');
+    expect(rows[1]).not.toHaveTextContent('Handled with an earlier event');
+    fireEvent.click(rows[0]);
+
+    expect(await screen.findByTestId('activity-webhook-run-message')).toHaveTextContent('All clear.');
+    expect(screen.getByText(/Handled in one run with the pull_request_review event/)).toBeInTheDocument();
+    expect(mockGetWebhookRun).toHaveBeenCalledWith('a');
   });
 
   it('reads nothing more for a run that has not finished', async () => {
