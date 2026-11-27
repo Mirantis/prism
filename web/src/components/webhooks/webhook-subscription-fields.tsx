@@ -156,7 +156,7 @@ export function WebhookSubscriptionFields({
               <FieldError>{fieldErrors.coalesceSeconds}</FieldError>
             ) : (
               <FieldDescription>
-                Events that arrive within this many seconds of the first one get one agent run. Empty = one run per event.
+                If several events arrive within this many seconds, the agent handles them in one run. Empty: one run per event.
               </FieldDescription>
             )}
           </Field>
