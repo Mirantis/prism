@@ -44,7 +44,6 @@ const MAX_SKILLS_MANIFEST_BYTES: usize = 64 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AgyAuthMethod {
     GeminiApiKey,
-    Adc,
     Account,
 }
 
@@ -52,7 +51,6 @@ impl AgyAuthMethod {
     fn as_str(self) -> &'static str {
         match self {
             AgyAuthMethod::GeminiApiKey => "gemini-api-key",
-            AgyAuthMethod::Adc => "adc",
             AgyAuthMethod::Account => "account",
         }
     }
@@ -65,13 +63,21 @@ fn agy_auth_method(env: &ProcessEnv) -> AgyAuthMethod {
     {
         return AgyAuthMethod::GeminiApiKey;
     }
-    if env
-        .get("AGY_ADC_AUTH")
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"))
-    {
-        return AgyAuthMethod::Adc;
-    }
     AgyAuthMethod::Account
+}
+
+/// `agy` appends its active reasoning effort to the model id reported in `init`
+/// (e.g. `gemini-3.8-flash-low`, `gemini-4-neon-xhigh`). Strip that suffix so
+/// Spending matches the base model in the catalog.
+fn strip_effort_suffix(model: &str) -> &str {
+    for suffix in ["-low", "-medium", "-high", "-xhigh", "-max"] {
+        if let Some(base) = model.strip_suffix(suffix)
+            && !base.is_empty()
+        {
+            return base;
+        }
+    }
+    model
 }
 
 pub struct AgyAgent {
@@ -196,9 +202,9 @@ impl CodingAgent for AgyAgent {
     }
 
     /// Available when `agy` can serve models in the execution environment:
-    /// via `GEMINI_API_KEY` (`--settings '{"modelProvider":"gemini"}'`), via
-    /// `AGY_ADC_AUTH=true`, or via a local signed-in account whose
-    /// `~/.gemini/antigravity-cli/jetski_state.pbtxt` exists.
+    /// via `GEMINI_API_KEY` (`--settings '{"modelProvider":"gemini"}'`), or via
+    /// a local signed-in account whose `~/.gemini/antigravity-cli/jetski_state.pbtxt`
+    /// exists.
     async fn is_available(&self, env: &ProcessEnv) -> anyhow::Result<bool> {
         let target = self.target();
         let auth = agy_auth_method(env);
@@ -211,7 +217,7 @@ impl CodingAgent for AgyAgent {
                 GEMINI_API_KEY_SETTINGS.to_string(),
                 "models".to_string(),
             ],
-            AgyAuthMethod::Adc | AgyAuthMethod::Account => vec!["models".to_string()],
+            AgyAuthMethod::Account => vec!["models".to_string()],
         };
         Ok(probe_cli(&*target, COMMAND, &args, env.clone(), None)
             .await
@@ -432,7 +438,7 @@ fn count(value: &Value, key: &str) -> i64 {
 /// plus an EOF flusher that emits any buffered in-progress `text_delta` if the
 /// process exits or is stopped before reaching `state: "DONE"` or `result`.
 fn create_parser(initial_model: String, subscription: bool) -> (ParseLine, FlushEvents) {
-    let mut model = initial_model;
+    let mut model = strip_effort_suffix(&initial_model).to_string();
     let pending_text = Arc::new(parking_lot::Mutex::new(String::new()));
     let flush_pending = pending_text.clone();
     let mut current_step_index: Option<i64> = None;
@@ -448,7 +454,7 @@ fn create_parser(initial_model: String, subscription: bool) -> (ParseLine, Flush
                     .get("init")
                     .and_then(|init| non_empty_text(init, "model"))
                 {
-                    model = init_model.to_string();
+                    model = strip_effort_suffix(init_model).to_string();
                 }
                 if let Some(session_id) = non_empty_text(&event, "conversation_id") {
                     return Ok(vec![CodingAgentEvent::Session {
@@ -518,8 +524,7 @@ fn create_parser(initial_model: String, subscription: bool) -> (ParseLine, Flush
                                 output_tokens,
                                 cost_usd: None,
                                 // Account-based `agy` sessions run under a Google plan ($0
-                                // subscription usage); `GEMINI_API_KEY` and `AGY_ADC_AUTH`
-                                // bill per token.
+                                // subscription usage); `GEMINI_API_KEY` bills per token.
                                 subscription,
                             },
                         });

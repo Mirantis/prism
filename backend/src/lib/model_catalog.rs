@@ -321,12 +321,7 @@ static SIZE_MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[^\]]*\]$"
 static VENDOR_PATH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z0-9-]+/").unwrap());
 
 static VENDOR_SEGMENT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(?:anthropic|openai|google)\.").unwrap());
-
-/// A reasoning-effort suffix that coding-agent CLIs such as `agy` append to
-/// reported model IDs (`gemini-3.8-flash-low`, `gemini-4-neon-xhigh`).
-static EFFORT_SUFFIX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"-(?:low|medium|high|xhigh|max)$").unwrap());
+    LazyLock::new(|| Regex::new(r"^(?:anthropic|openai)\.").unwrap());
 
 /// The catalog entry for `model_id`, or `None` when no spelling of it is listed.
 ///
@@ -373,7 +368,6 @@ fn id_candidates(model_id: &str) -> Vec<String> {
     // `anthropic.` vendor segment; try across that boundary too. Bedrock names
     // OpenAI's models `openai.gpt-…`, which the `openai` provider lists bare.
     let without_vendor = VENDOR_SEGMENT.replace(&bare, "").into_owned();
-    let without_effort = EFFORT_SUFFIX.replace(&without_vendor, "").into_owned();
 
     for id in [
         model_id.to_string(),
@@ -383,8 +377,6 @@ fn id_candidates(model_id: &str) -> Vec<String> {
         VERSION_SUFFIX.replace(&bare, "").into_owned(),
         without_vendor.clone(),
         VERSION_SUFFIX.replace(&without_vendor, "").into_owned(),
-        without_effort.clone(),
-        VERSION_SUFFIX.replace(&without_effort, "").into_owned(),
     ] {
         if !id.is_empty() {
             seen.insert(id);
@@ -911,7 +903,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_gemini_models_in_the_google_bucket_and_resolves_effort_suffixed_ids() {
+    fn keeps_gemini_models_in_the_google_bucket_and_resolves_them() {
         for id in ["gemini-3.8-flash", "gemini-4-carbon", "gemini-4-neon"] {
             assert!(is_usable_registry_entry(
                 id,
@@ -926,10 +918,9 @@ mod tests {
         ));
 
         for id in [
-            "gemini-3.8-flash-low",
-            "gemini-4-carbon-medium",
-            "gemini-4-neon-high",
-            "gemini-4-neon-xhigh",
+            "gemini-3.8-flash",
+            "gemini-4-carbon",
+            "gemini-4-neon",
             "google/gemini-3.8-flash",
         ] {
             let hit = find_catalog_entry(id).unwrap_or_else(|| panic!("missing price for {id}"));
