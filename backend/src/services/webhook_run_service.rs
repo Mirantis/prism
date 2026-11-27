@@ -4,7 +4,9 @@
 //! An agent run is written as `queued` when the receiver accepts it, moves to
 //! `running` when its turn in the subscription's queue comes, and is finished
 //! with its result. A deliver-only event is written as `running` before its
-//! publish and finished as `delivered` or `failed`.
+//! publish and finished as `delivered` or `failed`. One agent run can handle
+//! several events of a subscription: each event keeps its own row, which follows
+//! the run's status and names the run's first event in `coalescedInto`.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -154,6 +156,8 @@ pub struct WebhookRunSummary {
     pub finished_at: Option<DateTime<Utc>>,
     /// The message the run delivered, if it delivered one.
     pub message: Option<WebhookRunMessage>,
+    /// The id of the earlier event whose run also handled this one.
+    pub coalesced_into: Option<String>,
 }
 
 /// What the delivered message said and the tool calls it stored, in step order.
@@ -201,6 +205,7 @@ struct SummaryRow {
     created_at: DateTime<Utc>,
     finished_at: Option<DateTime<Utc>>,
     message: Option<SummaryRowMessage>,
+    coalesced_into: Option<String>,
 }
 
 struct SummaryRowMessage {
@@ -227,6 +232,7 @@ fn to_summary(row: SummaryRow) -> WebhookRunSummary {
             thread_title: message.thread_title,
             in_web_chat: message.thread_external_thread_id.is_none(),
         }),
+        coalesced_into: row.coalesced_into,
     }
 }
 
@@ -299,6 +305,7 @@ fn with_messages(
             error: run.error,
             created_at: run.created_at,
             finished_at: run.finished_at,
+            coalesced_into: run.coalesced_into,
         })
         .collect())
 }
@@ -324,48 +331,77 @@ impl WebhookRunService {
         self.insert(event, status).await
     }
 
-    pub async fn start(&self, id: &str) {
-        let run_id = id.to_string();
+    /// Mark the events of one agent run `running`. The first id leads the run, and
+    /// every other event names it in `coalescedInto`.
+    pub async fn start(&self, ids: &[String]) {
+        let ids = ids.to_vec();
+        let log_id = ids.first().cloned().unwrap_or_default();
         let started = crate::db::run(move |conn| {
-            let updated = diesel::update(wr::webhook_runs.filter(wr::id.eq(&run_id)))
-                .set(wr::status.eq(WebhookRunStatus::Running.as_str()))
-                .execute(conn)?;
-            if updated == 0 {
-                return Err(anyhow!("Record to update not found."));
-            }
-            Ok(())
+            conn.transaction(|conn| {
+                let Some((lead, members)) = ids.split_first() else {
+                    return Err(anyhow!("Record to update not found."));
+                };
+                let updated = diesel::update(wr::webhook_runs.filter(wr::id.eq_any(&ids)))
+                    .set(wr::status.eq(WebhookRunStatus::Running.as_str()))
+                    .execute(conn)?;
+                if updated == 0 {
+                    return Err(anyhow!("Record to update not found."));
+                }
+                if !members.is_empty() {
+                    diesel::update(wr::webhook_runs.filter(wr::id.eq_any(members)))
+                        .set(wr::coalesced_into.eq(Some(lead.as_str())))
+                        .execute(conn)?;
+                }
+                Ok(())
+            })
         })
         .await;
         if let Err(err) = started {
             log_error!(
-                json!({ "err": err_json(&err), "runId": id }),
+                json!({ "err": err_json(&err), "runId": log_id }),
                 "[WebhookRun] Could not mark the run running"
             );
         }
     }
 
-    pub async fn finish(&self, id: &str, result: &WebhookRunResult) {
-        let run_id = id.to_string();
-        let changes = WebhookRunChangeset {
+    /// Record how a run ended on every event it handled. The first id leads the run
+    /// and alone names the delivered message, which one row at most can name.
+    pub async fn finish(&self, ids: &[String], result: &WebhookRunResult) {
+        let ids = ids.to_vec();
+        let log_id = ids.first().cloned().unwrap_or_default();
+        let ended = WebhookRunChangeset {
             status: Some(result.status.as_str().to_string()),
             error: Some(cap_error(result.error.as_deref())),
-            message_id: Some(result.message_id.clone()),
             finished_at: Some(Some(Utc::now())),
             ..WebhookRunChangeset::default()
         };
+        let lead_changes = WebhookRunChangeset {
+            message_id: Some(result.message_id.clone()),
+            ..ended.clone()
+        };
         let finished = crate::db::run(move |conn| {
-            let updated = diesel::update(wr::webhook_runs.filter(wr::id.eq(&run_id)))
-                .set(&changes)
-                .execute(conn)?;
-            if updated == 0 {
-                return Err(anyhow!("Record to update not found."));
-            }
-            Ok(())
+            conn.transaction(|conn| {
+                let Some((lead, members)) = ids.split_first() else {
+                    return Err(anyhow!("Record to update not found."));
+                };
+                let updated = diesel::update(wr::webhook_runs.filter(wr::id.eq(lead)))
+                    .set(&lead_changes)
+                    .execute(conn)?;
+                if updated == 0 {
+                    return Err(anyhow!("Record to update not found."));
+                }
+                if !members.is_empty() {
+                    diesel::update(wr::webhook_runs.filter(wr::id.eq_any(members)))
+                        .set(&ended)
+                        .execute(conn)?;
+                }
+                Ok(())
+            })
         })
         .await;
         if let Err(err) = finished {
             log_error!(
-                json!({ "err": err_json(&err), "runId": id, "status": result.status.as_str() }),
+                json!({ "err": err_json(&err), "runId": log_id, "status": result.status.as_str() }),
                 "[WebhookRun] Could not record how the run ended"
             );
         }
@@ -382,7 +418,10 @@ impl WebhookRunService {
                     .filter(wr::id.eq(&run_id))
                     .filter(wr::status.eq_any(unfinished())),
             )
-            .set(wr::status.eq(WebhookRunStatus::Queued.as_str()))
+            .set((
+                wr::status.eq(WebhookRunStatus::Queued.as_str()),
+                wr::coalesced_into.eq(None::<String>),
+            ))
             .execute(conn)?)
         })
         .await?;
@@ -632,6 +671,10 @@ mod tests {
         .unwrap()
     }
 
+    fn ids(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
     /// A message in a thread, `external` naming a channel destination's thread.
     async fn message(
         fixture: &Fixture,
@@ -704,12 +747,12 @@ mod tests {
             .accept(&event(&fixture, "run-1"), WebhookRunStatus::Queued)
             .await
             .unwrap();
-        WEBHOOK_RUN_SERVICE.start("run-1").await;
+        WEBHOOK_RUN_SERVICE.start(&ids(&["run-1"])).await;
         assert_eq!(run("run-1").await.unwrap().status, "running");
 
         WEBHOOK_RUN_SERVICE
             .finish(
-                "run-1",
+                &ids(&["run-1"]),
                 &WebhookRunResult {
                     status: WebhookRunResultStatus::Completed,
                     error: None,
@@ -724,7 +767,79 @@ mod tests {
         assert!(finished.finished_at.is_some());
 
         // A run with no row is logged, not failed.
-        WEBHOOK_RUN_SERVICE.start("missing").await;
+        WEBHOOK_RUN_SERVICE.start(&ids(&["missing"])).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn records_one_run_on_every_event_it_handled() {
+        let fixture = fixture().await;
+        let (message_id, _) = message(&fixture, None, None, None).await;
+        for id in ["lead", "second", "third"] {
+            WEBHOOK_RUN_SERVICE
+                .accept(&event(&fixture, id), WebhookRunStatus::Queued)
+                .await
+                .unwrap();
+        }
+        let run_ids = ids(&["lead", "second", "third"]);
+        WEBHOOK_RUN_SERVICE.start(&run_ids).await;
+        let lead = run("lead").await.unwrap();
+        assert_eq!(lead.status, "running");
+        assert_eq!(lead.coalesced_into, None);
+        for id in ["second", "third"] {
+            let member = run(id).await.unwrap();
+            assert_eq!(member.status, "running");
+            assert_eq!(member.coalesced_into.as_deref(), Some("lead"));
+        }
+
+        WEBHOOK_RUN_SERVICE
+            .finish(
+                &run_ids,
+                &WebhookRunResult {
+                    status: WebhookRunResultStatus::Completed,
+                    error: None,
+                    message_id: Some(message_id.clone()),
+                },
+            )
+            .await;
+        assert_eq!(run("lead").await.unwrap().message_id, Some(message_id));
+        for id in ["second", "third"] {
+            let member = run(id).await.unwrap();
+            assert_eq!(member.status, "completed");
+            assert_eq!(member.message_id, None);
+            assert!(member.finished_at.is_some());
+        }
+
+        let page = WEBHOOK_RUN_SERVICE.page(10, None).await.unwrap();
+        let linked: Vec<Option<&str>> = page
+            .items
+            .iter()
+            .map(|item| item.coalesced_into.as_deref())
+            .collect();
+        assert_eq!(linked.iter().filter(|id| **id == Some("lead")).count(), 2);
+        assert_eq!(linked.iter().filter(|id| id.is_none()).count(), 1);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn requeues_an_event_without_the_run_that_handled_it() {
+        let fixture = fixture().await;
+        for id in ["lead", "second"] {
+            WEBHOOK_RUN_SERVICE
+                .accept(&event(&fixture, id), WebhookRunStatus::Queued)
+                .await
+                .unwrap();
+        }
+        WEBHOOK_RUN_SERVICE.start(&ids(&["lead", "second"])).await;
+        assert!(
+            WEBHOOK_RUN_SERVICE
+                .requeue(&event(&fixture, "second"))
+                .await
+                .unwrap()
+        );
+        let requeued = run("second").await.unwrap();
+        assert_eq!(requeued.status, "queued");
+        assert_eq!(requeued.coalesced_into, None);
     }
 
     #[tokio::test]
@@ -737,7 +852,7 @@ mod tests {
             .unwrap();
         WEBHOOK_RUN_SERVICE
             .finish(
-                "run-1",
+                &ids(&["run-1"]),
                 &WebhookRunResult {
                     status: WebhookRunResultStatus::Failed,
                     error: Some("x".repeat(5000)),
@@ -835,7 +950,7 @@ mod tests {
             .unwrap();
         WEBHOOK_RUN_SERVICE
             .finish(
-                "run-done",
+                &ids(&["run-done"]),
                 &WebhookRunResult {
                     status: WebhookRunResultStatus::Completed,
                     error: None,

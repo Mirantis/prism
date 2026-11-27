@@ -1686,11 +1686,34 @@ fn descriptive(body: &JsonBody, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The longest coalescing window a subscription accepts, in seconds.
+const MAX_COALESCE_SECONDS: i64 = 600;
+
+/// The `coalesceSeconds` of a request body: `None` when absent, `Some(None)` for
+/// `null` (one run per delivery), else a whole number of seconds from 1 to
+/// `MAX_COALESCE_SECONDS`.
+fn read_coalesce_seconds(body: &JsonBody) -> Result<Option<Option<i64>>, FieldErrorBody> {
+    let seconds = match body.field("coalesceSeconds") {
+        None => return Ok(None),
+        Some(Value::Null) => return Ok(Some(None)),
+        Some(value) => value.as_i64(),
+    };
+    match seconds {
+        Some(seconds) if (1..=MAX_COALESCE_SECONDS).contains(&seconds) => Ok(Some(Some(seconds))),
+        _ => Err(field_error(
+            "coalesceSeconds",
+            &format!(
+                "coalesceSeconds must be a whole number of seconds from 1 to {MAX_COALESCE_SECONDS}"
+            ),
+        )),
+    }
+}
+
 /// POST /agents/webhook-subscriptions
 ///
 /// Create a webhook subscription. Body: `{ name, description?, events?, prompt?,
-/// deliverTo?, slackChannelIds?, deliverOnly?, authType?, authHeader?, authPrefix?,
-/// authAlgorithm?, authEncoding?, authSignedUrl?, secret? }`.
+/// deliverTo?, slackChannelIds?, deliverOnly?, coalesceSeconds?, authType?, authHeader?,
+/// authPrefix?, authAlgorithm?, authEncoding?, authSignedUrl?, secret? }`.
 async fn create_webhook_subscription(body: JsonBody) -> Response {
     match create_subscription(&body).await {
         Ok(response) => response,
@@ -1735,6 +1758,10 @@ async fn create_subscription(body: &JsonBody) -> anyhow::Result<Response> {
         return Ok(json(400, deliver_only_needs_target()));
     }
 
+    let coalesce_seconds = match read_coalesce_seconds(body) {
+        Ok(seconds) => seconds.flatten(),
+        Err(refusal) => return Ok(json(400, refusal)),
+    };
     let auth = match read_webhook_auth_fields(body, &webhook_auth_defaults()) {
         Ok(auth) => auth,
         Err(refusal) => return Ok(json(400, refusal)),
@@ -1756,6 +1783,7 @@ async fn create_subscription(body: &JsonBody) -> anyhow::Result<Response> {
     row.deliver_to = deliver_to;
     row.slack_channel_ids = channels;
     row.deliver_only = deliver_only;
+    row.coalesce_seconds = coalesce_seconds;
     row.auth_type = auth.auth_type;
     row.auth_header = auth.auth_header;
     row.auth_prefix = auth.auth_prefix;
@@ -1883,6 +1911,14 @@ async fn update_subscription(id: &str, body: &JsonBody) -> anyhow::Result<Respon
     if let Some(deliver_only) = body.field("deliverOnly").and_then(Value::as_bool) {
         data.deliver_only = Some(deliver_only);
         changed = true;
+    }
+    match read_coalesce_seconds(body) {
+        Ok(None) => {}
+        Ok(Some(seconds)) => {
+            data.coalesce_seconds = Some(seconds);
+            changed = true;
+        }
+        Err(refusal) => return Ok(reject(400, to_value(refusal))),
     }
 
     // Auth, delivery and Slack channel fields need the current row to validate the
