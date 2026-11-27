@@ -1601,6 +1601,10 @@ fn track_subscription_update(
             stored.deliver_only.to_string(),
         );
         props.insert(
+            "webhook.coalesce_seconds".to_string(),
+            coalesce_seconds_prop(stored),
+        );
+        props.insert(
             "webhook.auth_type".to_string(),
             stored.auth_type.as_str().to_string(),
         );
@@ -1684,6 +1688,12 @@ fn descriptive(body: &JsonBody, key: &str) -> Option<String> {
         .map(js::trim)
         .filter(|text| !text.is_empty())
         .map(str::to_string)
+}
+
+/// The `webhook.coalesce_seconds` prop of the subscription events: the window in
+/// seconds, `0` when the subscription has none.
+fn coalesce_seconds_prop(subscription: &WebhookSubscription) -> String {
+    subscription.coalesce_seconds.unwrap_or(0).to_string()
 }
 
 /// The longest coalescing window a subscription accepts, in seconds.
@@ -1829,6 +1839,10 @@ async fn create_subscription(body: &JsonBody) -> anyhow::Result<Response> {
             (
                 "webhook.deliver_only",
                 subscription.deliver_only.to_string(),
+            ),
+            (
+                "webhook.coalesce_seconds",
+                coalesce_seconds_prop(&subscription),
             ),
             (
                 "webhook.auth_type",
