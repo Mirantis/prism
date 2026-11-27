@@ -119,8 +119,8 @@ export const TextInput: React.FC<Props> = ({
         nextCursorOffset += input.length;
       }
 
-      if (cursorOffset < 0) nextCursorOffset = 0;
-      if (cursorOffset > originalValue.length) nextCursorOffset = originalValue.length;
+      if (nextCursorOffset < 0) nextCursorOffset = 0;
+      if (nextCursorOffset > nextValue.length) nextCursorOffset = nextValue.length;
 
       setCursorOffset(nextCursorOffset);
       if (nextValue !== originalValue) onChange(nextValue);
