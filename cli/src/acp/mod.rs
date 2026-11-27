@@ -42,7 +42,8 @@ pub async fn run_acp_command(version: &str) -> i32 {
         });
     }
 
-    // The client closing stdin ends the session.
+    // The client closing stdin ends the session, once every request read has its answer.
+    let mut requests = tokio::task::JoinSet::new();
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let Ok(message) = serde_json::from_str::<Value>(&line) else {
@@ -57,11 +58,20 @@ pub async fn run_acp_command(version: &str) -> i32 {
         };
         let params = message.get("params").cloned().unwrap_or(Value::Null);
         match message.get("id").cloned() {
+            // A prompt is taken before the next line is read, so prompts keep their order
+            // and a cancel that follows one finds it.
+            Some(id) if method == "session/prompt" => match start_prompt(&bridge, &params) {
+                Ok(answer) => {
+                    let out = out.clone();
+                    requests.spawn(async move { out.respond(id, answer.await) });
+                }
+                Err(e) => out.respond(id, Err(e)),
+            },
             Some(id) => {
                 let bridge = bridge.clone();
                 let out = out.clone();
                 let version = version.to_string();
-                tokio::spawn(async move {
+                requests.spawn(async move {
                     let result = handle_request(&bridge, &method, &params, &version).await;
                     out.respond(id, result);
                 });
@@ -75,8 +85,22 @@ pub async fn run_acp_command(version: &str) -> i32 {
             }
         }
     }
+    while requests.join_next().await.is_some() {}
+    out.flush().await;
     runtime.close();
     0
+}
+
+fn start_prompt(
+    bridge: &Arc<Bridge>,
+    params: &Value,
+) -> Result<impl Future<Output = Result<Value, RpcError>> + Send + use<>, RpcError> {
+    let blocks = params
+        .get("prompt")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    bridge.prompt(param(params, "sessionId")?, &blocks)
 }
 
 fn param<'a>(params: &'a Value, name: &str) -> Result<&'a str, RpcError> {
@@ -113,14 +137,6 @@ async fn handle_request(
             Ok(json!({}))
         }
         "session/list" => bridge.list(params.get("cwd").and_then(Value::as_str)).await,
-        "session/prompt" => {
-            let blocks = params
-                .get("prompt")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            bridge.prompt(param(params, "sessionId")?, &blocks).await
-        }
         other => Err(RpcError::method_not_found(other)),
     }
 }

@@ -33,7 +33,8 @@ jobs:
       - name: Build the web UI
         run: npm run build:web
 
-  # The terminal UI ships on every platform the release builds, so its tests run on each.
+  # The terminal UI's tests run on each OS the release builds it for. linux-arm64
+  # shares the Linux x64 code, so it has no job of its own.
   cli:
     name: cli (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

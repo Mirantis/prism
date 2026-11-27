@@ -5,7 +5,7 @@
 //! text with escape codes and then reflows and indents the escaped strings, so
 //! its output reads the same. The finished string is parsed into `Line`s here.
 
-use super::style::{Color, Style, color_level};
+use super::style::{Color, Style};
 use super::text::{Line, Span};
 
 /// One chalk style: the codes that open and close it.
@@ -67,8 +67,12 @@ pub const GRAY: Sgr = Sgr {
 /// Wrap `text` in `styles`, outermost first, as `chalk.a.b.c(text)` does: a
 /// nested close of a style reopens it, and every line break closes the styles
 /// before it and reopens them after it.
+///
+/// The codes are written at every colour level, so a layout that measures or
+/// splits the string is the same with colour off. `Style` leaves them out when
+/// the line is encoded for a terminal without colour.
 pub fn paint(styles: &[Sgr], text: &str) -> String {
-    if color_level() == 0 || text.is_empty() || styles.is_empty() {
+    if text.is_empty() || styles.is_empty() {
         return text.to_string();
     }
     let open_all: String = styles.iter().map(|s| format!("\x1b[{}m", s.open)).collect();
@@ -141,18 +145,14 @@ pub fn parse(text: &str) -> Vec<Line> {
     let mut i = 0;
     while i < bytes.len() {
         let c = bytes[i];
-        if c == '\x1b' && bytes.get(i + 1) == Some(&'[') {
-            let start = i + 2;
-            let mut end = start;
-            while end < bytes.len() && !bytes[end].is_ascii_alphabetic() {
-                end += 1;
-            }
-            if end < bytes.len() && bytes[end] == 'm' {
+        // An SGR sequence styles the text after it; every other escape sequence is dropped whole.
+        if c == '\x1b' {
+            let (end, sgr) = escape_end(&bytes, i);
+            if let Some(params) = sgr {
                 flush(&mut buf, &mut lines, style);
-                let params: String = bytes[start..end].iter().collect();
-                apply_sgr(&mut style, &params);
+                apply_sgr(&mut style, &normalize_sgr(&params));
             }
-            i = end + 1;
+            i = end;
             continue;
         }
         if c == '\n' {
@@ -161,7 +161,8 @@ pub fn parse(text: &str) -> Vec<Line> {
             i += 1;
             continue;
         }
-        if c == '\r' {
+        // A carriage return, a bell, a backspace or a C1 control would move or signal the terminal.
+        if c.is_control() && c != '\t' {
             i += 1;
             continue;
         }
@@ -170,6 +171,29 @@ pub fn parse(text: &str) -> Vec<Line> {
     }
     flush(&mut buf, &mut lines, style);
     lines
+}
+
+/// `text` without its escape sequences and without any control character but tab.
+/// The last guard before text reaches the terminal: span text never carries a sequence.
+pub fn drop_controls(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.chars().any(|c| c.is_control() && c != '\t') {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\x1b' {
+            i = escape_end(&chars, i).0;
+            continue;
+        }
+        if !c.is_control() || c == '\t' {
+            out.push(c);
+        }
+        i += 1;
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 fn apply_sgr(style: &mut Style, params: &str) {
@@ -386,13 +410,27 @@ mod tests {
 
     #[test]
     fn paints_like_chalk() {
-        if color_level() == 0 {
-            return;
-        }
         assert_eq!(
             paint(&[RESET], "x\n\ny"),
             "\x1b[0mx\x1b[0m\n\x1b[0m\x1b[0m\n\x1b[0my\x1b[0m"
         );
+    }
+
+    #[test]
+    fn parse_drops_every_sequence_but_sgr() {
+        let lines = parse(
+            "a\x1b]52;c;aGk=\x07b\x1b]0;title\x1b\\c\x1bPq\x1b\\d\x1bce\x08f\x07\x1b[2J\x1b[1mg",
+        );
+        let text: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(text, "abcdefg");
+        assert!(lines[0].spans.last().unwrap().style.bold);
+        assert!(!lines[0].encoded().contains(']'));
+    }
+
+    #[test]
+    fn drops_controls_before_the_terminal() {
+        assert_eq!(drop_controls("plain\ttext"), "plain\ttext");
+        assert_eq!(drop_controls("a\x1b[2Jb\x1b]0;t\x07c\x07\u{9b}d"), "abcd");
     }
 
     #[test]

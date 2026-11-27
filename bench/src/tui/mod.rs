@@ -223,14 +223,14 @@ pub async fn run(args: TuiArgs) -> anyhow::Result<()> {
             let body = agent_markdown(1000 + i, &format!("STREAM-{i}"));
             single.push("message", message(&format!("s-{i}"), "AGENT", &body, &at));
         }
-        let took = tui
-            .wait_for(
-                &format!("STREAM-{}", count - 1),
-                from,
-                Duration::from_secs(120),
-            )
-            .ok_or_else(|| anyhow::anyhow!("streamed messages never shown"))?;
-        let _ = start;
+        tui.wait_for(
+            &format!("STREAM-{}", count - 1),
+            from,
+            Duration::from_secs(120),
+        )
+        .ok_or_else(|| anyhow::anyhow!("streamed messages never shown"))?;
+        // From the first push, so what the TUI draws while the messages arrive counts.
+        let took = start.elapsed();
         std::thread::sleep(Duration::from_millis(300));
         result.stream_messages = count;
         result.stream_ms = ms(took);

@@ -59,33 +59,47 @@ struct SessionState {
     own: HashSet<String>,
     prompts: Vec<Pending>,
     last_turn: Option<Ending>,
-    working: bool,
+    /// The conversation's turn, as of the frames this session has handled.
+    turn: TurnState,
+}
+
+impl SessionState {
+    /// Whether a turn runs or waits on the conversation.
+    fn working(&self) -> bool {
+        self.turn != TurnState::Idle
+    }
 }
 
 struct Session {
     id: String,
     state: Mutex<SessionState>,
     jobs: mpsc::UnboundedSender<Job>,
-    /// The client's prompts go to the runtime in their order.
-    sends: tokio::sync::Mutex<()>,
+    /// The client's prompts, uploads and send each, go to the runtime one at a
+    /// time in the order the client sent them.
+    sends: mpsc::UnboundedSender<Job>,
+}
+
+/// A queue that runs its jobs one at a time, in the order they were queued.
+fn job_queue() -> mpsc::UnboundedSender<Job> {
+    let (jobs, mut rx) = mpsc::unbounded_channel::<Job>();
+    tokio::spawn(async move {
+        while let Some(job) = rx.recv().await {
+            job.await;
+        }
+    });
+    jobs
 }
 
 impl Session {
-    fn new(id: &str, working: bool) -> Arc<Session> {
-        let (jobs, mut rx) = mpsc::unbounded_channel::<Job>();
-        tokio::spawn(async move {
-            while let Some(job) = rx.recv().await {
-                job.await;
-            }
-        });
+    fn new(id: &str, turn: TurnState) -> Arc<Session> {
         Arc::new(Session {
             id: id.to_string(),
             state: Mutex::new(SessionState {
-                working,
+                turn,
                 ..SessionState::default()
             }),
-            jobs,
-            sends: tokio::sync::Mutex::new(()),
+            jobs: job_queue(),
+            sends: job_queue(),
         })
     }
 
@@ -99,7 +113,7 @@ pub struct Bridge {
     out: Outbox,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     /// The conversations with a turn running or queued, as the socket last said.
-    working: Mutex<HashSet<String>>,
+    turns: Mutex<HashMap<String, TurnState>>,
 }
 
 impl Bridge {
@@ -108,8 +122,18 @@ impl Bridge {
             runtime,
             out,
             sessions: Mutex::new(HashMap::new()),
-            working: Mutex::new(HashSet::new()),
+            turns: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// The conversation's turn as the socket last said, `Idle` when it named none.
+    fn turn_of(&self, thread_id: &str) -> TurnState {
+        self.turns
+            .lock()
+            .unwrap()
+            .get(thread_id)
+            .copied()
+            .unwrap_or(TurnState::Idle)
     }
 
     fn session(&self, id: &str) -> Option<Arc<Session>> {
@@ -127,11 +151,11 @@ impl Bridge {
     pub async fn attach(self: &Arc<Self>, thread_id: &str, replay: bool) -> Result<(), RpcError> {
         let session = {
             let mut sessions = self.sessions.lock().unwrap();
-            let working = self.working.lock().unwrap().contains(thread_id);
+            let turn = self.turn_of(thread_id);
             // Registered before the read, so a message that arrives during it waits behind it.
             sessions
                 .entry(thread_id.to_string())
-                .or_insert_with(|| Session::new(thread_id, working))
+                .or_insert_with(|| Session::new(thread_id, turn))
                 .clone()
         };
         let (done, wait) = oneshot::channel();
@@ -184,11 +208,14 @@ impl Bridge {
         Ok(json!({ "sessions": sessions }))
     }
 
-    pub async fn prompt(
+    /// Take a prompt at the moment the client's request is read: it waits from
+    /// now, so a `session/cancel` read right after it finds it, and its send is
+    /// queued behind the session's earlier prompts. The answer comes when its turn ends.
+    pub fn prompt(
         self: &Arc<Self>,
         session_id: &str,
         blocks: &[Value],
-    ) -> Result<Value, RpcError> {
+    ) -> Result<impl Future<Output = Result<Value, RpcError>> + Send + use<>, RpcError> {
         let session = self
             .session(session_id)
             .ok_or_else(|| RpcError::session_not_found(session_id))?;
@@ -209,8 +236,7 @@ impl Bridge {
         let bridge = self.clone();
         let s = session.clone();
         let id = message_id.clone();
-        tokio::spawn(async move {
-            let _order = s.sends.lock().await;
+        let _ = session.sends.send(Box::pin(async move {
             let mut attachment_ids = Vec::new();
             for image in content.images {
                 match bridge.runtime.upload(image.data, &image.filename).await {
@@ -228,11 +254,13 @@ impl Bridge {
                 content: content.text,
                 attachment_ids,
             });
-        });
-        let stop_reason = wait
-            .await
-            .unwrap_or_else(|_| Err(RpcError::internal("the session closed")))?;
-        Ok(json!({ "stopReason": stop_reason }))
+        }));
+        Ok(async move {
+            let stop_reason = wait
+                .await
+                .unwrap_or_else(|_| Err(RpcError::internal("the session closed")))?;
+            Ok(json!({ "stopReason": stop_reason }))
+        })
     }
 
     /// Stop the turn the session's prompts wait for. A prompt not sent yet starts
@@ -257,11 +285,9 @@ impl Bridge {
         match event {
             WsEvent::Welcome(welcome) => {
                 {
-                    let mut working = self.working.lock().unwrap();
-                    working.clear();
-                    for (thread, _) in &welcome.turns {
-                        working.insert(thread.clone());
-                    }
+                    let mut turns = self.turns.lock().unwrap();
+                    turns.clear();
+                    turns.extend(welcome.turns.iter().cloned());
                 }
                 // A resumed socket sends every missed event next, and the session follows those.
                 if welcome.resumed {
@@ -270,10 +296,10 @@ impl Bridge {
                 let sessions: Vec<Arc<Session>> =
                     self.sessions.lock().unwrap().values().cloned().collect();
                 for session in sessions {
-                    let working = self.working.lock().unwrap().contains(&session.id);
+                    let turn = self.turn_of(&session.id);
                     let bridge = self.clone();
                     let s = session.clone();
-                    session.run(async move { bridge.catch_up(&s, working).await });
+                    session.run(async move { bridge.catch_up(&s, turn).await });
                 }
             }
             WsEvent::Event(e) => {
@@ -289,22 +315,23 @@ impl Bridge {
                         let Some(turn) = TurnEvent::parse(&e.payload) else {
                             return;
                         };
-                        let working = turn.state != TurnState::Idle;
                         {
-                            let mut w = self.working.lock().unwrap();
-                            if working {
-                                w.insert(turn.thread_id.clone());
+                            let mut turns = self.turns.lock().unwrap();
+                            if turn.state == TurnState::Idle {
+                                turns.remove(&turn.thread_id);
                             } else {
-                                w.remove(&turn.thread_id);
+                                turns.insert(turn.thread_id.clone(), turn.state);
                             }
                         }
                         self.queue(&turn.thread_id.clone(), move |b, s| {
                             let ids: Vec<String> = {
                                 let mut st = s.state.lock().unwrap();
-                                st.working = working;
-                                if working {
+                                // A `running` event while the turn already runs reports its step, not a new turn.
+                                let started = turn.state != st.turn;
+                                st.turn = turn.state;
+                                if st.working() {
                                     // In the session's order, so a cancel that ended with the turn before does not stop this one.
-                                    if st.prompts.iter().any(|p| p.cancelled) {
+                                    if started && st.prompts.iter().any(|p| p.cancelled) {
                                         drop(st);
                                         b.runtime.cancel(&s.id);
                                     }
@@ -379,7 +406,7 @@ impl Bridge {
                         }
                         // A message confirmed a second time was stored before the socket went away. With
                         // no turn on the conversation now, its turn ended while the confirmation was lost.
-                        (duplicate && !st.working)
+                        (duplicate && !st.working())
                             .then(|| st.last_turn.clone().unwrap_or(COMPLETED))
                     };
                     if let Some(ending) = settle_with {
@@ -504,10 +531,11 @@ impl Bridge {
 
     /// After the socket came back without the missed events: send what the client
     /// missed, and end the prompts whose turn ended while the socket was away.
-    async fn catch_up(self: &Arc<Self>, session: &Arc<Session>, working: bool) {
+    async fn catch_up(self: &Arc<Self>, session: &Arc<Session>, turn: TurnState) {
+        let working = turn != TurnState::Idle;
         let confirmed: Vec<String> = {
             let mut st = session.state.lock().unwrap();
-            st.working = working;
+            st.turn = turn;
             st.last_turn = None;
             st.prompts
                 .iter()
@@ -576,5 +604,100 @@ impl Bridge {
             }
             before = first;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio::net::TcpListener;
+    use tokio::time::timeout;
+    use tokio_tungstenite::tungstenite::Message;
+
+    use super::*;
+    use crate::protocol::StreamEvent;
+
+    const THREAD: &str = "thread-1";
+    const WAIT: Duration = Duration::from_secs(10);
+
+    /// A socket server that welcomes the client and reports the thread of each cancel it sends.
+    async fn runtime_socket() -> (String, mpsc::UnboundedReceiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (cancels, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let _hello = ws.next().await;
+            let welcome = json!({ "type": "welcome", "payload": {
+                "protocol": 2, "streamId": "s", "seq": 0, "resumed": false,
+                "you": { "id": null, "name": null },
+                "snapshot": { "turns": [], "computer": null, "questionCards": [] },
+            }});
+            ws.send(Message::text(welcome.to_string())).await.unwrap();
+            while let Some(Ok(message)) = ws.next().await {
+                let Message::Text(text) = message else {
+                    continue;
+                };
+                let frame: Value = serde_json::from_str(text.as_str()).unwrap();
+                if frame["type"] == "cancel" {
+                    let thread = frame["payload"]["threadId"].as_str().unwrap();
+                    let _ = cancels.send(thread.to_string());
+                }
+            }
+        });
+        (url, rx)
+    }
+
+    fn turn(payload: Value) -> WsEvent {
+        WsEvent::Event(StreamEvent {
+            kind: "turn".into(),
+            payload,
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn does_not_cancel_again_at_a_step_of_the_turn_it_cancelled() {
+        let (url, mut cancels) = runtime_socket().await;
+        let (tx, mut events) = mpsc::unbounded_channel();
+        let runtime = Arc::new(Runtime::connect(&url, "test", tx));
+        while !matches!(
+            timeout(WAIT, events.recv()).await.unwrap(),
+            Some(WsEvent::Welcome(_))
+        ) {}
+
+        let bridge = Bridge::new(runtime, Outbox::start());
+        let session = Session::new(THREAD, TurnState::Running);
+        session.state.lock().unwrap().prompts.push(Pending {
+            message_id: "m1".into(),
+            scheduled: true,
+            cancelled: false,
+            done: None,
+        });
+        bridge
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(THREAD.into(), session);
+
+        bridge.cancel(THREAD);
+        let first = timeout(WAIT, cancels.recv()).await.unwrap();
+        assert_eq!(first.as_deref(), Some(THREAD));
+
+        let step = json!({ "index": 2, "tool": "web_search" });
+        bridge.on_ws(turn(
+            json!({ "threadId": THREAD, "state": "running", "step": step }),
+        ));
+        bridge.on_ws(turn(json!({ "threadId": THREAD, "state": "running" })));
+        assert!(
+            timeout(Duration::from_millis(500), cancels.recv())
+                .await
+                .is_err()
+        );
+
+        // A turn that starts while the prompt is still cancelled is stopped too.
+        bridge.on_ws(turn(json!({ "threadId": THREAD, "state": "queued" })));
+        let again = timeout(WAIT, cancels.recv()).await.unwrap();
+        assert_eq!(again.as_deref(), Some(THREAD));
     }
 }

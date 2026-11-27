@@ -62,7 +62,11 @@ pub fn tempfile_dir(prefix: &str) -> std::io::Result<std::path::PathBuf> {
             &uuid::Uuid::new_v4().simple().to_string()[..6]
         );
         let dir = base.join(name);
-        match std::fs::create_dir(&dir) {
+        // Only this user reads it: it holds a command's recording or a document being edited.
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        match builder.create(&dir) {
             Ok(()) => return Ok(dir),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e),
@@ -98,6 +102,11 @@ fn run_recorded(command: &str, log: &std::path::Path) -> std::io::Result<i64> {
 }
 
 fn run_piped(command: &str) -> std::io::Result<(i64, OutputCapture)> {
+    // The console sends Ctrl+C to this process as well as to the command. While a
+    // listener is registered, tokio's console handler takes the event, so Ctrl+C stops
+    // only the command. A handler routine is not inherited, so the command still gets it.
+    #[cfg(windows)]
+    let _ctrl_c = tokio::signal::windows::ctrl_c().ok();
     let mut child = if cfg!(windows) {
         Command::new("cmd")
             .args(["/C", command])
@@ -111,36 +120,48 @@ fn run_piped(command: &str) -> std::io::Result<(i64, OutputCapture)> {
             .stderr(Stdio::piped())
             .spawn()?
     };
-    let mut stdout = child.stdout.take().unwrap();
-    let mut stderr = child.stderr.take().unwrap();
-    let err_thread = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let mut chunk = [0u8; 8192];
-        while let Ok(n) = stderr.read(&mut chunk) {
-            if n == 0 {
-                break;
+    // Both streams go into one bounded capture as their chunks arrive, in that order.
+    let (chunks, received) = std::sync::mpsc::channel::<(bool, Vec<u8>)>();
+    let pipe = |mut from: Box<dyn Read + Send>, is_err: bool| {
+        let chunks = chunks.clone();
+        std::thread::spawn(move || {
+            let mut chunk = [0u8; 8192];
+            while let Ok(n) = from.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                let _ = if is_err {
+                    std::io::stderr().write_all(&chunk[..n])
+                } else {
+                    std::io::stdout().write_all(&chunk[..n])
+                };
+                if chunks.send((is_err, chunk[..n].to_vec())).is_err() {
+                    break;
+                }
             }
-            let _ = std::io::stderr().write_all(&chunk[..n]);
-            buf.extend_from_slice(&chunk[..n]);
-        }
-        buf
-    });
+        })
+    };
+    let readers = [
+        pipe(Box::new(child.stdout.take().unwrap()), false),
+        pipe(Box::new(child.stderr.take().unwrap()), true),
+    ];
+    drop(chunks);
     let mut output = OutputCapture::default();
-    let mut pending = Vec::new();
-    let mut chunk = [0u8; 8192];
-    while let Ok(n) = stdout.read(&mut chunk) {
-        if n == 0 {
-            break;
-        }
-        let _ = std::io::stdout().write_all(&chunk[..n]);
-        pending.extend_from_slice(&chunk[..n]);
-        let valid = utf8_prefix_len(&pending);
+    // Each stream's bytes that end inside a UTF-8 character, kept until the rest arrives.
+    let mut pending = [Vec::new(), Vec::new()];
+    for (is_err, bytes) in received {
+        let pending = &mut pending[usize::from(is_err)];
+        pending.extend_from_slice(&bytes);
+        let valid = utf8_prefix_len(pending);
         output.push(&String::from_utf8_lossy(&pending[..valid]));
         pending.drain(..valid);
     }
-    output.push(&String::from_utf8_lossy(&pending));
-    let err = err_thread.join().unwrap_or_default();
-    output.push(&String::from_utf8_lossy(&err));
+    for rest in &pending {
+        output.push(&String::from_utf8_lossy(rest));
+    }
+    for reader in readers {
+        let _ = reader.join();
+    }
     let status = child.wait()?;
     Ok((exit_code_of(status), output))
 }
@@ -350,6 +371,28 @@ fn truncate_middle(text: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_dirs_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile_dir("prism-test-").unwrap();
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(mode & 0o777, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn piped_output_keeps_both_streams_in_one_bounded_capture() {
+        let (code, output) =
+            run_piped("echo out; sleep 0.2; echo err 1>&2; sleep 0.2; echo end").unwrap();
+        assert_eq!(code, 0);
+        assert_eq!(output.finish(|t, _| t.to_string()), "out\nerr\nend");
+        let (_, output) = run_piped("head -c 40000 /dev/zero | tr '\\0' e 1>&2").unwrap();
+        let text = output.finish(|t, _| t.to_string());
+        assert!(js_len(&text) <= MAX_SHELL_OUTPUT_CHARS, "{}", js_len(&text));
+    }
 
     #[test]
     fn recognises_the_prefix() {

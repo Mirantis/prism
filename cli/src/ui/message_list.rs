@@ -440,6 +440,36 @@ mod tests {
     }
 
     #[test]
+    fn agent_replies_reach_the_terminal_without_escape_sequences() {
+        let (images, markdown, rows_cache) = (
+            ImageStore::new(),
+            MarkdownCache::default(),
+            RowCache::default(),
+        );
+        let screen = Screen {
+            columns: 80,
+            rows: 24,
+            graphics: TerminalGraphics::TEXT,
+            images: &images,
+            markdown: &markdown,
+            rows_cache: &rows_cache,
+        };
+        let m = crate::protocol::coerce_message(&json!({
+            "id": "1",
+            "role": "AGENT",
+            "content": "copied \x1b]52;c;aGk=\x07 and \x1b]0;title\x1b\\ here\x07\x1bc",
+        }))
+        .unwrap();
+        let out: String = render(&col(agent_body(&m, &screen)).el(), 80)
+            .iter()
+            .map(Line::encoded)
+            .collect();
+        assert!(out.contains("copied") && out.contains("here"), "{out:?}");
+        assert!(!out.contains("52;") && !out.contains("]0;") && !out.contains('\x07'));
+        assert!(!out.contains("\x1bc"));
+    }
+
+    #[test]
     fn labels_other_authors() {
         let mut m = crate::protocol::coerce_message(
             &json!({"id":"1","content":"x","role":"USER","senderId":"u2","senderName":"Ada"}),

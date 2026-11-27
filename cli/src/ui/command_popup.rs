@@ -44,3 +44,50 @@ pub fn command_popup(items: &[PopupItem], selected: usize) -> Option<El> {
         .collect();
     Some(col(rows).pad_x(2).el())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::COMMANDS;
+    use crate::ui::layout::render;
+
+    fn commands() -> Vec<PopupItem> {
+        COMMANDS
+            .iter()
+            .map(|c| PopupItem {
+                name: c.name.into(),
+                description: c.description.into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn windows_eight_items_around_a_selection_near_the_end() {
+        let items = commands();
+        assert!(items.len() > MAX_VISIBLE + 2);
+        let last = items.len() - 1;
+        for (selected, first) in [
+            (0, 0),
+            (last - 1, last + 1 - MAX_VISIBLE),
+            (last, last + 1 - MAX_VISIBLE),
+        ] {
+            let lines: Vec<String> = render(&command_popup(&items, selected).unwrap(), 120)
+                .iter()
+                .map(|l| l.text())
+                .collect();
+            assert_eq!(lines.len(), MAX_VISIBLE);
+            for (row, line) in lines.iter().enumerate() {
+                let item = &items[first + row];
+                let marker = if first + row == selected {
+                    "▸ "
+                } else {
+                    "  "
+                };
+                assert_eq!(
+                    *line,
+                    format!("  {marker}{}  {}", item.name, item.description)
+                );
+            }
+        }
+    }
+}

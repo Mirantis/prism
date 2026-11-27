@@ -160,11 +160,10 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| {
-            format!(
-                "spawn {cmd} {}",
-                e.kind().to_string().to_uppercase().replace(' ', "")
-            )
+        .map_err(|e| match e.kind() {
+            // Node's wording, which names the missing program.
+            std::io::ErrorKind::NotFound => format!("spawn {cmd} ENOENT"),
+            _ => format!("spawn {cmd}: {e}"),
         })?;
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(text.as_bytes());
