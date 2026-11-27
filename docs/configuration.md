@@ -185,7 +185,11 @@ Codex uses `CODEX_API_KEY` or `OPENAI_API_KEY` first, then a saved `auth.json` l
 then Bedrock credentials. To reuse a Codex login, set `CODEX_HOME` to its writable
 configuration directory before starting Prism; the default is `<data dir>/.codex`.
 
-Antigravity CLI (`agy`) is available when `agy` is on `PATH` and signed in locally.
+Antigravity CLI (`agy`) is available when `agy` is on `PATH` and authenticated via:
+`GEMINI_API_KEY` (first — Prism passes `--settings '{"modelProvider":"gemini"}'` per task so
+it works headlessly without modifying `~/.gemini/antigravity-cli/settings.json`; optional
+`GOOGLE_GEMINI_BASE_URL` overrides the endpoint), `AGY_ADC_AUTH=true` (Google Cloud
+Application Default Credentials), or a local signed-in Google account.
 
 Coding tasks can select a `model` tier (`small`, `medium`, `large`) and
 `effort` (`low`, `medium`, `high`), including when resuming a session.

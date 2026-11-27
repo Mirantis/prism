@@ -1377,10 +1377,11 @@ frontmatter with required `name` + `description`, optional `scripts/`/
   leaving the user's real `~/.claude` and `~/.codex` untouched (and leaving an
   operator-set `CLAUDE_CONFIG_DIR` or `CODEX_HOME` untouched). Antigravity CLI
   (`agy`) has no setting to relocate `~/.gemini` away from `$HOME`, so its
-  `prepare_home()` links `<home>/.gemini/config/skills` → `<DATA>/skills` only
-  when nothing exists at that path, and otherwise leaves any existing directory,
-  file, or symlink untouched and reports whether it already points at
-  `<DATA>/skills`.
+  `prepare_home()` writes `<home>/.gemini/config/skills.json` pointing at
+  `<DATA>/skills` only when that manifest does not exist yet (and
+  `<home>/.gemini/config/skills` does not already point at `<DATA>/skills`),
+  leaving any user-owned `~/.gemini/config/skills` directory/symlink and any
+  existing `skills.json` untouched.
 - **Progressive disclosure.** `skill_catalog_service` (mtime-cached) parses only
   `name` + `description` for the `# Skills` system-prompt section; the `skill`
   tool (`backend/src/tools/skills/mod.rs`) loads a skill's full `SKILL.md` body on

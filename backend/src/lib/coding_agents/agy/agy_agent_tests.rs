@@ -68,10 +68,26 @@ async fn builds_edit_and_plan_arguments() {
     assert_eq!(value_after(&args, "-p"), Some("Inspect the project"));
     assert_eq!(value_after(&args, "--output-format"), Some("stream-json"));
     assert!(args.iter().any(|a| a == "--dangerously-skip-permissions"));
+    assert_eq!(value_after(&args, "--settings"), None);
     assert_eq!(value_after(&args, "--mode"), None);
     assert_eq!(value_after(&args, "--model"), None);
     assert_eq!(value_after(&args, "--effort"), None);
     assert_eq!(value_after(&args, "--resume"), None);
+    child.finish(Some(0));
+    collect(&run).await;
+
+    // GEMINI_API_KEY passes per-session `--settings '{"modelProvider":"gemini"}'`.
+    let child = FakeChild::new();
+    let (environment, spawns) = spawning(child.clone());
+    let run = create_agy_agent(Some(environment.arc())).run(CodingAgentTask {
+        env: env_of(&[("HOME", "/home/test"), ("GEMINI_API_KEY", "test-key")]),
+        ..task()
+    });
+    let (_, args, _) = spawns.lock()[0].clone();
+    assert_eq!(
+        value_after(&args, "--settings"),
+        Some(GEMINI_API_KEY_SETTINGS)
+    );
     child.finish(Some(0));
     collect(&run).await;
 
@@ -90,6 +106,7 @@ async fn builds_edit_and_plan_arguments() {
         value_after(&args, "-p"),
         Some(format!("{PLAN_ONLY_INSTRUCTION}\n\nKeep it brief.\n\nInspect the project").as_str())
     );
+    assert_eq!(value_after(&args, "--settings"), None);
     assert_eq!(value_after(&args, "--mode"), Some("plan"));
     assert!(!args.iter().any(|a| a == "--dangerously-skip-permissions"));
     assert_eq!(value_after(&args, "--model"), Some("gemini-3.8-flash"));
@@ -209,6 +226,41 @@ async fn parses_stream_json_session_deltas_usage_and_result() {
             },
         ]
     );
+
+    // GEMINI_API_KEY and AGY_ADC_AUTH runs record per-token usage (`subscription: false`).
+    for env in [
+        env_of(&[("GEMINI_API_KEY", "test-key")]),
+        env_of(&[("AGY_ADC_AUTH", "true")]),
+    ] {
+        let child = FakeChild::new();
+        let (environment, _) = spawning(child.clone());
+        let run = create_agy_agent(Some(environment.arc())).run(CodingAgentTask { env, ..task() });
+        child.emit_line(
+            &json!({
+                "event": "result",
+                "result": {
+                    "status": "SUCCESS",
+                    "response": "ok\n",
+                    "num_turns": 1,
+                    "usage": { "input_tokens": 100, "output_tokens": 10, "cache_read_tokens": 0 }
+                }
+            })
+            .to_string(),
+        );
+        child.finish(Some(0));
+        let events = collect(&run).await;
+        assert!(matches!(
+            &events[0],
+            CodingAgentEvent::Usage {
+                usage: CodingAgentUsage {
+                    subscription: false,
+                    input_tokens: 100,
+                    output_tokens: 10,
+                    ..
+                }
+            }
+        ));
+    }
 }
 
 #[tokio::test]
@@ -485,16 +537,22 @@ async fn checks_state_and_models_probe_for_availability() {
     .unwrap();
     let home_str = home.path().to_string_lossy().into_owned();
 
-    let models_ok = || FakeEnvironment {
-        files: FakeFiles::local(),
-        ..FakeEnvironment::with_run_program(|_, _, _| {
-            let child = FakeChild::new();
-            child.emit_line(
-                "\r⠋ Fetching available models...\rgemini-4-neon-high  Gemini 4 Neon (High)",
-            );
-            child.finish(Some(0));
-            child.process()
-        })
+    let probed_args: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
+    let sink = probed_args.clone();
+    let models_ok = move || {
+        let sink = sink.clone();
+        FakeEnvironment {
+            files: FakeFiles::local(),
+            ..FakeEnvironment::with_run_program(move |_, args, _| {
+                sink.lock().push(args.to_vec());
+                let child = FakeChild::new();
+                child.emit_line(
+                    "\r⠋ Fetching available models...\rgemini-4-neon-high  Gemini 4 Neon (High)",
+                );
+                child.finish(Some(0));
+                child.process()
+            })
+        }
     };
     let models_signed_out = || FakeEnvironment {
         files: FakeFiles::local(),
@@ -538,10 +596,43 @@ async fn checks_state_and_models_probe_for_availability() {
             .unwrap()
     );
 
+    // GEMINI_API_KEY works headlessly without jetski_state.pbtxt and passes --settings.
+    probed_args.lock().clear();
+    assert!(
+        agent
+            .is_available(&env_of(&[("GEMINI_API_KEY", "test-key")]))
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        probed_args.lock().as_slice(),
+        &[vec![
+            "--settings".to_string(),
+            GEMINI_API_KEY_SETTINGS.to_string(),
+            "models".to_string()
+        ]]
+    );
+
+    // AGY_ADC_AUTH=true works headlessly without jetski_state.pbtxt when `agy models` succeeds.
+    probed_args.lock().clear();
+    assert!(
+        agent
+            .is_available(&env_of(&[("AGY_ADC_AUTH", "true")]))
+            .await
+            .unwrap()
+    );
+    assert_eq!(probed_args.lock().as_slice(), &[vec!["models".to_string()]]);
+
     let signed_out = create_agy_agent(Some(models_signed_out().arc()));
     assert!(
         !signed_out
             .is_available(&env_of(&[("HOME", &home_str)]))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !signed_out
+            .is_available(&env_of(&[("AGY_ADC_AUTH", "true")]))
             .await
             .unwrap()
     );
@@ -553,13 +644,23 @@ async fn checks_state_and_models_probe_for_availability() {
             .await
             .unwrap()
     );
+    assert!(
+        !missing_bin
+            .is_available(&env_of(&[("GEMINI_API_KEY", "test-key")]))
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
-async fn prepares_home_by_linking_skills_only_when_absent_and_never_fails_startup() {
+async fn prepares_home_with_skills_manifest_without_clobbering_user_config_or_failing_startup() {
     let dir = tempfile::tempdir().unwrap();
     let skills = dir.path().join("skills");
     std::fs::create_dir_all(&skills).unwrap();
+    let canonical_skills = std::fs::canonicalize(&skills)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     let home_str = home.to_string_lossy().into_owned();
@@ -573,26 +674,57 @@ async fn prepares_home_by_linking_skills_only_when_absent_and_never_fails_startu
         ..Default::default()
     };
 
-    // Nothing at `<home>/.gemini/config/skills` -> creates the link.
+    // Nothing at `<home>/.gemini/config/skills.json` -> writes the discovery manifest.
     let prepared = create_agy_agent(Some(environment.clone().arc()))
         .prepare_home()
         .await
         .unwrap();
     assert_eq!(prepared.config_dir, format!("{home_str}/.gemini/config"));
     assert!(prepared.skills_linked);
+    let manifest_path = home.join(".gemini/config/skills.json");
+    let manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
     assert_eq!(
-        std::fs::canonicalize(home.join(".gemini/config/skills")).unwrap(),
-        std::fs::canonicalize(&skills).unwrap()
+        manifest,
+        json!({ "entries": [{ "path": canonical_skills }] })
     );
+    // Does not create a symlink at `<home>/.gemini/config/skills`.
+    assert!(!home.join(".gemini/config/skills").exists());
 
-    // Calling again when the link already points at the runtime's skills reports true.
+    // Calling again when `skills.json` already references the runtime's skills reports true.
     let prepared_again = create_agy_agent(Some(environment.arc()))
         .prepare_home()
         .await
         .unwrap();
     assert!(prepared_again.skills_linked);
 
-    // An existing user-owned symlink (valid or dangling) is never replaced.
+    // An existing user-owned `~/.gemini/config/skills/` directory or symlink is left untouched
+    // and coexists alongside the generated `skills.json`.
+    let owned_home = dir.path().join("owned-home");
+    std::fs::create_dir_all(owned_home.join(".gemini/config/skills")).unwrap();
+    std::fs::write(owned_home.join(".gemini/config/skills/keep.txt"), "user").unwrap();
+    let owned_str = owned_home.to_string_lossy().into_owned();
+    let owned_env = FakeEnvironment {
+        paths: paths.clone(),
+        base_env: env_of(&[("HOME", &owned_str)]),
+        files: FakeFiles::local(),
+        ..Default::default()
+    };
+    let prepared_owned = create_agy_agent(Some(owned_env.arc()))
+        .prepare_home()
+        .await
+        .unwrap();
+    assert_eq!(
+        prepared_owned.config_dir,
+        format!("{owned_str}/.gemini/config")
+    );
+    assert!(prepared_owned.skills_linked);
+    assert_eq!(
+        std::fs::read_to_string(owned_home.join(".gemini/config/skills/keep.txt")).unwrap(),
+        "user"
+    );
+    assert!(owned_home.join(".gemini/config/skills.json").exists());
+
     #[cfg(unix)]
     {
         let user_skills = dir.path().join("user-skills");
@@ -612,57 +744,54 @@ async fn prepares_home_by_linking_skills_only_when_absent_and_never_fails_startu
             .prepare_home()
             .await
             .unwrap();
-        assert_eq!(
-            prepared_linked.config_dir,
-            format!("{linked_str}/.gemini/config")
-        );
-        assert!(!prepared_linked.skills_linked);
+        assert!(prepared_linked.skills_linked);
         assert_eq!(
             std::fs::canonicalize(&user_link).unwrap(),
             std::fs::canonicalize(&user_skills).unwrap()
         );
+        assert!(linked_home.join(".gemini/config/skills.json").exists());
 
-        let dangling_home = dir.path().join("dangling-home");
-        std::fs::create_dir_all(dangling_home.join(".gemini/config")).unwrap();
-        let dangling_link = dangling_home.join(".gemini/config/skills");
-        std::os::unix::fs::symlink(dir.path().join("removed-target"), &dangling_link).unwrap();
-        let dangling_str = dangling_home.to_string_lossy().into_owned();
-        let dangling_env = FakeEnvironment {
+        // If `<home>/.gemini/config/skills` already points at Prism's skills, skip writing `skills.json`.
+        let prelinked_home = dir.path().join("prelinked-home");
+        std::fs::create_dir_all(prelinked_home.join(".gemini/config")).unwrap();
+        std::os::unix::fs::symlink(&skills, prelinked_home.join(".gemini/config/skills")).unwrap();
+        let prelinked_str = prelinked_home.to_string_lossy().into_owned();
+        let prelinked_env = FakeEnvironment {
             paths: paths.clone(),
-            base_env: env_of(&[("HOME", &dangling_str)]),
+            base_env: env_of(&[("HOME", &prelinked_str)]),
             files: FakeFiles::local(),
             ..Default::default()
         };
-        let prepared_dangling = create_agy_agent(Some(dangling_env.arc()))
+        let prepared_prelinked = create_agy_agent(Some(prelinked_env.arc()))
             .prepare_home()
             .await
             .unwrap();
-        assert!(!prepared_dangling.skills_linked);
-        assert_eq!(
-            std::fs::read_link(&dangling_link).unwrap(),
-            dir.path().join("removed-target")
-        );
+        assert!(prepared_prelinked.skills_linked);
+        assert!(!prelinked_home.join(".gemini/config/skills.json").exists());
     }
 
-    // A real skills directory already owned by the user is never overwritten.
-    let owned_home = dir.path().join("owned-home");
-    std::fs::create_dir_all(owned_home.join(".gemini/config/skills")).unwrap();
-    let owned_str = owned_home.to_string_lossy().into_owned();
-    let owned_env = FakeEnvironment {
+    // An existing user-owned `skills.json` is never overwritten.
+    let custom_manifest_home = dir.path().join("custom-manifest-home");
+    std::fs::create_dir_all(custom_manifest_home.join(".gemini/config")).unwrap();
+    let custom_manifest = custom_manifest_home.join(".gemini/config/skills.json");
+    let custom_body = r#"{"entries":[{"path":"/someone/else/skills"}]}"#;
+    std::fs::write(&custom_manifest, custom_body).unwrap();
+    let custom_str = custom_manifest_home.to_string_lossy().into_owned();
+    let custom_env = FakeEnvironment {
         paths: paths.clone(),
-        base_env: env_of(&[("HOME", &owned_str)]),
+        base_env: env_of(&[("HOME", &custom_str)]),
         files: FakeFiles::local(),
         ..Default::default()
     };
-    let prepared_owned = create_agy_agent(Some(owned_env.arc()))
+    let prepared_custom = create_agy_agent(Some(custom_env.arc()))
         .prepare_home()
         .await
         .unwrap();
+    assert!(!prepared_custom.skills_linked);
     assert_eq!(
-        prepared_owned.config_dir,
-        format!("{owned_str}/.gemini/config")
+        std::fs::read_to_string(&custom_manifest).unwrap(),
+        custom_body
     );
-    assert!(!prepared_owned.skills_linked);
 
     // A blocked or unwritable `.gemini` path reports skills_linked: false instead of failing boot.
     let blocked_home = dir.path().join("blocked-home");
