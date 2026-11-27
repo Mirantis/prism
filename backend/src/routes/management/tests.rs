@@ -388,6 +388,56 @@ async fn answers_the_agent_identity() {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn stores_a_coalescing_window_and_refuses_one_out_of_range() {
+    let _db = crate::db::testing::test_db();
+    insert_agent();
+    for value in [json!(0), json!(601), json!(1.5), json!("30"), json!(true)] {
+        let res = send(
+            "POST",
+            "/agents/webhook-subscriptions",
+            Some(json!({ "name": "alerts", "authType": "none", "coalesceSeconds": value })),
+        )
+        .await;
+        assert_eq!(res.status, 400, "{value}");
+        assert_eq!(
+            res.json()["fieldErrors"]["coalesceSeconds"],
+            "coalesceSeconds must be a whole number of seconds from 1 to 600"
+        );
+    }
+
+    let res = send(
+        "POST",
+        "/agents/webhook-subscriptions",
+        Some(json!({ "name": "alerts", "authType": "none", "coalesceSeconds": 30 })),
+    )
+    .await;
+    assert_eq!(res.status, 201, "{}", res.text());
+    let created = res.json();
+    assert_eq!(created["coalesceSeconds"], 30);
+    let id = created["id"].as_str().unwrap().to_string();
+    let uri = format!("/agents/webhook-subscriptions/{id}");
+
+    let res = send("PATCH", &uri, Some(json!({ "description": "ops" }))).await;
+    assert_eq!(res.json()["coalesceSeconds"], 30);
+    let res = send("PATCH", &uri, Some(json!({ "coalesceSeconds": 601 }))).await;
+    assert_eq!(res.status, 400);
+    let res = send("PATCH", &uri, Some(json!({ "coalesceSeconds": 600 }))).await;
+    assert_eq!(res.json()["coalesceSeconds"], 600);
+    let res = send("PATCH", &uri, Some(json!({ "coalesceSeconds": null }))).await;
+    assert_eq!(res.status, 200);
+    assert_eq!(res.json()["coalesceSeconds"], Value::Null);
+
+    let res = send(
+        "POST",
+        "/agents/webhook-subscriptions",
+        Some(json!({ "name": "builds", "authType": "none" })),
+    )
+    .await;
+    assert_eq!(res.json()["coalesceSeconds"], Value::Null);
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn creates_lists_and_deletes_a_webhook_subscription() {
     let _db = crate::db::testing::test_db();
     insert_agent();
