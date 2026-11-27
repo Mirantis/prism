@@ -1,7 +1,27 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render } from 'ink-testing-library';
 import { Input } from './Input.js';
+
+// Ink commits the cursor move before the next key reads it.
+const press = async (stdin: { write: (data: string) => void }, ...keys: string[]) => {
+  for (const key of keys) {
+    stdin.write(key);
+    await new Promise((r) => setImmediate(r));
+  }
+};
+
+// The cursor starts at the end of `value`. After `keys`, an `X` is typed, and the
+// value it gives shows where the cursor was.
+const typeAfter = async (value: string, keys: string[]) => {
+  const onChange = vi.fn();
+  const { stdin, unmount } = render(
+    <Input value={value} onChange={onChange} onSubmit={vi.fn()} />,
+  );
+  await press(stdin, ...keys, 'X');
+  unmount();
+  return onChange.mock.calls.at(-1)?.[0];
+};
 
 describe('Input', () => {
   it('renders the prompt glyph and the current value', () => {
@@ -53,5 +73,33 @@ describe('Input', () => {
       <Input value="abc" onChange={vi.fn()} onSubmit={vi.fn()} hideCursor />,
     );
     expect(lastFrame() ?? '').toContain('abc');
+  });
+
+  describe('cursor', () => {
+    it('stays at the start when Left is pressed there', async () => {
+      const left = '\x1b[D';
+      expect(await typeAfter('abc', [left, left, left, left])).toBe('Xabc');
+    });
+
+    it('keeps the cursor after the text it inserts', async () => {
+      const onChange = vi.fn();
+      const Harness = () => {
+        const [value, setValue] = useState('');
+        return (
+          <Input
+            value={value}
+            onChange={(next) => {
+              onChange(next);
+              setValue(next);
+            }}
+            onSubmit={vi.fn()}
+          />
+        );
+      };
+      const { stdin, unmount } = render(<Harness />);
+      await press(stdin, 'one', '\n', 'two');
+      expect(onChange).toHaveBeenLastCalledWith('one\ntwo');
+      unmount();
+    });
   });
 });
