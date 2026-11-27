@@ -74,10 +74,9 @@ function lineStarts(rendered: string): number[] {
 }
 
 /**
- * The offset where each drawn row of `rendered` starts. Ink 8 wraps a `Text`
- * with wrap-ansi 10, the range `cli/package.json` requires, and these options, which insert `\n` at each soft break. They also
- * expand a tab and fold `\r\n`, and a value that has either gets one row per
- * line instead.
+ * The offset where each drawn row of `rendered` starts. Ink 8 wraps a `Text` with wrap-ansi
+ * and these options. Keep the cli's wrap-ansi range equal to Ink's. A tab or a `\r\n` changes
+ * the text before Ink wraps it, so a value that has either gets one row per line.
  */
 function rowStarts(rendered: string, width: number): number[] {
   if (width <= 0) return lineStarts(rendered);
