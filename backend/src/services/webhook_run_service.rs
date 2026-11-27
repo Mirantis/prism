@@ -188,6 +188,15 @@ pub struct WebhookRunPage {
     pub next_cursor: Option<String>,
 }
 
+/// Where the run of an event stood when a restart interrupted it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Interrupted {
+    /// The run had not started, so it still took events.
+    Queued,
+    /// The run had started, led by the event `lead`.
+    Started { lead: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AcceptedEvent {
@@ -412,40 +421,43 @@ impl WebhookRunService {
     }
 
     /// Put a run a restart interrupted back in the queue, and record one the restart
-    /// cut off before its row was written. False when the run already finished, so
+    /// cut off before its row was written. `None` when the run already finished, so
     /// there is nothing to run again.
-    pub async fn requeue(&self, event: &AcceptedEvent) -> anyhow::Result<bool> {
+    pub async fn requeue(&self, event: &AcceptedEvent) -> anyhow::Result<Option<Interrupted>> {
         let run_id = event.id.clone();
-        let count = crate::db::run(move |conn| {
-            Ok(diesel::update(
-                wr::webhook_runs
+        let found = crate::db::run(move |conn| {
+            conn.transaction(|conn| {
+                let row: Option<(String, Option<String>)> = wr::webhook_runs
                     .filter(wr::id.eq(&run_id))
-                    .filter(wr::status.eq_any(unfinished())),
-            )
-            .set((
-                wr::status.eq(WebhookRunStatus::Queued.as_str()),
-                wr::coalesced_into.eq(None::<String>),
-            ))
-            .execute(conn)?)
+                    .select((wr::status, wr::coalesced_into))
+                    .first(conn)
+                    .optional()?;
+                if row
+                    .as_ref()
+                    .is_some_and(|(status, _)| unfinished().contains(&status.as_str()))
+                {
+                    diesel::update(wr::webhook_runs.filter(wr::id.eq(&run_id)))
+                        .set((
+                            wr::status.eq(WebhookRunStatus::Queued.as_str()),
+                            wr::coalesced_into.eq(None::<String>),
+                        ))
+                        .execute(conn)?;
+                }
+                Ok(row)
+            })
         })
         .await?;
-        if count > 0 {
-            return Ok(true);
-        }
-        let run_id = event.id.clone();
-        let finished = crate::db::run(move |conn| {
-            Ok(wr::webhook_runs
-                .filter(wr::id.eq(&run_id))
-                .select(wr::id)
-                .first::<String>(conn)
-                .optional()?)
+        let Some((status, coalesced_into)) = found else {
+            self.insert(event, WebhookRunStatus::Queued).await?;
+            return Ok(Some(Interrupted::Queued));
+        };
+        Ok(match WebhookRunStatus::parse(&status) {
+            Some(WebhookRunStatus::Queued) => Some(Interrupted::Queued),
+            Some(WebhookRunStatus::Running) => Some(Interrupted::Started {
+                lead: coalesced_into.unwrap_or_else(|| event.id.clone()),
+            }),
+            _ => None,
         })
-        .await?;
-        if finished.is_some() {
-            return Ok(false);
-        }
-        self.insert(event, WebhookRunStatus::Queued).await?;
-        Ok(true)
     }
 
     /// A run still queued or running at boot was cut off by the restart. Fails every
@@ -839,11 +851,14 @@ mod tests {
                 .unwrap();
         }
         WEBHOOK_RUN_SERVICE.start(&ids(&["lead", "second"])).await;
-        assert!(
+        assert_eq!(
             WEBHOOK_RUN_SERVICE
                 .requeue(&event(&fixture, "second"))
                 .await
-                .unwrap()
+                .unwrap(),
+            Some(Interrupted::Started {
+                lead: "lead".into()
+            })
         );
         let requeued = run("second").await.unwrap();
         assert_eq!(requeued.status, "queued");
@@ -1010,24 +1025,36 @@ mod tests {
             )
             .await;
 
-        assert!(
+        assert_eq!(
             WEBHOOK_RUN_SERVICE
                 .requeue(&event(&fixture, "run-3"))
                 .await
-                .unwrap()
+                .unwrap(),
+            Some(Interrupted::Started {
+                lead: "run-3".into()
+            })
         );
         assert_eq!(run("run-3").await.unwrap().status, "queued");
-        assert!(
-            !WEBHOOK_RUN_SERVICE
+        assert_eq!(
+            WEBHOOK_RUN_SERVICE
+                .requeue(&event(&fixture, "run-3"))
+                .await
+                .unwrap(),
+            Some(Interrupted::Queued)
+        );
+        assert_eq!(
+            WEBHOOK_RUN_SERVICE
                 .requeue(&event(&fixture, "run-done"))
                 .await
-                .unwrap()
+                .unwrap(),
+            None
         );
-        assert!(
+        assert_eq!(
             WEBHOOK_RUN_SERVICE
                 .requeue(&event(&fixture, "run-unwritten"))
                 .await
-                .unwrap()
+                .unwrap(),
+            Some(Interrupted::Queued)
         );
         assert_eq!(run("run-unwritten").await.unwrap().status, "queued");
     }
