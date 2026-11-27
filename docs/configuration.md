@@ -130,7 +130,6 @@ grouped per platform.
 | `OPENAI_BASE_URL` | **(OpenAI)** Override the chat/embeddings endpoint (must serve the Responses API). Does not move the voice-meeting Realtime WebSocket. |
 | `OPENROUTER_API_KEY` | **(OpenRouter)** API key, sent as a bearer header. Required for direct mode only — through the Mirantis Agent Platform gateway it holds the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `OPENROUTER_BASE_URL` | **(OpenRouter)** Override the chat/embeddings endpoint (must serve the Responses API). Defaults to `https://openrouter.ai/api/v1`. |
-| `OPENROUTER_APP_URL` / `OPENROUTER_APP_TITLE` | **(OpenRouter)** The app OpenRouter credits this agent's usage to, shown in its public rankings under the `personal-agent` category. Set both to show a product that runs Prism under its own name. Defaults to `https://github.com/Mirantis/prism` and `Prism`. |
 | `ANTHROPIC_API_KEY` | **(Anthropic)** API key, sent as the `x-api-key` header. Always required — this platform is direct-only, so there is no gateway mode to hold the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `ANTHROPIC_BASE_URL` | **(Anthropic)** Override the chat endpoint (must end at `/v1`). |
 | `LITELLM_API_KEY` | **(LiteLLM)** LiteLLM key, sent as the `x-api-key` header. Required for direct mode only — through the Mirantis Agent Platform gateway it holds the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
@@ -564,6 +563,8 @@ defines**.
 | `OPENROUTER_MODEL_ID` | **(OpenRouter)** Main model, as `vendor/model` — OpenRouter addresses every model that way, so a bare `gpt-5.6-sol` is not one it can route. The default mirrors the OpenAI tier so the provider's GPT-5.x parameter handling stays valid; point it at another vendor (`google/gemini-3-pro`, `deepseek/deepseek-v3.2`, `anthropic/claude-sonnet-5`) and those assumptions may not hold. | `openai/gpt-6.2-sol` |
 | `OPENROUTER_CLASSIFICATION_MODEL_ID` | **(OpenRouter)** Fast `vendor/model` for classification gates, under the same parameter caveat as the OpenAI one. | `openai/gpt-5.6-luna` |
 | `OPENROUTER_EMBEDDING_MODEL_ID` | **(OpenRouter)** Embedding model, as `vendor/model`. **Off by default**, unlike the other platforms: OpenRouter routes embedding models from several vendors whose native dimensionalities differ, and the memory index is fixed at 1024 dims — so there is no id that is right by default. Name one that can deliver 1024 (`openai/text-embedding-3-small` truncates to it) to switch memory embeddings on. | `''` (disabled) |
+| `OPENROUTER_APP_URL` | **(OpenRouter)** The app OpenRouter credits this agent's usage to in its public rankings. Set it to show a product that runs Prism under its own name. | `https://github.com/Mirantis/prism` |
+| `OPENROUTER_APP_TITLE` | **(OpenRouter)** That app's name in the rankings. Used only together with `OPENROUTER_APP_URL`. | `Prism` |
 | `ANTHROPIC_MODEL_ID` | **(Anthropic)** Main model (the agent's reasoning loop) | `claude-opus-5` |
 | `ANTHROPIC_CLASSIFICATION_MODEL_ID` | **(Anthropic)** Fast model for classification gates | `claude-haiku-5-5` |
 | `LITELLM_MODEL_ID` | **(LiteLLM)** Main model, as your proxy names it | `claude-opus-5-5` |

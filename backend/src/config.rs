@@ -546,7 +546,7 @@ pub struct Config {
     /// The app OpenRouter attributes this deployment's usage to: its URL is the
     /// app's id, its title the name in OpenRouter's rankings.
     pub openrouter_app_url: String,
-    pub openrouter_app_title: String,
+    pub openrouter_app_title: Option<String>,
 
     /// Anthropic (used when LLM_PROVIDER=anthropic): direct to api.anthropic.com
     /// (or `anthropic_base_url`), the one vendor with no gateway mount, so
@@ -1095,9 +1095,26 @@ impl Config {
         let openrouter_embedding_model_id = e.get_or("OPENROUTER_EMBEDDING_MODEL_ID", "");
         let openrouter_override = e.or("OPENROUTER_BASE_URL").map(str::to_string);
         let openrouter_api_key = e.get("OPENROUTER_API_KEY").map(str::to_string);
-        let openrouter_app_url =
-            e.or_default("OPENROUTER_APP_URL", "https://github.com/Mirantis/prism");
-        let openrouter_app_title = e.or_default("OPENROUTER_APP_TITLE", "Prism");
+        // The URL is the app's id, so a title applies only to an app of the
+        // operator's own: one alone would rename Prism's app page.
+        let (openrouter_app_url, openrouter_app_title) = match e.or("OPENROUTER_APP_URL") {
+            Some(url) => (
+                url.to_string(),
+                e.or("OPENROUTER_APP_TITLE").map(str::to_string),
+            ),
+            None => {
+                if e.or("OPENROUTER_APP_TITLE").is_some() {
+                    warn(
+                        json!({ "variable": "OPENROUTER_APP_TITLE" }),
+                        "[Startup] OPENROUTER_APP_TITLE needs OPENROUTER_APP_URL; using Prism's app",
+                    );
+                }
+                (
+                    "https://github.com/Mirantis/prism".to_string(),
+                    Some("Prism".to_string()),
+                )
+            }
+        };
         // Must serve the Responses API. Does not move the Realtime WebSocket.
         let openai_override = e.or("OPENAI_BASE_URL").map(str::to_string);
 

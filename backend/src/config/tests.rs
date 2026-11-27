@@ -1796,3 +1796,19 @@ fn warns_about_an_unknown_coding_agent() {
         Some(CodingAgentName::Agy)
     );
 }
+
+#[test]
+fn warns_about_an_openrouter_title_without_its_url() {
+    let (cfg, warnings) = load_with_warnings(&[("OPENROUTER_APP_TITLE", "Example Product")]);
+    let cfg = cfg.unwrap();
+    assert_eq!(cfg.openrouter_app_url, "https://github.com/Mirantis/prism");
+    assert_eq!(cfg.openrouter_app_title.as_deref(), Some("Prism"));
+    assert_eq!(
+        warnings,
+        vec![(
+            json!({ "variable": "OPENROUTER_APP_TITLE" }),
+            "[Startup] OPENROUTER_APP_TITLE needs OPENROUTER_APP_URL; using Prism's app"
+                .to_string()
+        )]
+    );
+}

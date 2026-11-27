@@ -75,21 +75,19 @@ fn open_router_options(config: &Config, base_url: &str) -> OpenAiCompatibleOptio
 
 /// OpenRouter's app attribution headers (openrouter.ai/docs/app-attribution).
 /// The referer is the app's id; without it OpenRouter creates no app page.
-pub fn open_router_attribution_headers(config: &Config) -> IndexMap<String, String> {
-    IndexMap::from([
-        (
-            "HTTP-Referer".to_string(),
-            config.openrouter_app_url.clone(),
-        ),
-        (
-            "X-OpenRouter-Title".to_string(),
-            config.openrouter_app_title.clone(),
-        ),
-        (
-            "X-OpenRouter-Categories".to_string(),
-            "personal-agent".to_string(),
-        ),
-    ])
+pub(crate) fn open_router_attribution_headers(config: &Config) -> IndexMap<String, String> {
+    let mut headers = IndexMap::from([(
+        "HTTP-Referer".to_string(),
+        config.openrouter_app_url.clone(),
+    )]);
+    if let Some(title) = &config.openrouter_app_title {
+        headers.insert("X-OpenRouter-Title".to_string(), title.clone());
+    }
+    headers.insert(
+        "X-OpenRouter-Categories".to_string(),
+        "personal-agent".to_string(),
+    );
+    headers
 }
 
 /// The settings OpenRouter still needs, by variable name; empty when it can serve
@@ -116,7 +114,14 @@ fn missing_open_router_settings_in(config: &Config) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use bytes::Bytes;
+    use parking_lot::Mutex;
+
     use super::*;
+    use crate::ai::providers::openai::api::{FetchFunction, FetchResponse};
+    use crate::ai::{GenerateTextOptions, Prompt, generate_text};
     use crate::lib::llm_providers::llm_provider::{
         ClassificationSamplingParams, provider_options_json,
     };
@@ -177,6 +182,61 @@ mod tests {
         ]));
         assert_eq!(headers["HTTP-Referer"], "https://example-product.example");
         assert_eq!(headers["X-OpenRouter-Title"], "Example Product");
+    }
+
+    #[test]
+    fn a_title_alone_keeps_prisms_app() {
+        let headers = open_router_attribution_headers(&config(&[(
+            "OPENROUTER_APP_TITLE",
+            "Example Product",
+        )]));
+        assert_eq!(headers, open_router_attribution_headers(&with_key()));
+    }
+
+    #[test]
+    fn a_url_alone_sends_no_title() {
+        let headers = open_router_attribution_headers(&config(&[(
+            "OPENROUTER_APP_URL",
+            "https://example-product.example",
+        )]));
+        assert_eq!(headers["HTTP-Referer"], "https://example-product.example");
+        assert!(!headers.contains_key("X-OpenRouter-Title"));
+    }
+
+    #[tokio::test]
+    async fn every_chat_request_sends_the_attribution_headers() {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let sink = sent.clone();
+        let fetch: FetchFunction = Arc::new(move |request| {
+            sink.lock().push(request.headers);
+            let response = FetchResponse {
+                status: 400,
+                status_text: "Bad Request".to_string(),
+                headers: Default::default(),
+                body: Bytes::from_static(b"{}"),
+            };
+            Box::pin(async move { Ok(response) })
+        });
+        let config = config(&[
+            ("OPENROUTER_API_KEY", "sk-or-test"),
+            ("OPENROUTER_APP_URL", "https://example-product.example"),
+            ("OPENROUTER_APP_TITLE", "Example Product"),
+        ]);
+        let provider = create_open_ai_compatible_provider(OpenAiCompatibleOptions {
+            fetch: Some(fetch),
+            ..open_router_options(&config, OPENROUTER_DIRECT)
+        });
+        let mut options = GenerateTextOptions::new(provider.model("openai/gpt-6.2-sol").unwrap());
+        options.prompt = Some(Prompt::Text("hi".into()));
+        options.max_retries = Some(0);
+        assert!(generate_text(options).await.is_err());
+
+        let sent = sent.lock();
+        assert_eq!(sent.len(), 1);
+        for (name, value) in open_router_attribution_headers(&config) {
+            // The SDK sends header names lowercased.
+            assert_eq!(sent[0].get(&name.to_lowercase()), Some(&value), "{name}");
+        }
     }
 
     #[test]
