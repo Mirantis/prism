@@ -4,24 +4,35 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-fn median(values: &[f64]) -> f64 {
+/// The value at fraction `p` of the sorted values (0.5 the median, 0.99 the 99th percentile).
+pub fn percentile(values: &[f64], p: f64) -> f64 {
     let mut v = values.to_vec();
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     if v.is_empty() {
         return 0.0;
     }
-    v[v.len() / 2]
+    v[((v.len() - 1) as f64 * p).round() as usize]
 }
 
-pub fn print(files: &[PathBuf]) -> anyhow::Result<()> {
+fn median(values: &[f64]) -> f64 {
+    percentile(values, 0.5)
+}
+
+/// The result files, and each one's build name.
+pub fn load(files: &[PathBuf]) -> anyhow::Result<(Vec<Value>, Vec<String>)> {
     let runs: Vec<Value> = files
         .iter()
         .map(|f| Ok(serde_json::from_str(&std::fs::read_to_string(f)?)?))
         .collect::<anyhow::Result<_>>()?;
-    let names: Vec<String> = runs
+    let names = runs
         .iter()
         .map(|r| r["name"].as_str().unwrap_or("?").to_string())
         .collect();
+    Ok((runs, names))
+}
+
+pub fn print(files: &[PathBuf]) -> anyhow::Result<()> {
+    let (runs, names) = load(files)?;
 
     println!("| Metric | {} |", names.join(" | "));
     println!(

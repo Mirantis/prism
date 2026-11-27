@@ -1,6 +1,6 @@
-# prism-cli
+# prism
 
-Standalone Ink-based terminal UI for Prism Agent. Talks to an `agent-runtime`
+The terminal UI for Prism Agent, a Rust binary. It talks to an `agent-runtime`
 over WebSocket and REST. There is no auth — the CLI is intended for
 local-dev only.
 
@@ -12,7 +12,7 @@ local-dev only.
 npm start
 
 # 2. In another terminal, start the CLI.
-npm run dev --workspace=prism-cli
+npm run dev:tui
 ```
 
 The runtime owns the `agentId` / `userId` server-side; the CLI sends
@@ -58,16 +58,12 @@ disk. There is no separate `PRISM_WS_URL`.
 ## Commands
 
 ```bash
-# Run in dev (no build step, via tsx)
-npm run dev --workspace=prism-cli
+# Build and run (arguments after `--` go to prism, e.g. `-- --resume`)
+cargo run --manifest-path cli/Cargo.toml --
 
-# Compile to dist/
-npm run build --workspace=prism-cli
+# The release binary, at cli/target/release/prism
+cargo build --release --manifest-path cli/Cargo.toml
 
-# Run the compiled output
-npm run start --workspace=prism-cli
+# Unit tests
+cargo test --manifest-path cli/Cargo.toml
 ```
-
-After `npm run build`, the `dist/index.js` is the CLI entry point and the
-`bin` field exposes it as `prism`, so a global `npm link` makes it
-runnable as `prism` on PATH.

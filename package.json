@@ -6,14 +6,13 @@
   "main": "dist/index.js",
   "workspaces": [
     "web",
-    "cli",
     "e2e"
   ],
   "scripts": {
     "db:migrate": "prisma migrate dev --schema=prisma/sqlite/schema.prisma",
     "dev": "cargo run --manifest-path backend/Cargo.toml --bin prism-server",
     "dev:web": "npm --workspace=prism-agent-web run dev",
-    "dev:tui": "npm --workspace=prism-cli run dev",
+    "dev:tui": "cargo run --manifest-path cli/Cargo.toml --",
     "dev:single": "cargo run --manifest-path backend/Cargo.toml --bin prism-server -- apply-pending-import && concurrently --kill-others-on-exit --prefix \"[{name}]\" --names \"backend,web\" --prefix-colors \"cyan,green\" \"npm run dev\" \"npm run dev:web\"",
     "build": "cargo build --release --manifest-path backend/Cargo.toml --bin prism-server && npm run build:web",
     "build:web": "npm --workspace=prism-agent-web run build",
@@ -90,11 +89,9 @@
     "@types/ws": "^8.18.2",
     "@vitest/coverage-v8": "^5.0.3",
     "concurrently": "^10.0.6",
-    "esbuild": "^0.28.2",
     "husky": "^9.1.7",
     "markdownlint-cli2": "^0.23.3",
     "oxlint": "^1.87.0",
-    "postject": "^1.0.0-alpha.6",
     "supertest": "^7.3.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",

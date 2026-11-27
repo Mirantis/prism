@@ -2,8 +2,8 @@
  * E2E: the remaining-context indicator in the prism-cli status bar.
  *
  * Terminal assertions here are deliberately **presence-only**. `session.output()`
- * is the whole accumulated PTY stream and the status bar is not an Ink `<Static>`,
- * so every re-render appends another copy of the bar — counting occurrences, or
+ * is the whole accumulated PTY stream, so a repaint can append another copy of
+ * the bar — counting occurrences, or
  * asserting a single exact percentage, is meaningless. A regex match for the
  * shape is the strongest safe terminal claim.
  *

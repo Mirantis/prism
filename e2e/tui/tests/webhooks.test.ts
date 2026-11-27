@@ -4,7 +4,7 @@
  * Subscriptions are seeded and read back through the runtime's REST API. The
  * editor is a shell script that writes a known prompt, which keeps the hand-off
  * deterministic while still running the real path: the panel stays mounted,
- * Ink releases the terminal, and the form reads the edited file back.
+ * the TUI releases the terminal, and the form reads the edited file back.
  */
 
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';

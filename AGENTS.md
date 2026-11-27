@@ -312,7 +312,8 @@ live in `e2e/`:
   and real Bedrock. Run via `npm run test --workspace=prism-agent-e2e`.
 - **CLI/TUI**: Gherkin `.feature` files in `e2e/tui/features/` bound with
   `@amiceli/vitest-cucumber` (runs on vitest) in `e2e/tui/tests/`, driving
-  `prism-cli` under a `node-pty` PTY against a real runtime. The runtime + PTY
+  the `prism` binary (`cli/target/release/prism`, or `PRISM_CLI_BIN`) under a
+  `node-pty` PTY against a real runtime. The runtime + PTY
   lifecycle is wired through the `BeforeAllScenarios`/`BeforeEachScenario`/
   `AfterEachScenario`/`AfterAllScenarios` hooks; shared steps go through
   `defineSteps`. Run via `npm run test:e2e:tui --workspace=prism-agent-e2e`.
@@ -432,8 +433,8 @@ somebody adds a caller.
 
 ## Code conventions
 
-- **One component per file.** Each React (`web/`) and Ink (`cli/`) component
-  lives in its own file named for the component (kebab-case, e.g.
+- **One component per file.** Each React (`web/`) component and each
+  terminal UI (`cli/`) screen or component lives in its own file named for the component (kebab-case, e.g.
   `model-field.tsx`), not several components sharing a module. A component's
   small private helpers may stay in its file; shared ones move to a module.
 - **No Jira issue keys in code.** Never reference Jira tickets (e.g.
@@ -480,7 +481,7 @@ code and docs (`backend/src/prompts/meeting_prompt.rs`, `docs/voice-meetings.md`
 - **No personification.** Code, files, tests, PRs and rooms do not prove,
   know, learn, admit, want or decide. Attribute the action to a person or to a
   measurement. Write "two calls in the same room measured it", not "a room
-  proved it". Write "`build-sea.mjs` sets it", not "the file says so".
+  proved it". Write "`build-binaries.sh` sets it", not "the file says so".
 - **No rhetorical scaffolding.** Drop "Why bother.", "It's not X, it's Y",
   "not just X but Y", rule-of-three flourishes, and the one-line paragraph for
   drama. Use a comma or a full stop where an em-dash aside would work. Do not
@@ -533,8 +534,7 @@ code and docs (`backend/src/prompts/meeting_prompt.rs`, `docs/voice-meetings.md`
   engineer writing a specification would use those words. If the sentence
   reads as an attempt to sound impressive, rewrite it.
 
-A real example. "Before" is the `UNBUNDLABLE` comment in
-`scripts/build-sea.mjs` as it stands today. "After" is the rewrite these rules
+A real example from a build-script comment. "After" is the rewrite these rules
 ask for:
 
 ```text
@@ -579,26 +579,20 @@ vendor. These rules hold across vendors:
 - Voice Realtime selects its endpoint and credential together, and a connection
   error never triggers provider failover.
 
-## The `prism` binary — Node 22 pin
+## The `prism` binary
 
 The runtime, `prism-server`, is the Rust binary built from `backend/`. The
-terminal UI, `prism`, is a Node Single Executable Application (SEA) built by
-`scripts/build-sea.mjs` (workflow `create-binary.yml`, called from
-`release-production.yml`), and that build is pinned to **Node 22**. Do not bump
-it to 23 or later without changing the bundle loader.
+terminal UI, `prism`, is the Rust binary built from `cli/`, a crate of its own
+(`cargo build --release` in `cli/`). `scripts/build-binaries.sh` builds both for a
+release.
 
-The reason: ink and yoga use top-level await, so the bundle is ESM, and the SEA's
-CommonJS stub extracts it to a temp file and imports it with `import()`. From Node
-23 on, that throws `ERR_UNKNOWN_BUILTIN_MODULE`, as the
-[Node SEA docs](https://nodejs.org/api/single-executable-applications.html) state:
-
-> Attempting to use `import()` to load modules from the file system will
-> throw an error.
-
-`module.createRequire()` does not help, because `require()` of an ESM bundle with
-top-level await fails with `ERR_REQUIRE_ASYNC_MODULE`. To lift the pin, rewrite
-the external imports as `createRequire(execPath)` calls (likely an esbuild plugin)
-and set the SEA config to `mainFormat: "module"`.
+The TUI draws its frame in place under the shell's history, and the frame is a
+pure function of the session's state (`cli/src/app/view.rs`). Its layout follows
+the flexbox rules the screens were designed with: text wraps at its box's width,
+a row child shrinks in proportion to its width, and each line is trimmed. A new
+frame rewrites only the lines that changed (`cli/src/term/renderer.rs`), so the
+PTY stream an e2e test reads holds each change, not each whole frame:
+`waitForFrame` matches the stream or the screen as a terminal draws it.
 
 ## Local development
 
@@ -706,7 +700,7 @@ locally.
    (`lib/sqlite_bootstrap.rs`).
 
 2. **Exposes a Management API** (`/agents/*`) consumed by its local
-   clients — the bundled web SPA and `prism-cli` (not a backend): chat and
+   clients — the bundled web SPA and `prism`, the terminal UI (not a backend): chat and
    thread/message CRUD, heartbeat start/stop/trigger + status, cron
    schedule/unschedule, Slack link/verification codes + mapping queries and
    mutations, and skills list/run. The Slack and Teams routes are in
@@ -1055,8 +1049,8 @@ Every chat-socket send names its thread — protocol v2 rejects one without — 
 mid-turn message always has a thread to be offered to.
 
 **Reachable from all three surfaces.** Slack gates nothing. The TUI composer
-stays live for the whole turn — the in-flight spinner moved out of the input box
-into `SpinnerRow`, above it — so Enter sends into the running turn. The **web**
+stays live for the whole turn, with the in-flight spinner on its own row above it
+(`cli/src/ui/spinner.rs`), so Enter sends into the running turn. The **web**
 composer shows stop *next to* send while `isPending` rather than swapping them,
 and `isDisabled` (`web/src/components/chat/ChatInput.tsx`) no longer folds in `isPending`, which is what
 re-opens its Enter path too. Send keeps the rightmost slot in both states so its
@@ -1066,13 +1060,8 @@ socket that is down disables send and stop alike rather than accepting a click
 already sent a `threadId`, which is the gateway's only precondition for offering
 a message to a live turn.
 
-Keeping the TUI composer mounted for a whole turn cost one thing worth knowing.
-Ink dispatches `useInput` handlers child-before-parent, so the text input sees a
-Ctrl chord before `App` does, and `ink-text-input` only filtered Ctrl+C — Ctrl+O
-inserted a literal `o`. The old spinner/input swap remounted the child on every
-turn boundary and re-registered it last, which accidentally masked that. The
-composer is now `cli/src/components/TextInput.tsx`, a small vendored fork that
-ignores every Ctrl chord, so the ordering no longer matters.
+The TUI composer (`cli/src/ui/text_input.rs`) ignores every Ctrl chord, so Ctrl+O
+and Ctrl+C reach the session's own bindings and never type a letter into a draft.
 
 **Trailing-user tripwire.** `warn_on_trailing_assistant()` (in `invoke.rs`) runs
 before every `generate_text` call — initial, per-step, and early-stopping — and
@@ -1252,8 +1241,8 @@ reachable at two URLs:
   the shipped terminal UI, whose binary calls that URL.
 - The web Profile page's **Agent** tab
   (`web/src/components/profile/document-editor.tsx`, one component for all seven
-  tabs) calls the first; the TUI's `/agent-guide` (`cli/src/commands/agent-guide.ts`,
-  which opens `$EDITOR` via `cli/src/editor.ts`) calls the alias.
+  tabs) calls the first; the TUI's `/agent-guide` (`cli/src/commands/settings.rs`,
+  which opens `$EDITOR` via `cli/src/editor.rs`) calls the alias.
 
 Locked-in mode does not cover it — that lock withholds the agent's own writers,
 and there is none here — so the editors keep working while the lock is on. That
@@ -1361,7 +1350,7 @@ frontmatter with required `name` + `description`, optional `scripts/`/
   workspace winning a name clash (project > personal, like Claude Code):
   - **Global** — `<DATA>/skills`, the persistent data dir resolved by
     `backend/src/lib/data_dir.rs`: `/data` inside the container, `~/.prism` outside
-    (local dev, SEA binary), overridable via `PRISM_DATA_DIR` (or
+    (local dev, standalone install), overridable via `PRISM_DATA_DIR` (or
     `PRISM_SKILLS_DIR`). One physical copy — no duplicates.
   - **Workspace** — the repo the CLI was started in: `<workspaceRoot>/.claude/skills`
     and `<workspaceRoot>/.agents/skills` (`.claude` wins over `.agents`). The
@@ -1394,7 +1383,7 @@ frontmatter with required `name` + `description`, optional `scripts/`/
   the CLI), which dispatches an ordinary chat turn so the reply streams over the
   WebSocket channel — automatic (model-chosen) invocation uses the same `skill`
   tool. The slash command is parsed client-side (web `SlashCommand` registry /
-  TUI `commands.ts`) and calls REST; the conversation engine never parses it.
+  TUI `cli/src/commands/`) and calls REST; the conversation engine never parses it.
 - **Installation is out of band.** Drop bundles into `<DATA>/skills` directly,
   or install with the standard CLI, e.g.
   `npx skills add <source> -g -a claude-code --copy` (writes into the

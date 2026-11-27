@@ -77,7 +77,7 @@ cp -R "$DIST/web" "$PRISM_HOME/web"
 # License, attribution and third-party notices. Guarded because a dist-sea/
 # built without scripts/build-binaries.sh has none.
 # A release archive always has them: the cp in scripts/build-binaries.sh runs
-# under `set -e`, and scripts/smoke-sea.mjs checks all three on four platforms.
+# under `set -e`, and scripts/smoke-binaries.mjs checks all three on four platforms.
 for f in LICENSE NOTICE THIRD_PARTY_NOTICES; do
   if [ -f "$DIST/$f" ]; then cp "$DIST/$f" "$PRISM_HOME/$f"; fi
 done

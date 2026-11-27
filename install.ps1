@@ -148,7 +148,7 @@ try {
   # built without scripts/build-binaries.sh has none, and
   # $ErrorActionPreference = 'Stop' makes an unguarded copy of a missing file throw.
   # A release archive always has them: the cp in scripts/build-binaries.sh runs
-  # under `set -e`, and scripts/smoke-sea.mjs checks all three on four platforms.
+  # under `set -e`, and scripts/smoke-binaries.mjs checks all three on four platforms.
   foreach ($f in 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES') {
     $src = Join-Path $dist $f
     if (Test-Path $src) { Copy-Item -Path $src -Destination (Join-Path $PrismHome $f) -Force }

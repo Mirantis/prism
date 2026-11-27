@@ -101,9 +101,9 @@ A call matches a recording only when everything the model receives is the same, 
 
 ## TUI (CLI) tests
 
-The `prism-cli` end-to-end tests live in `tui/` and are **separate** from the
-Playwright web suite. They drive the CLI under a real `node-pty` PTY against a
-live agent-runtime, and are written in Gherkin via
+The terminal UI's end-to-end tests live in `tui/` and are **separate** from the
+Playwright web suite. They drive the `prism` binary under a real `node-pty` PTY
+against a live agent-runtime, and are written in Gherkin via
 [`@amiceli/vitest-cucumber`](https://www.npmjs.com/package/@amiceli/vitest-cucumber)
 (which runs on vitest, so the `node-pty` harness and config are preserved):
 
@@ -115,10 +115,11 @@ live agent-runtime, and are written in Gherkin via
   `defineSteps`.
 
 ```bash
+cargo build --release --manifest-path cli/Cargo.toml   # the binary the suite drives
 npm run test:e2e:tui --workspace=prism-agent-e2e
 ```
 
-These need Node 24+ and (for the chat/tool-call/file scenarios) AWS/Bedrock
+`PRISM_CLI_BIN` names another build of `prism`. These need Node 24+ and (for the chat/tool-call/file scenarios) AWS/Bedrock
 credentials in the shell. Boot, slash-command, panel, and management-command
 scenarios don't call the LLM.
 

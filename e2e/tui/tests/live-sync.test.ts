@@ -6,16 +6,14 @@
  * replaces it by id, so the terminal must show that line once, and must ignore
  * chat on a thread it is not showing.
  *
- * `session.output()` is the whole PTY stream, and Ink repaints its whole frame on
- * every render, so a count over the stream is meaningless. `lastFrame()` takes the
- * text Ink wrote after its last erase or full-screen clear, which is the screen as it stands.
+ * `session.output()` is the whole PTY stream, which holds every repaint, so a count
+ * over the stream is meaningless. `session.screen()` is the screen as it stands.
  */
 
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect } from 'vitest';
-import stripAnsi from 'strip-ansi';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
 import { BOOT_FRAME_TIMEOUT_MS, startPrism, KEYS, type TuiSession } from '../harness';
 import {
@@ -29,11 +27,6 @@ import {
 const feature = loadFeatureFromText(
   readFileSync(join(import.meta.dirname, '../features/live-sync.feature'), 'utf8'),
 );
-
-/** The end of Ink's `eraseLines()`: clear the line, then move to column 1. */
-const FRAME_START = '\x1b[2K\x1b[G';
-/** Ink clears the whole screen instead when a frame fills the terminal. */
-const SCREEN_CLEAR = '\x1b[2J';
 
 interface ChatFrame {
   type: string;
@@ -88,7 +81,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     And('the screen shows my message once', async () => {
       // Give a duplicate copy of the message time to arrive and repaint the frame.
       await sleep(2_000);
-      const frame = lastFrame(session.rawOutput());
+      const frame = session.screen();
       expect(frame).toContain('SHOWNONCE7');
       expect(occurrences(frame, '▌ You')).toBe(1);
     });
@@ -155,15 +148,6 @@ async function connectClient(port: number): Promise<{ socket: WebSocket; frames:
 
 function chatFrames(role: 'USER' | 'AGENT'): ChatFrame[] {
   return (second?.frames ?? []).filter((f) => f.type === 'message' && f.payload?.role === role);
-}
-
-function lastFrame(raw: string): string {
-  const starts = [FRAME_START, SCREEN_CLEAR]
-    .map((marker) => ({ at: raw.lastIndexOf(marker), length: marker.length }))
-    .filter((s) => s.at !== -1);
-  if (starts.length === 0) return stripAnsi(raw);
-  const last = starts.reduce((a, b) => (b.at > a.at ? b : a));
-  return stripAnsi(raw.slice(last.at + last.length));
 }
 
 function occurrences(text: string, needle: string): number {

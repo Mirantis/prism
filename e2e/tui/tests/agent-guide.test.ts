@@ -3,7 +3,7 @@
  *
  * `/agent-guide` hands the document to `$EDITOR` and PATCHes what comes back,
  * so the editor here is a shell script that writes a known string — that keeps
- * the scenario deterministic while still exercising the real path: Ink releases
+ * the scenario deterministic while still exercising the real path: the TUI releases
  * the terminal, a child process edits a temp file, and the CLI reads it back.
  *
  * The assertion is on `agent_workspaces.agentMd` in SQLite. The on-screen SYSTEM
@@ -68,8 +68,8 @@ async function runAgentGuideWith(script: string): Promise<void> {
   });
   await session.waitForFrame(/Prism/, BOOT_FRAME_TIMEOUT_MS);
   // The trailing space closes the slash popup, so one Enter runs the command —
-  // the Enter-completes path is covered by slash-commands.test.ts. Give Ink a
-  // beat to commit the line before Enter, as the other command specs do.
+  // the Enter-completes path is covered by slash-commands.test.ts. Send Enter
+  // as its own keystroke, as the other command specs do.
   session.send('/agent-guide ');
   await sleep(300);
   session.send(KEYS.ENTER);
