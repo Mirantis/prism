@@ -40,8 +40,7 @@ In a terminal that supports program resume (OSC 7577), `prism` comes back on
 the same conversation, in the same directory, when the terminal restores its
 tabs after a restart. Exit with **Ctrl+C** or `/exit` to end the session for
 good. The terminal brings `prism` back only when `PRISM_HTTP_URL` is unset or
-names the same address as `httpUrl`, since a resumed `prism` starts without the
-environment it ran with.
+names the same address as `httpUrl`.
 
 ## Chatting
 
