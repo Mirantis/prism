@@ -809,6 +809,27 @@ describe('App', () => {
     }
   });
 
+  it('keeps the cursor in place on Up at the oldest entry', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
+    for (const key of ['first-row', '\n', 'second-row', '\r']) {
+      stdin.write(key);
+      await flush();
+    }
+    stdin.write('\x1B[A'); // Up → the only entry, cursor at the end of its last row
+    await flush();
+    stdin.write('\x1B[A'); // Up → its first row
+    await flush();
+    stdin.write('\x1B[A'); // Up at the oldest entry → nothing moves
+    await flush();
+    stdin.write('X');
+    await flush();
+    expect(lastFrame() ?? '').toContain('first-rowX');
+    unmount();
+  });
+
   it('clears the input when Down goes past the newest entry', async () => {
     const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
     /**

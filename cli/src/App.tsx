@@ -512,7 +512,8 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   const recallHistory = useCallback(
     (direction: 'up' | 'down') => {
       if (direction === 'up') {
-        if (history.length === 0) return;
+        // At the oldest entry Up changes nothing, so the cursor stays.
+        if (history.length === 0 || historyIndex === 0) return;
         if (historyIndex === null) draftRef.current = inputValue;
         const nextIndex =
           historyIndex === null ? history.length - 1 : Math.max(0, historyIndex - 1);
