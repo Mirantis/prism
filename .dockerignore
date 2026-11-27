@@ -6,8 +6,8 @@ node_modules
 # Build outputs the image produces itself.
 dist
 web/dist
-cli/dist
 backend/target
+cli/target
 bench/target
 
 # Never in an image.

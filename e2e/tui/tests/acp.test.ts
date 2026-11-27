@@ -6,7 +6,6 @@
 
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -20,12 +19,10 @@ import {
   type PromptResponse,
   type SessionUpdate,
 } from '@agentclientprotocol/sdk';
-import { PRISM_CLI_DIR } from '../harness';
+import { PRISM_CLI_BIN } from '../../support/runtime-command';
 import { setupRuntime, type RuntimeTestEnv } from '../setup';
 
 const feature = loadFeatureFromText(readFileSync(join(import.meta.dirname, '../features/acp.feature'), 'utf8'));
-
-const TSX_CLI = createRequire(import.meta.url).resolve('tsx/cli');
 
 interface AcpClient {
   agent: ClientContext;
@@ -36,7 +33,7 @@ interface AcpClient {
 
 /** Start `prism acp` as an editor does, and complete the handshake. */
 async function startAcpClient(env: NodeJS.ProcessEnv): Promise<AcpClient> {
-  const child: ChildProcess = spawn(process.execPath, [TSX_CLI, join(PRISM_CLI_DIR, 'src/index.tsx'), 'acp'], {
+  const child: ChildProcess = spawn(PRISM_CLI_BIN, ['acp'], {
     env,
     stdio: ['pipe', 'pipe', 'inherit'],
   });

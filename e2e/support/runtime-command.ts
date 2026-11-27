@@ -4,6 +4,7 @@
  * The runtime is the `prism-server` binary. `PRISM_SERVER_BIN` names another build;
  * otherwise the suites run the release build in this checkout
  * (`cargo build --release --features e2e-llm-cache` in `backend/`, the build that records and replays model calls).
+ * The TUI suite starts the `prism` binary the same way, from `cli/`.
  */
 
 import fs from 'node:fs';
@@ -17,6 +18,20 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 export const PRISM_SERVER_BIN =
   process.env.PRISM_SERVER_BIN || path.join(REPO_ROOT, 'backend', 'target', 'release', 'prism-server');
+
+/** The terminal UI binary. `PRISM_CLI_BIN` names another build; otherwise the release build in `cli/`. */
+export const PRISM_CLI_BIN =
+  process.env.PRISM_CLI_BIN ||
+  path.join(REPO_ROOT, 'cli', 'target', 'release', process.platform === 'win32' ? 'prism.exe' : 'prism');
+
+/** Fails with the command to run when the terminal UI binary has not been built. */
+export function assertCliBuilt(): void {
+  if (fs.existsSync(PRISM_CLI_BIN)) return;
+  throw new Error(
+    `The terminal UI binary ${PRISM_CLI_BIN} does not exist. ` +
+      'Build it with `cargo build --release` in cli/, or set PRISM_CLI_BIN.',
+  );
+}
 
 /** Fails with the command to run when the binary has not been built. */
 export function assertRuntimeBuilt(): void {

@@ -2,9 +2,8 @@
  * Ctrl+O tool-call expansion. Prompts the real agent (via prism-cli over WS)
  * to issue a `shell_exec` call against an explicit, identifiable command so we
  * can assert on the input/output blocks once expanded. Also verifies that the
- * Ctrl+O keypress does not leak an `o` into the composer — Ink hands a Ctrl chord
- * to the text input before App sees it, so the composer has to ignore chords
- * itself (`cli/src/components/TextInput.tsx`).
+ * Ctrl+O keypress does not leak an `o` into the composer: the composer ignores
+ * every Ctrl chord (`cli/src/ui/text_input.rs`).
  */
 
 import { readFileSync } from 'node:fs';
@@ -73,9 +72,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       await session.waitForFrame(/ctrl\+o to expand/, 5_000);
     });
     And('the composer is still empty', () => {
-      // Two Ctrl+O presses must leave no trace in the draft. Ink dispatches the
-      // chord to the text input before App's handler, so the composer ignores
-      // Ctrl itself; upstream ink-text-input inserted the bare letter instead.
+      // Two Ctrl+O presses must leave no trace in the draft.
       const composer = session
         .output()
         .split('\n')

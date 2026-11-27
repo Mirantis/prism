@@ -1,8 +1,8 @@
 name: E2E setup
 description: >-
-  The runtime binary the `runtime` job built, Node, the workspace's node_modules and the
-  Prisma client for the e2e jobs, plus what the web suite needs when `web` is set. A job
-  using it needs the `runtime` job.
+  The runtime and terminal UI binaries the `backend` job built, Node, the workspace's
+  node_modules and the Prisma client for the e2e jobs, plus what the web suite needs when
+  `web` is set. A job using it needs the `backend` job.
 
 inputs:
   web:
@@ -17,8 +17,13 @@ runs:
         name: prism-server
         path: backend/target/release
 
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        name: prism
+        path: cli/target/release
+
     - shell: bash
-      run: chmod +x backend/target/release/prism-server
+      run: chmod +x backend/target/release/prism-server cli/target/release/prism
 
     - id: node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

@@ -59,8 +59,8 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       Then('the terminal is told the session is idle', () => waitForState('idle', 5_000));
       When('I send the prompt {string}', async (_ctx, prompt: string) => {
         session.send(prompt);
-        // Let ink-text-input commit the appended chars before Enter — without
-        // this the keystrokes can race and Enter submits with a stale value.
+        // Send Enter as its own keystroke: one write of text and Enter arrives
+        // as a single paste, which the composer types rather than submits.
         await sleep(200);
         session.send(KEYS.ENTER);
       });

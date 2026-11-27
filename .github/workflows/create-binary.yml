@@ -1,7 +1,7 @@
 name: Create Binary
 
-# Build the distributable `prism` (terminal UI, a Node SEA) and `prism-server`
-# (the Rust runtime) binaries for macOS, Linux and Windows on every PR + push to
+# Build the distributable `prism` (the terminal UI) and `prism-server` (the
+# runtime) Rust binaries for macOS, Linux and Windows on every PR + push to
 # main, smoke-test them, and upload them as workflow artifacts (so they're
 # downloadable from the Actions run). Running on PRs catches packaging breakage
 # before merge. `release-production.yml` runs the same pipeline at
@@ -52,32 +52,23 @@ jobs:
         with:
           ref: ${{ inputs.ref || '' }}
 
+      # Node builds the web bundle; neither binary embeds it.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          # SEA build is pinned to Node 22.23.4: Node 23+ enforces the documented
-          # ban on dynamic-importing file URLs from the injected main, which
-          # is exactly what our CJS stub does to load the ESM bundle (see
-          # scripts/build-sea.mjs and AGENTS.md). Bumping requires a real
-          # refactor of how externals get into the bundle.
-          node-version: '22.23.4'
+          node-version: '26'
           cache: 'npm'
 
-      # Node 22 ships npm 10, but the committed lockfile is npm-11 shape
-      # (regenerated locally with npm 11+) — npm 10's `ci` rejects it with
-      # "Missing: magicast@0.3.5 from lock file" because it surfaces the
-      # @prisma/config optional peer that npm 11 leaves out. Pin to 11 to
-      # match the lockfile-generating npm.
-      - run: npm install -g npm@11
+      - run: npm install -g npm@11.12.1
       - run: npm ci
 
-      # The runtime is a Rust binary; rust-toolchain.toml names the toolchain,
-      # which rustup on the runner installs on first use.
+      # Both binaries are Rust; rust-toolchain.toml names the toolchain, which
+      # rustup on the runner installs on first use.
       - name: Install the Rust toolchain
         shell: bash
         run: rustup show active-toolchain
 
-      # Single source of truth for the build pipeline (web bundle, terminal UI
-      # SEA, the Rust runtime, smoke, archive) — same script the developer runs
+      # Single source of truth for the build pipeline (web bundle, the two
+      # binaries, smoke, archive) — same script the developer runs
       # locally with `npm run build:binaries`.
       - name: Build binaries
         shell: bash

@@ -190,7 +190,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       session.send(KEYS.ESC);
     });
     Then('the chat input is focused again', async () => {
-      // Give Ink's escape-sequence timeout a beat to flush the lone ESC, then
+      // Give the escape-sequence timeout a beat to flush the lone ESC, then
       // confirm focus is back in the chat input: it echoes typed characters,
       // whereas the panel does not. We never press Enter, so the sentinel is
       // discarded when the session stops.

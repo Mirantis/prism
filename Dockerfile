@@ -1,11 +1,11 @@
 # Prism Agent Dockerfile
 # Multi-stage build for smaller production image.
 #
-# Base: node:26.12.1-bookworm-slim (glibc). The runtime is the Rust `prism-server`
-# binary; Node stays for the terminal UI and the coding agents' CLIs.
+# Base: node:26.12.1-bookworm-slim (glibc). The runtime (`prism-server`) and the
+# terminal UI (`prism`) are Rust binaries; Node stays for the coding agents' CLIs.
 
-# Stage 1: the backend binary. Built on the same Debian release as the runner, so
-# it links against the same glibc. The database migrations are compiled in.
+# Stage 1: the Rust binaries. Built on the same Debian release as the runner, so
+# they link against the same glibc. The database migrations are compiled in.
 FROM rust:1.94.0-bookworm AS runtime-builder
 
 WORKDIR /build
@@ -21,16 +21,23 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
  && cargo build --release --locked --bin prism-server \
  && cp target/release/prism-server /build/prism-server
 
-# Stage 2: the web UI and the terminal UI.
+COPY cli ./cli
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/build/cli/target \
+    cd cli \
+ && cargo build --release --locked --bin prism \
+ && cp target/release/prism /build/prism
+
+# Stage 2: the web UI.
 FROM node:26.12.1-bookworm-slim AS builder
 
 WORKDIR /app
 
-# All three workspace manifests up front so a single root `npm ci` resolves
-# the full graph (root + web + cli) against the committed lockfile.
+# The web workspace's manifest up front so a single root `npm ci` resolves the
+# graph against the committed lockfile.
 COPY package.json package-lock.json ./
 COPY web/package.json ./web/
-COPY cli/package.json ./cli/
 
 # Skip husky install in Docker
 ENV HUSKY=0
@@ -40,11 +47,6 @@ RUN npm ci --ignore-scripts
 # Build the web bundle from the workspace.
 COPY web ./web
 RUN npm run build --workspace=prism-agent-web
-
-# Build the prism CLI from the workspace. Bundled into the image so an
-# operator can `docker exec -it <container> prism`.
-COPY cli ./cli
-RUN npm run build --workspace=prism-cli
 
 # Stage 3: Production
 FROM node:26.12.1-bookworm-slim AS runner
@@ -135,14 +137,13 @@ RUN awk '/BEGIN CERTIFICATE/{c=1;b="";next} /END CERTIFICATE/{c=0;print b;next} 
       /etc/ssl/certs/ca-certificates.crt > /app/.ca-certificates.base \
  && [ -s /app/.ca-certificates.base ]
 
-# Install only production dependencies. Scope to root + cli — the web
-# workspace's node_modules isn't needed at runtime (we only ship its
-# built dist/), so skip it to keep the image smaller.
+# Install only the root's production dependencies. The web workspace's
+# node_modules isn't needed at runtime (we only ship its built dist/), so skip
+# it to keep the image smaller.
 COPY package.json package-lock.json ./
 COPY web/package.json ./web/
-COPY cli/package.json ./cli/
 
-RUN npm ci --workspace=prism-cli --include-workspace-root --omit=dev --ignore-scripts
+RUN npm ci --workspaces=false --omit=dev --ignore-scripts
 
 # Coding-agent CLIs inherit credentials from the runtime environment.
 RUN npm install -g @anthropic-ai/claude-code @openai/codex
@@ -250,13 +251,10 @@ COPY --from=runtime-builder /build/prism-server ./prism-server
 COPY --from=builder /app/web/dist ./web/dist
 ENV PRISM_WEB_DIR=/app/web/dist
 
-# prism CLI: Ink-based TUI for talking to this runtime. Bundled so an
-# operator can `docker exec -it <container> prism` and connect over the
-# in-container default (http://localhost:3003). Prod deps were installed
-# by the workspace-scoped `npm ci` above; just drop in the built dist.
-COPY --from=builder /app/cli/dist ./cli/dist
-RUN chmod +x /app/cli/dist/index.js \
- && ln -s /app/cli/dist/index.js /usr/local/bin/prism
+# The terminal UI for talking to this runtime, so an operator can
+# `docker exec -it <container> prism` and connect over the in-container default
+# (http://localhost:3003).
+COPY --from=runtime-builder /build/prism /usr/local/bin/prism
 
 # License, attribution and third-party notices, at the application working
 # directory so `docker run <image> cat /app/LICENSE` finds them.
