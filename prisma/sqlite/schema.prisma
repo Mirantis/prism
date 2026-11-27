@@ -746,6 +746,8 @@ model WebhookSubscription {
   slackChannelIds String?
   deliverOnly Boolean @default(false)
   isActive    Boolean @default(true)
+  // Seconds after an agent-mode delivery in which later deliveries join its run; null = one run per delivery.
+  coalesceSeconds Int?
 
   authType      WebhookAuthType      @default(token)
   authHeader    String? // header carrying the token/signature
@@ -778,6 +780,8 @@ model WebhookRun {
 
   /// The message the run delivered, if it delivered one.
   messageId String? @unique
+  /// The id of the earlier event whose agent run also handled this one; null when the event led its own run.
+  coalescedInto String?
 
   createdAt  DateTime  @default(now())
   finishedAt DateTime?
