@@ -17,7 +17,7 @@ use crate::ai::json::{js_stringify, secure_json_parse};
 use crate::ai::provider::Headers;
 use crate::ai::providers::provider_utils::innermost_message;
 pub use crate::ai::providers::provider_utils::{
-    EnvLookup, combine_headers, load_optional_setting, process_env,
+    EnvLookup, combine_headers, load_optional_setting, process_env, without_trailing_slash,
 };
 
 /// One request as the SDK's `fetch` receives it: always a POST with a JSON body.
@@ -151,11 +151,6 @@ pub fn validate_base_url(base_url: Option<String>) -> Result<Option<String>, Inv
         }),
         other => Ok(other),
     }
-}
-
-/// `withoutTrailingSlash`.
-pub fn without_trailing_slash(url: &str) -> String {
-    url.strip_suffix('/').unwrap_or(url).to_string()
 }
 
 /// `postJsonToApi` up to the response: the body as `JSON.stringify` writes it,

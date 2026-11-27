@@ -35,15 +35,14 @@ pub struct AgentModelDefaults {
 }
 
 // Letters, digits and a few separators cover Bedrock inference-profile ids,
-// region-prefixed ids and bare vendor SKUs. Membership in a curated list is not
-// checked, so a user can choose a model the runtime has not been told about.
+// region-prefixed ids and bare vendor SKUs. Any id in this format is accepted,
+// including a model the runtime has no entry for.
 static MODEL_ID_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z0-9._:\-/]+$").expect("valid regex"));
 pub const MODEL_ID_MAX_LEN: usize = 200;
 
 /// The format rule for a model id, which the per-agent model override and the
-/// settings file share. A typo in the settings file degrades to "no default"
-/// rather than persisting a bad id on the agent row.
+/// settings file share.
 pub fn is_valid_model_id(id: &str) -> bool {
     crate::support::js::len16(id) <= MODEL_ID_MAX_LEN && MODEL_ID_PATTERN.is_match(id)
 }
@@ -74,6 +73,8 @@ fn stderr_line(text: &str) {
     let _ = std::io::stderr().write_all(text.as_bytes());
 }
 
+/// The model id under `key`, if it is a valid one. A typo in the settings file
+/// degrades to "no default" rather than persisting a bad id on the agent row.
 fn pick_model_id(obj: &Map<String, Value>, key: &str) -> Option<String> {
     let value = obj.get(key)?;
     if value.is_null() {

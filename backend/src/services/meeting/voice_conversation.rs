@@ -352,7 +352,7 @@ impl VoiceConversation {
         let heard: f64 = items.iter().map(|i| i.played_ms).sum();
         log_info!(
             "[Meeting] Yielded the floor after {}ms of speech across {} item(s)",
-            js_round(heard),
+            js_round(heard) as i64,
             items.len()
         );
     }
@@ -783,7 +783,7 @@ impl VoiceConversation {
         let heard: f64 = items.iter().map(|i| i.played_ms).sum();
         log_info!(
             "[VoiceChat] Cut the answer short after {}ms of speech across {} item(s)",
-            js_round(heard),
+            js_round(heard) as i64,
             items.len()
         );
     }

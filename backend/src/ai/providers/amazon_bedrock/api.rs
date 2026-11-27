@@ -15,7 +15,7 @@ use crate::ai::generate_text::with_user_agent_suffix;
 use crate::ai::json::{js_stringify, secure_json_parse};
 use crate::ai::provider::Headers;
 pub use crate::ai::providers::provider_utils::{
-    EnvLookup, combine_headers, load_optional_setting, process_env,
+    EnvLookup, combine_headers, load_optional_setting, process_env, without_trailing_slash,
 };
 
 pub use crate::ai::providers::anthropic::{
@@ -52,11 +52,6 @@ fn is_valid_hostname_part(value: &str) -> bool {
         Regex::new(r"(?i)^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$").expect("valid regex")
     });
     PART.is_match(value)
-}
-
-/// `withoutTrailingSlash`.
-pub fn without_trailing_slash(url: &str) -> String {
-    url.strip_suffix('/').unwrap_or(url).to_string()
 }
 
 const AWS_PARTITION_DNS_SUFFIXES: &[(&str, &str)] = &[

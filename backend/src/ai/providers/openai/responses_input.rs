@@ -15,7 +15,6 @@ use super::responses_options::{
     ReasoningEffortUpdate, ReasoningPartOptions, SystemMessageOptions, ToolResultOptions,
     parse_provider_options,
 };
-use super::responses_tools::ToolNameMapping;
 use super::tools::tool_search_input_schema;
 use crate::ai::errors::{TypeValidationError, UnsupportedFunctionalityError};
 use crate::ai::json::{bytes_to_base64, js_stringify, parse_json};
@@ -24,6 +23,7 @@ use crate::ai::provider::{
     DataContent, FileData, LanguageModelV4Message, LanguageModelV4Part, ProviderOptions,
     ProviderReference, ToolResultContentPart, ToolResultOutput, Warning,
 };
+use crate::ai::providers::provider_utils::ToolNameMapping;
 use crate::ai::tool::{safe_validate_types, zod_schema};
 
 /// The settings of one conversion.

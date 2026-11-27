@@ -11,9 +11,9 @@ use super::options::{
     AnthropicFilePartOptions, AnthropicReasoningMetadata, AnthropicSystemMessageOptions,
     parse_provider_options,
 };
-use super::tools::ToolNameMapping;
 use crate::ai::json::{base64_to_bytes, js_stringify, secure_json_parse};
 use crate::ai::prompt::{detect_image_media_type, is_full_media_type};
+use crate::ai::providers::provider_utils::ToolNameMapping;
 use crate::ai::{
     DataContent, FileData, LanguageModelV4Message, LanguageModelV4Part, ProviderOptions,
     ProviderReference, ToolResultContentPart, ToolResultOutput, UnsupportedFunctionalityError,

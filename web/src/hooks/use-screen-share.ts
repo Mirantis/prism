@@ -13,6 +13,7 @@ import type { PageFrame } from './use-computer-screen';
 const FRAME_INTERVAL_MS = 1000;
 /** How long the video gets to report a size before the first picture is taken. */
 const FIRST_FRAME_MS = 300;
+/** The widest picture sent, and how hard it is compressed. Screen recording uses the same. */
 export const MAX_WIDTH = 1280;
 export const JPEG_QUALITY = 0.6;
 

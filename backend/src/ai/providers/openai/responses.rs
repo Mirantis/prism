@@ -24,7 +24,7 @@ use super::responses_options::{
     IncludeValue, Logprobs, OpenAIResponsesOptions, ReasoningContext, ReasoningMode, ServiceTier,
     SystemMessageModeOption, TOP_LOGPROBS_MAX, parse_provider_options,
 };
-use super::responses_tools::{PROVIDER_TOOL_NAMES, ToolNameMapping, prepare_responses_tools};
+use super::responses_tools::{PROVIDER_TOOL_NAMES, prepare_responses_tools};
 use super::tools::TOOL_SEARCH_ID;
 use crate::ai::errors::{ApiCallError, UnsupportedFunctionalityError};
 use crate::ai::json::{js_stringify, normalize_numbers};
@@ -37,6 +37,7 @@ use crate::ai::provider::{
     LanguageModelV4StreamResult, LanguageModelV4Tool, LanguageModelV4Usage, ProviderMetadata,
     ReasoningEffort, SupportedUrls, Warning,
 };
+use crate::ai::providers::provider_utils::ToolNameMapping;
 use crate::support::js::number;
 
 /// How one provider reaches the OpenAI API (`OpenAIConfig`).

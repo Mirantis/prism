@@ -1,5 +1,5 @@
-//! The tools block of a Messages API request (`anthropic-prepare-tools.ts`) and the
-//! names provider-defined tools go by (`createToolNameMapping`).
+//! The tools block of a Messages API request (`anthropic-prepare-tools.ts`), and
+//! the API name of each Anthropic provider tool (`PROVIDER_TOOL_NAMES`).
 
 use indexmap::IndexSet;
 use serde_json::{Map, Value};
@@ -48,8 +48,6 @@ pub(super) const PROVIDER_TOOL_NAMES: &[(&str, &str)] = &[
     ),
     ("anthropic.advisor_20260301", "advisor"),
 ];
-
-pub use crate::ai::providers::provider_utils::ToolNameMapping;
 
 /// The input of `prepare_tools`.
 pub(super) struct PrepareToolsInput<'a> {
