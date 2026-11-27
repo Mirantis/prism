@@ -151,9 +151,9 @@ pub const WEBHOOK_MAX_PENDING: usize = 10;
 pub const WEBHOOK_MAX_COALESCED: usize = 10;
 
 /// Max prompt length of one coalesced agent run, in UTF-16 code units: the longest
-/// message a person can send in chat (`MAX_MESSAGE_CHARS`). An event whose prompt does
-/// not fit opens the next run, so one large event fails no other event's run.
-pub const WEBHOOK_MAX_COALESCED_CHARS: usize = 200_000;
+/// message a person can send in chat. An event whose prompt does not fit opens the
+/// next run, so one large event fails no other event's run.
+pub const WEBHOOK_MAX_COALESCED_CHARS: usize = crate::protocol::chat_protocol::MAX_MESSAGE_CHARS;
 
 // Hermes truncation caps for payload rendering.
 const RAW_PAYLOAD_MAX_CHARS: usize = 4000;
