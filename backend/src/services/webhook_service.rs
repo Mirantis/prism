@@ -142,9 +142,9 @@ fn chosen_channel_props(delivery: Option<&Delivery>) -> IndexMap<String, String>
     props
 }
 
-/// Max agent runs waiting per subscription (excluding the one in flight).
-/// Beyond this the delivery answers 429 — a backstop for pathological floods,
-/// not a normal-operation limit.
+/// Agent runs waiting per subscription (excluding the one in flight) beyond which a
+/// delivery answers 429: a backstop for pathological floods, not a normal-operation
+/// limit.
 pub const WEBHOOK_MAX_PENDING: usize = 10;
 
 /// Max events one coalesced agent run handles, which bounds its prompt. A delivery
@@ -159,27 +159,6 @@ pub const WEBHOOK_MAX_COALESCED_CHARS: usize = crate::protocol::chat_protocol::M
 /// The error of a run whose subscription was deleted before the run started.
 pub const SUBSCRIPTION_DELETED_ERROR: &str =
     "The webhook subscription was deleted before the run started.";
-
-/// The error of an event that a restart found beyond the subscription's run queue.
-pub const QUEUE_FULL_ERROR: &str =
-    "The subscription's run queue was full after the restart, so the event did not run.";
-
-/// Why a run did not run: the `webhook.error` telemetry value, and the error its
-/// events show.
-struct NotRun {
-    reason: &'static str,
-    error: &'static str,
-}
-
-const SUBSCRIPTION_DELETED: NotRun = NotRun {
-    reason: "subscription_deleted",
-    error: SUBSCRIPTION_DELETED_ERROR,
-};
-
-const QUEUE_FULL: NotRun = NotRun {
-    reason: "queue_full",
-    error: QUEUE_FULL_ERROR,
-};
 
 // Hermes truncation caps for payload rendering.
 const RAW_PAYLOAD_MAX_CHARS: usize = 4000;
@@ -827,8 +806,9 @@ impl WebhookService {
     /// started runs again with the events it had. The events of a run that had not
     /// started join runs as the live path joins them: a run takes events until it
     /// starts, and starts when the window of its first event ends, so a run whose
-    /// window is still open takes the deliveries that arrive after the boot. An event
-    /// that needs a run beyond the queue's bound fails, as the live path refuses it.
+    /// window is still open takes the deliveries that arrive after the boot. The
+    /// rebuilt queue can hold more than `WEBHOOK_MAX_PENDING` runs, and the live path
+    /// answers 429 until it drains below that.
     pub async fn resume(&'static self, items: Vec<PendingWorkItem>) -> anyhow::Result<()> {
         let agent = AGENT_WORKSPACE_SERVICE.get_agent().await?;
         let mut resumed: Vec<String> = Vec::new();
@@ -864,7 +844,6 @@ impl WebhookService {
                 });
         }
         for (subscription_id, (subscription, members)) in waiting {
-            let mut overflow: Vec<Member> = Vec::new();
             {
                 let mut pending = self.pending.lock();
                 let queue = pending.entry(subscription_id.clone()).or_default();
@@ -877,12 +856,6 @@ impl WebhookService {
                     };
                     if let Some(batch) = joins {
                         batch.lock().push(member);
-                        continue;
-                    }
-                    // The first run starts at once, so the queue holds one run more than
-                    // the live path lets wait.
-                    if queue.runs.len() > WEBHOOK_MAX_PENDING {
-                        overflow.push(member);
                         continue;
                     }
                     match waiting.interrupted {
@@ -898,8 +871,6 @@ impl WebhookService {
                     }
                 }
             }
-            self.fail_run(&agent, &subscription_id, &overflow, QUEUE_FULL)
-                .await;
             self.drain_queue(&subscription_id);
         }
 
@@ -962,7 +933,7 @@ impl WebhookService {
                     Some(subscription) => self.run_agent(&subscription, &members).await,
                     None => {
                         let agent = AGENT_WORKSPACE_SERVICE.get_agent().await?;
-                        self.fail_run(&agent, &subscription_id, &members, SUBSCRIPTION_DELETED)
+                        self.fail_deleted_run(&agent, &subscription_id, &members)
                             .await;
                         Ok(())
                     }
@@ -972,14 +943,13 @@ impl WebhookService {
         })
     }
 
-    /// Record a run that did not run as failed on every event it holds, with the error
-    /// and the telemetry reason of `not_run`.
-    async fn fail_run(
+    /// Record a run whose subscription was deleted before the run started as failed on
+    /// every event it holds.
+    async fn fail_deleted_run(
         &self,
         agent: &AgentWorkspace,
         subscription_id: &str,
         members: &[Member],
-        not_run: NotRun,
     ) {
         let Some(lead) = members.first() else {
             return;
@@ -987,7 +957,7 @@ impl WebhookService {
         let run_ids: Vec<String> = members.iter().map(|member| member.run_id.clone()).collect();
         let result = WebhookRunResult {
             status: WebhookRunResultStatus::Failed,
-            error: Some(not_run.error.to_string()),
+            error: Some(SUBSCRIPTION_DELETED_ERROR.to_string()),
             message_id: None,
         };
         WEBHOOK_RUN_SERVICE.finish(&run_ids, &result).await;
@@ -995,11 +965,14 @@ impl WebhookService {
         log_warn!(
             "[Webhook] {} event(s) did not run: {}",
             run_ids.len(),
-            not_run.error
+            SUBSCRIPTION_DELETED_ERROR
         );
         let mut props = IndexMap::new();
         props.insert("webhook.deliveries".to_string(), run_ids.len().to_string());
-        props.insert("webhook.error".to_string(), not_run.reason.to_string());
+        props.insert(
+            "webhook.error".to_string(),
+            "subscription_deleted".to_string(),
+        );
         track_processed(
             &agent.user_id,
             &agent.id,
@@ -2229,7 +2202,7 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn fails_the_events_a_restart_finds_beyond_the_run_queue() {
+    async fn runs_every_accepted_event_after_a_restart_and_a_window_change() {
         let fixture = fixture(true).await;
         let id = subscribe(&fixture, |row| row.coalesce_seconds = Some(600)).await;
         hold(&id);
@@ -2239,6 +2212,7 @@ mod tests {
         for run_id in &run_ids {
             deliver(run_id).await;
         }
+        assert_eq!(queue_of(&id), (2, 2));
         forget(&id);
         // With the window turned off, each waiting event needs a run of its own.
         change(&id, |changes| changes.coalesce_seconds = Some(None)).await;
@@ -2249,16 +2223,10 @@ mod tests {
 
         hold(&id);
         WEBHOOK_SERVICE.resume(items).await.unwrap();
-        assert_eq!(queue_of(&id), (WEBHOOK_MAX_PENDING + 1, 0));
-        let mut failed = 0;
+        assert_eq!(queue_of(&id), (run_ids.len(), 0));
         for run_id in &run_ids {
-            let (status, error) = run_row(run_id).await;
-            if status == "failed" {
-                assert_eq!(error.as_deref(), Some(QUEUE_FULL_ERROR));
-                failed += 1;
-            }
+            assert_eq!(run_row(run_id).await.0, "queued", "{run_id}");
         }
-        assert_eq!(failed, 1);
         forget(&id);
     }
 
