@@ -411,3 +411,9 @@ export async function routeTier(
     mode: options.mode,
   });
 }
+
+/** `text` on one line, cut to `max` characters for a detail line. */
+export function clip(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}

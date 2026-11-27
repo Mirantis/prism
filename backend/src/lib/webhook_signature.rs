@@ -18,7 +18,7 @@
 //! 'token' mode compares the whole value, so a secret containing a comma is
 //! safe.
 
-use crate::lib::visible_text::is_js_whitespace;
+use crate::support::js::trim as js_trim;
 use base64::Engine;
 use hmac::{Hmac, Mac};
 use http::HeaderMap;
@@ -162,11 +162,6 @@ pub struct WebhookAuthInput<'a> {
     pub headers: &'a HeaderMap,
     /// Exact received bytes (lib/raw_body.rs); required for 'hmac'.
     pub raw_body: Option<&'a [u8]>,
-}
-
-/// JavaScript's `String.prototype.trim`.
-fn js_trim(value: &str) -> &str {
-    value.trim_matches(is_js_whitespace)
 }
 
 /// Headers whose duplicates Node drops, keeping the first.

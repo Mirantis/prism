@@ -316,7 +316,7 @@ pub fn normalize_tool_call_id(tool_call_id: &str, is_mistral: bool) -> String {
     if tool_call_id.len() == 9 && tool_call_id.chars().all(|c| c.is_ascii_alphanumeric()) {
         return tool_call_id.to_string();
     }
-    const BASE62: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    const BASE62: &[u8] = crate::ai::generate_text::ID_ALPHABET;
     let mut hash: u64 = 14695981039346656037;
     for unit in tool_call_id.encode_utf16() {
         hash ^= u64::from(unit);

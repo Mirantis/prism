@@ -5,6 +5,7 @@
 //! cost in millionths of a dollar, the unit `llm_calls.costMicroUsd` stores.
 
 use crate::lib::model_catalog::{ModelPrice, find_catalog_entry};
+use crate::support::js::round as js_round;
 
 /// One call's tokens, as `llm_calls` stores them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -64,22 +65,7 @@ pub fn cost_micro_usd(price: &ModelPrice, tokens: &PricedTokens) -> i64 {
         + long_cache_writes as f64 * input * LONG_CACHE_WRITE_FACTOR
         + text_output as f64 * output
         + tokens.audio_output_tokens as f64 * price.output_audio.unwrap_or(output);
-    js_round(cost)
-}
-
-/// `Math.round`: halves round up, toward positive infinity.
-///
-/// `(value + 0.5).floor()` is not the same: the addition can round up first,
-/// so `0.49999999999999994` would give 1. `value - value.floor()` is exact.
-/// NaN gives 0 and infinities saturate, as `as i64` does.
-pub fn js_round(value: f64) -> i64 {
-    let floor = value.floor();
-    let rounded = if value - floor >= 0.5 {
-        floor + 1.0
-    } else {
-        floor
-    };
-    rounded as i64
+    js_round(cost) as i64
 }
 
 #[cfg(test)]
@@ -179,18 +165,6 @@ mod tests {
         );
         let realtime = price_for("gpt-realtime-2.1").unwrap();
         assert!(realtime.input_audio.is_some() && realtime.output_audio.is_some());
-    }
-
-    #[test]
-    fn rounds_like_math_round() {
-        assert_eq!(js_round(0.49999999999999994), 0);
-        assert_eq!(js_round(0.5), 1);
-        assert_eq!(js_round(2.5), 3);
-        assert_eq!(js_round(-2.5), -2);
-        assert_eq!(js_round(-2.6), -3);
-        assert_eq!(js_round(-0.4), 0);
-        assert_eq!(js_round(4_503_599_627_370_497.0), 4_503_599_627_370_497);
-        assert_eq!(js_round(f64::NAN), 0);
     }
 
     #[test]

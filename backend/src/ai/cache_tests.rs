@@ -99,7 +99,7 @@ fn plain_calls() -> Vec<LanguageModelV4CallOptions> {
             }),
             LanguageModelV4Tool::Provider(LanguageModelV4ProviderTool {
                 name: "search".into(),
-                id: "openai.tool_search".into(),
+                id: crate::ai::providers::openai::tools::TOOL_SEARCH_ID.into(),
                 args: json!({ "execution": "client" })
                     .as_object()
                     .cloned()

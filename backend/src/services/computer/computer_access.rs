@@ -19,7 +19,7 @@ use super::secure_guard::{hold_secure_guard, release_secure_guard};
 use crate::ai::AbortError;
 use crate::config::CONFIG;
 use crate::lib::log_redaction::err_json;
-use crate::lib::telemetry::track_event;
+use crate::lib::telemetry::{agent_props, track_event};
 use crate::log_error;
 use crate::services::channel_adapter_interface::ChannelName;
 use crate::support::now_ms;
@@ -201,15 +201,6 @@ fn aborted() -> anyhow::Error {
 
 fn same(a: &ComputerUse, b: &ComputerUse) -> bool {
     a.id == b.id
-}
-
-/// The `agent.id` a secure window's telemetry names, when the runtime has one.
-fn agent_props() -> IndexMap<String, String> {
-    let mut props = IndexMap::new();
-    if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-        props.insert("agent.id".to_string(), agent_id);
-    }
-    props
 }
 
 /// Invocation ownership and human takeover share one gate for the desktop.

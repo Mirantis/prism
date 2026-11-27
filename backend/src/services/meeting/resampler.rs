@@ -19,6 +19,8 @@
 
 use std::sync::LazyLock;
 
+use crate::support::js::round as js_round;
+
 pub const MEETING_SAMPLE_RATE: u32 = 48000;
 pub const REALTIME_SAMPLE_RATE: u32 = 24000;
 
@@ -68,16 +70,6 @@ fn build_low_pass(taps: usize, cutoff_ratio: f64) -> Vec<f64> {
 }
 
 static LOW_PASS: LazyLock<Vec<f64>> = LazyLock::new(|| build_low_pass(FILTER_TAPS, CUTOFF_RATIO));
-
-/// `Math.round`: the nearest integer, halves toward positive infinity.
-fn js_round(value: f64) -> f64 {
-    let floor = value.floor();
-    if value - floor >= 0.5 {
-        floor + 1.0
-    } else {
-        floor
-    }
-}
 
 /// Clamp to the int16 range — the filter can overshoot on transients.
 fn clamp_to_int16(value: f64) -> i16 {

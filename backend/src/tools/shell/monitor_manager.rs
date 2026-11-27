@@ -30,6 +30,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
 use crate::lib::agent_processes::{AGENT_PROCESSES, AgentProcessesEvent};
+use crate::lib::execution_environments::capture::KILL_GRACE_MS;
 use crate::lib::execution_environments::execution_environment::{
     ExecProcess, ProcessMark, RunOptions, Signal, StdinMode,
 };
@@ -58,8 +59,6 @@ pub const MAX_NOTIFICATIONS_PER_MINUTE: usize = 12;
 const MAX_LINE_CHARS: usize = 2_000;
 const PIPE_DRAIN_MS: u64 = 1_000;
 const MAX_BATCH_LINES: usize = 50;
-/// How long a stopped command gets to honour SIGTERM before SIGKILL.
-pub const KILL_GRACE_MS: u64 = 2_000;
 
 #[derive(Debug, Clone)]
 pub struct MonitorParams {
@@ -738,15 +737,6 @@ pub fn get_monitor_manager() -> Arc<MonitorManager> {
         .write()
         .get_or_insert_with(|| Arc::new(MonitorManager::new()))
         .clone()
-}
-
-/// Test-only: stop every monitor and start again with `manager` (or an empty one).
-pub fn set_monitor_manager_for_tests(manager: Option<Arc<MonitorManager>>) {
-    let mut slot = MONITOR_MANAGER.write();
-    if let Some(previous) = slot.as_ref() {
-        previous.kill_all();
-    }
-    *slot = manager;
 }
 
 #[cfg(test)]

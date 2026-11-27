@@ -8,9 +8,10 @@
 
 use serde_json::Value;
 
+use crate::support::js::trim as js_trim;
 use crate::support::js::{len16, slice16};
 use crate::utils::slack_formatter::unique_tool_names;
-use crate::utils::text_chunker::{js_trim, split_content};
+use crate::utils::text_chunker::split_content;
 
 /// Per-activity text budget: a safe bound below Teams' ~28k char limit.
 pub const TEAMS_TEXT_LIMIT: usize = 25_000;

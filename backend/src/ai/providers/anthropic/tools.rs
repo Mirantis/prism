@@ -1,8 +1,6 @@
 //! The tools block of a Messages API request (`anthropic-prepare-tools.ts`) and the
 //! names provider-defined tools go by (`createToolNameMapping`).
 
-use std::collections::HashMap;
-
 use indexmap::IndexSet;
 use serde_json::{Map, Value};
 
@@ -13,7 +11,7 @@ use crate::ai::{
 };
 
 /// The provider tool ids Anthropic knows, with the name each has on the API.
-const PROVIDER_TOOL_NAMES: &[(&str, &str)] = &[
+pub(super) const PROVIDER_TOOL_NAMES: &[(&str, &str)] = &[
     ("anthropic.code_execution_20250522", "code_execution"),
     ("anthropic.code_execution_20250825", "code_execution"),
     ("anthropic.code_execution_20260120", "code_execution"),
@@ -51,51 +49,7 @@ const PROVIDER_TOOL_NAMES: &[(&str, &str)] = &[
     ("anthropic.advisor_20260301", "advisor"),
 ];
 
-/// Maps the name a caller gave a provider tool to its name on the API, and back.
-/// A name without a mapping maps to itself.
-#[derive(Debug, Clone, Default)]
-pub struct ToolNameMapping {
-    custom_to_provider: HashMap<String, String>,
-    provider_to_custom: HashMap<String, String>,
-}
-
-impl ToolNameMapping {
-    /// `createToolNameMapping` over the request's tools.
-    pub fn new(tools: Option<&[LanguageModelV4Tool]>) -> Self {
-        let mut mapping = Self::default();
-        for tool in tools.unwrap_or_default() {
-            let LanguageModelV4Tool::Provider(tool) = tool else {
-                continue;
-            };
-            let Some((_, provider_name)) =
-                PROVIDER_TOOL_NAMES.iter().find(|(id, _)| *id == tool.id)
-            else {
-                continue;
-            };
-            mapping
-                .custom_to_provider
-                .insert(tool.name.clone(), provider_name.to_string());
-            mapping
-                .provider_to_custom
-                .insert(provider_name.to_string(), tool.name.clone());
-        }
-        mapping
-    }
-
-    pub fn to_provider_tool_name(&self, custom_tool_name: &str) -> String {
-        self.custom_to_provider
-            .get(custom_tool_name)
-            .cloned()
-            .unwrap_or_else(|| custom_tool_name.to_string())
-    }
-
-    pub fn to_custom_tool_name(&self, provider_tool_name: &str) -> String {
-        self.provider_to_custom
-            .get(provider_tool_name)
-            .cloned()
-            .unwrap_or_else(|| provider_tool_name.to_string())
-    }
-}
+pub use crate::ai::providers::provider_utils::ToolNameMapping;
 
 /// The input of `prepare_tools`.
 pub(super) struct PrepareToolsInput<'a> {

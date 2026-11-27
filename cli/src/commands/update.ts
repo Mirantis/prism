@@ -7,6 +7,11 @@ const REASON_TEXT: Record<string, string> = {
   dev_build: 'This is a development build — it has no release to update to.',
 };
 
+/** Why this install cannot update, from the runtime's `reason`. */
+export function updateUnavailableText(reason: string | null): string {
+  return REASON_TEXT[reason ?? ''] ?? 'Updates are not available in this install.';
+}
+
 export const updateCommand: SlashCommand = {
   name: '/update',
   description: 'Check for a newer Prism release and install it',
@@ -14,7 +19,7 @@ export const updateCommand: SlashCommand = {
     try {
       const status = await ctx.api.updateStatus();
       if (!status.enabled) {
-        return REASON_TEXT[status.reason ?? ''] ?? 'Updates are not available in this install.';
+        return updateUnavailableText(status.reason);
       }
       if (status.applying) return 'An update is already in progress.';
 

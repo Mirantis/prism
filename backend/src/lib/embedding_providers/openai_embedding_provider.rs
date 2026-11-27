@@ -52,21 +52,12 @@ fn openai_settings(config: &Config, base_url: Option<&str>) -> OpenAIProviderSet
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::gateway_test_config;
     use crate::lib::llm_providers::llm_provider::provider_options_json;
-
-    /// A configuration whose gateway is `gateway.example.com`.
-    fn config(pairs: &[(&str, &str)]) -> Config {
-        let env = [("NEXUS_API_URL", "https://gateway.example.com")]
-            .iter()
-            .chain(pairs)
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        Config::load(&env, &mut |_, _| {}).unwrap()
-    }
 
     #[test]
     fn no_endpoint_leaves_the_sdk_default() {
-        let s = openai_settings(&config(&[("OPENAI_API_KEY", "sk-test")]), None);
+        let s = openai_settings(&gateway_test_config(&[("OPENAI_API_KEY", "sk-test")]), None);
         assert_eq!(s.api_key.as_deref(), Some("sk-test"));
         assert_eq!(s.base_url, None);
     }
@@ -74,7 +65,7 @@ mod tests {
     #[test]
     fn sends_requests_to_the_endpoint_it_is_given() {
         let s = openai_settings(
-            &config(&[("OPENAI_API_KEY", "sk-test")]),
+            &gateway_test_config(&[("OPENAI_API_KEY", "sk-test")]),
             Some("https://openai.example/v1"),
         );
         assert_eq!(s.base_url.as_deref(), Some("https://openai.example/v1"));
@@ -83,7 +74,7 @@ mod tests {
     #[test]
     fn a_gateway_endpoint_without_a_local_key_gets_a_decoy() {
         let s = openai_settings(
-            &config(&[]),
+            &gateway_test_config(&[]),
             Some("https://gateway.example.com/llm/openai/v1"),
         );
         assert_eq!(s.api_key.as_deref(), Some("managed"));
@@ -92,15 +83,18 @@ mod tests {
     #[test]
     fn an_endpoint_off_the_gateway_host_without_a_key_sends_no_decoy() {
         // A decoy would promise a credential injection that nothing performs.
-        let s = openai_settings(&config(&[]), Some("https://openai.example/v1"));
+        let s = openai_settings(&gateway_test_config(&[]), Some("https://openai.example/v1"));
         assert_eq!(s.api_key, None);
-        assert_eq!(openai_settings(&config(&[]), None).api_key, None);
+        assert_eq!(
+            openai_settings(&gateway_test_config(&[]), None).api_key,
+            None
+        );
     }
 
     #[test]
     fn a_nexus_cred_sentinel_key_reaches_the_sdk_verbatim() {
         let sentinel = "__nexus_cred:00000000-0000-0000-0000-000000000000__";
-        let s = openai_settings(&config(&[("OPENAI_API_KEY", sentinel)]), None);
+        let s = openai_settings(&gateway_test_config(&[("OPENAI_API_KEY", sentinel)]), None);
         assert_eq!(s.api_key.as_deref(), Some(sentinel));
     }
 

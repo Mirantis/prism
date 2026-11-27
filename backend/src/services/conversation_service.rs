@@ -26,7 +26,7 @@ use crate::db::schema::conversation_threads::{self, dsl as t};
 use crate::db::sql_types::DbDateTime;
 use crate::lib::agent_message_kind::agent_message_kind;
 use crate::lib::context_window::{ContextUsageSnapshot, build_context_snapshot};
-use crate::lib::telemetry::track_event;
+use crate::lib::telemetry::{agent_props, track_event};
 use crate::log_info;
 use crate::protocol::chat_protocol::AgentMessageKind;
 use crate::services::attachment_service::{ATTACHMENT_SERVICE, HasMessageId, WithAttachments};
@@ -1630,10 +1630,7 @@ impl ConversationService {
             Ok(())
         })
         .await?;
-        let mut tracked = IndexMap::new();
-        if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-            tracked.insert("agent.id".to_string(), agent_id);
-        }
+        let mut tracked = agent_props();
         tracked.insert("thread.id".to_string(), thread_id.to_string());
         track_event("thread external id set", None, Some(tracked));
         Ok(())

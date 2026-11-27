@@ -69,11 +69,7 @@ impl PendingWorkKind {
     }
 }
 
-impl std::fmt::Display for PendingWorkKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+crate::support::display_as_str!(PendingWorkKind);
 
 /// Each kind of work that survives a restart, in the order the boot gives it
 /// back: a resumed reply or run can poll a coding task, so the tasks come back

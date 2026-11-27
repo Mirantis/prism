@@ -99,13 +99,6 @@ pub struct GenerateObjectResult {
     pub provider_metadata: Option<ProviderMetadata>,
 }
 
-impl GenerateObjectResult {
-    /// The object as a typed value.
-    pub fn object_as<T: serde::de::DeserializeOwned>(&self) -> anyhow::Result<T> {
-        Ok(serde_json::from_value(self.object.clone())?)
-    }
-}
-
 fn extract_text(content: &[LanguageModelV4Content]) -> Option<String> {
     let texts: Vec<&str> = content
         .iter()

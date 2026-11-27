@@ -11,7 +11,9 @@
 //!   from models.dev (`npm run generate:model-limits`).
 //! - `prism-server eval` serves the prompt eval set (`evals/`) over stdin and stdout.
 
+use prism_runtime::lib::coding_agents::terminal::EXEC_SUBCOMMAND;
 use prism_runtime::lib::environment::is_sea;
+use prism_runtime::scripts::coding_agent_exec;
 
 fn main() {
     prism_runtime::lib::environment::install_tls_provider();
@@ -36,13 +38,13 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Some("coding-agent-exec") => {
+        Some(EXEC_SUBCOMMAND) => {
             let env = std::env::vars().collect();
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("runtime");
-            let code = runtime.block_on(prism_runtime::scripts::coding_agent_exec::main(
+            let code = runtime.block_on(coding_agent_exec::main(
                 args[1..].to_vec(),
                 env,
                 Default::default(),

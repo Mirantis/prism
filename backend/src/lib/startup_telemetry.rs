@@ -199,15 +199,7 @@ fn is_set(value: &Option<String>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Env;
-
-    fn config_with(pairs: &[(&str, &str)]) -> Config {
-        let env: Env = pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        Config::load(&env, &mut |_, _| {}).expect("config loads")
-    }
+    use crate::config::test_config;
 
     struct Agent {
         webhooks_enabled: bool,
@@ -233,7 +225,7 @@ mod tests {
 
     #[test]
     fn reports_a_bedrock_deployment_through_the_gateway() {
-        let config = config_with(&[
+        let config = test_config(&[
             ("LLM_PROVIDER", "bedrock"),
             ("NEXUS_API_URL", "https://gateway.test"),
             ("NEXUS_MCP_URL", "https://gateway.test/projects/p1/mcp"),
@@ -265,7 +257,7 @@ mod tests {
 
     #[test]
     fn sends_the_props_in_order() {
-        let config = config_with(&[("LLM_PROVIDER", "bedrock")]);
+        let config = test_config(&[("LLM_PROVIDER", "bedrock")]);
         let agent = agent(false);
         let props = agent_started_props(&config, &census(&agent, 0));
         let keys: Vec<&str> = props.keys().map(String::as_str).collect();
@@ -306,7 +298,7 @@ mod tests {
 
     #[test]
     fn reports_direct_routing_and_omits_the_region_on_azure() {
-        let config = config_with(&[
+        let config = test_config(&[
             ("LLM_PROVIDER", "azure"),
             ("AZURE_RESOURCE_NAME", "example"),
             ("LANGFUSE_SECRET_KEY", "lf-secret"),
@@ -327,7 +319,7 @@ mod tests {
 
     #[test]
     fn routes_through_the_gateway_on_azure_when_the_gateway_is_set() {
-        let config = config_with(&[
+        let config = test_config(&[
             ("LLM_PROVIDER", "azure"),
             ("NEXUS_API_URL", "https://gateway.test"),
         ]);
@@ -338,7 +330,7 @@ mod tests {
 
     #[test]
     fn reports_the_region_on_bedrock_mantle() {
-        let config = config_with(&[
+        let config = test_config(&[
             ("LLM_PROVIDER", "bedrock-mantle"),
             ("AWS_BEARER_TOKEN_BEDROCK", "token"),
         ]);
@@ -353,7 +345,7 @@ mod tests {
 
     #[test]
     fn reports_direct_routing_and_omits_the_region_on_anthropic_beside_the_gateway() {
-        let config = config_with(&[
+        let config = test_config(&[
             ("LLM_PROVIDER", "anthropic"),
             ("ANTHROPIC_API_KEY", "key"),
             ("EMBEDDING_PROVIDER", "none"),
@@ -371,7 +363,7 @@ mod tests {
 
     #[test]
     fn omits_the_embedding_model_when_embeddings_are_disabled() {
-        let config = config_with(&[("EMBEDDING_PROVIDER", "none")]);
+        let config = test_config(&[("EMBEDDING_PROVIDER", "none")]);
         let agent = agent(false);
         let props = agent_started_props(&config, &census(&agent, 0));
         assert!(!props.contains_key("llm.embedding_model"));

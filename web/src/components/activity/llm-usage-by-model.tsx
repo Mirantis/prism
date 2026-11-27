@@ -1,19 +1,9 @@
-import { useQuery } from '@tanstack/react-query';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { runtimeApi } from '@/api/runtime-client';
-import { useAgent } from '@/lib/agent-context';
-
-const WINDOW_HOURS = 24;
+import { useLlmUsage } from '@/hooks/use-llm-usage';
 
 /** Token spend over the last 24 hours, one row per model, in exact counts. */
 export function LlmUsageByModel() {
-  const agent = useAgent();
-  // The same query as the usage cards, so the page reads the window once.
-  const { data: usage } = useQuery({
-    queryKey: ['llm-usage', agent.agentId, WINDOW_HOURS],
-    queryFn: () => runtimeApi.llmUsage(WINDOW_HOURS),
-    refetchInterval: 30_000,
-  });
+  const { data: usage } = useLlmUsage();
 
   const rows = usage?.byModel ?? [];
   if (rows.length === 0) return null;

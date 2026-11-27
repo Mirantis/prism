@@ -2,14 +2,14 @@
 //! `computers.rs`.
 
 use axum::Router;
-use axum::extract::{Path, Request};
-use axum::middleware::{self, Next};
+use axum::extract::Path;
+use axum::middleware;
 use axum::response::Response;
 use axum::routing::post;
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde::Deserialize;
+use serde_json::Value;
 
-use super::computers::is_zod_uuid;
+use super::computers::{SuccessBody, is_zod_uuid, refusal, require_agent};
 use crate::config::CONFIG;
 use crate::services::computer::computer::CredentialFields;
 use crate::services::computer::computer_help_service::{
@@ -27,19 +27,6 @@ pub fn router() -> Router {
         )
         .route("/agents/computer/help/{id}", post(answer_help))
         .layer(middleware::from_fn(require_agent))
-}
-
-/// Answers 503 `{ error: 'Agent is not initialized.' }` while `CONFIG.agent_id` is unset.
-///
-/// In Express this middleware is on a router mounted at `/agents`, so it runs for every
-/// `/agents` request that reaches this router: those the management, Slack and Teams
-/// routers did not answer, including the routes of the routers mounted after it. Here it
-/// covers this router's own routes.
-async fn require_agent(req: Request, next: Next) -> Response {
-    if CONFIG.agent_id().is_none() {
-        return json(503, json!({ "error": "Agent is not initialized." }));
-    }
-    next.run(req).await
 }
 
 /// What the user is told when a sign-in did not go in.
@@ -127,27 +114,6 @@ impl HelpAnswerBody {
         };
         Some(HelpAnswerBody { action, client_id })
     }
-}
-
-/// `{ success: true }`.
-#[derive(Debug, Clone, Serialize)]
-pub struct SuccessBody {
-    pub success: bool,
-}
-
-/// `{ error }`, the body of every refusal.
-#[derive(Debug, Clone, Serialize)]
-pub struct ErrorBody {
-    pub error: String,
-}
-
-fn refusal(status: u16, error: impl Into<String>) -> Response {
-    json(
-        status,
-        ErrorBody {
-            error: error.into(),
-        },
-    )
 }
 
 /// POST /agents/computer/help/{id}/credentials
@@ -244,6 +210,8 @@ async fn answer_help(Path(id): Path<String>, body: JsonBody) -> Response {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::support::http::testing::call;
 

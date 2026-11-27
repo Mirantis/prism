@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PageFrame } from './use-computer-screen';
+import { JPEG_QUALITY, MAX_WIDTH } from './use-screen-share';
 import {
   capFrames,
   hasChanged,
@@ -31,9 +32,6 @@ const SAMPLE_INTERVAL_MS = 250;
 const FIRST_SAMPLE_MS = 200;
 /** The longest recording. The runtime holds the same limit and is the one that binds. */
 export const MAX_RECORDING_MS = 5 * 60_000;
-/** The widest picture sent, and how hard it is compressed — as the live share uses. */
-const MAX_WIDTH = 1280;
-const JPEG_QUALITY = 0.6;
 
 /** Why a recording ended. */
 type EndReason = 'user' | 'limit' | 'share_ended';

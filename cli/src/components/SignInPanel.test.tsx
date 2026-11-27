@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render } from 'ink-testing-library';
 import { SignInPanel } from './SignInPanel.js';
 import type { ApiClient } from '../api-client.js';
+import { flush, type } from '../testing/ink-keys.js';
 
 /**
  * The panel a sign-in is answered in.
@@ -21,7 +22,6 @@ function stubApi(signIn = vi.fn().mockResolvedValue({ success: true })): ApiClie
   return { signInForComputer: signIn } as unknown as ApiClient;
 }
 
-const flush = () => new Promise((resolve) => setImmediate(resolve));
 const TAB = '\t';
 const ENTER = '\r';
 const ESCAPE = '\x1B';
@@ -34,14 +34,6 @@ async function pressEscape(stdin: { write: (data: string) => void }): Promise<vo
   stdin.write(ESCAPE);
   await new Promise((resolve) => setTimeout(resolve, 60));
   await flush();
-}
-
-/** Ink parses one write per render, so each key needs the render it belongs to. */
-async function type(stdin: { write: (data: string) => void }, ...keys: string[]): Promise<void> {
-  for (const key of keys) {
-    stdin.write(key);
-    await flush();
-  }
 }
 
 describe('the terminal sign-in panel', () => {

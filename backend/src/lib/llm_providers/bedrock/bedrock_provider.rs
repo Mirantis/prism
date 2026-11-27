@@ -189,7 +189,7 @@ fn prompt_cache_fragment(model_id: &str, ttl: Option<CacheTtl>) -> CachePointFra
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lib::llm_providers::llm_provider::test_config;
+    use crate::config::test_config;
 
     fn provider() -> LlmProvider {
         bedrock_provider_from(AmazonBedrockProviderSettings {

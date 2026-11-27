@@ -8,8 +8,9 @@ use indexmap::IndexMap;
 
 use crate::lib::llm_providers::deferred_tools::LOAD_TOOLS_NAME;
 use crate::lib::llm_providers::llm_provider::DeferredToolDefinition;
-use crate::lib::visible_text::is_js_whitespace;
-use crate::support::js::{len16, slice16};
+use crate::support::js::{
+    is_js_whitespace, len16, slice16, trim as js_trim, trim_end as js_trim_end,
+};
 
 /// The bound on the section, so a large tool set cannot fill the window.
 pub const CATALOG_MAX_CHARS: usize = 18_000;
@@ -54,14 +55,6 @@ pub fn locale_compare(a: &str, b: &str) -> Ordering {
             .collect()
     };
     tertiary(a).cmp(&tertiary(b))
-}
-
-fn js_trim(text: &str) -> &str {
-    text.trim_matches(is_js_whitespace)
-}
-
-fn js_trim_end(text: &str) -> &str {
-    text.trim_end_matches(is_js_whitespace)
 }
 
 /// The first sentence of a tool server's description, on one line and cut to the
@@ -215,23 +208,11 @@ pub fn build_tool_catalog(tools: &[DeferredToolDefinition], max_chars: Option<us
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
     use crate::lib::llm_providers::llm_provider::{DeferredToolDefinition, ToolLoadRequest};
     use crate::lib::tool_search::tool_index::ToolIndex;
+    use crate::lib::tool_search::tool_index::tests::define;
     use crate::support::js::len16;
-
-    fn define(name: &str, description: &str) -> DeferredToolDefinition {
-        DeferredToolDefinition {
-            name: name.into(),
-            description: description.into(),
-            parameters: json!({ "type": "object", "properties": {} })
-                .as_object()
-                .unwrap()
-                .clone(),
-        }
-    }
 
     #[test]
     fn keeps_the_first_sentence_on_one_line() {

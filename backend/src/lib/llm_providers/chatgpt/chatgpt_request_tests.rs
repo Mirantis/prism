@@ -13,6 +13,7 @@ use crate::ai::{
     GenerateTextOptions, GenerateTextResult, Prompt, Tool, ToolSet, execute_fn, generate_text,
     json_schema, step_count_is, tool,
 };
+use crate::config::CHATGPT_CHAT_ENDPOINT;
 
 // A gpt-6.2-sol stream recorded on a ChatGPT subscription, account identifiers replaced.
 const RECORDED_STREAM: &str = include_str!("fixtures/tool-call-stream.sse");
@@ -68,7 +69,7 @@ async fn generate(
     tools: ToolSet,
     configure: impl FnOnce(&mut GenerateTextOptions),
 ) -> anyhow::Result<GenerateTextResult> {
-    let provider = chatgpt_provider("https://api.openai.com/v1", fetch);
+    let provider = chatgpt_provider(CHATGPT_CHAT_ENDPOINT, fetch);
     let mut options = GenerateTextOptions::new(provider.model("gpt-6.2-sol")?);
     options.prompt = Some(Prompt::Text("hi".into()));
     options.tools = Some(tools);

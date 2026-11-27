@@ -149,9 +149,9 @@ const RELEVANT_WINDOW_MS: i64 = 365 * 24 * 60 * 60 * 1000;
 pub struct MemoryManagerService;
 
 /// The columns a search result reads.
-type ResultRow = (String, String, String, i64, DateTime<Utc>);
+pub(crate) type ResultRow = (String, String, String, i64, DateTime<Utc>);
 
-fn to_result(row: ResultRow) -> MemorySearchResult {
+pub(crate) fn to_result(row: ResultRow) -> MemorySearchResult {
     MemorySearchResult {
         id: row.0,
         content: row.1,

@@ -21,9 +21,12 @@ use parking_lot::Mutex;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use super::child_process::{DEFAULT_MAX_BUFFER, ExecFileOptions, exec_file, process_env};
+use super::child_process::{
+    COMMAND_TIMEOUT_MS, DEFAULT_MAX_BUFFER, ExecFileOptions, exec_file, process_env,
+};
 pub use super::screen_size::OCR_SCALE;
-use super::screen_size::{ScreenSize, math_round, picture_for, size_text};
+use super::screen_size::{ScreenSize, picture_for, size_text};
+use crate::support::js::round as js_round;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -84,7 +87,6 @@ static KEY_CHORD: LazyLock<Regex> =
 /// and a card or a window follows the pointer, so the path is walked rather than jumped.
 const DRAG_STEPS: i64 = 8;
 
-const COMMAND_TIMEOUT_MS: u64 = 10_000;
 /// JPEG quality for the model's picture on ffmpeg's scale, where 2 is best and 31 worst.
 const CAPTURE_QUALITY: i64 = 6;
 const CAPTURE_MAX_BYTES: usize = 8 * 1024 * 1024;
@@ -194,8 +196,8 @@ impl DesktopControl {
             "0.1".into(),
         ];
         for step in 1..=DRAG_STEPS {
-            let x = math_round(x0 as f64 + ((x1 - x0) * step) as f64 / DRAG_STEPS as f64) as i64;
-            let y = math_round(y0 as f64 + ((y1 - y0) * step) as f64 / DRAG_STEPS as f64) as i64;
+            let x = js_round(x0 as f64 + ((x1 - x0) * step) as f64 / DRAG_STEPS as f64) as i64;
+            let y = js_round(y0 as f64 + ((y1 - y0) * step) as f64 / DRAG_STEPS as f64) as i64;
             args.extend([
                 "mousemove".to_string(),
                 x.to_string(),
@@ -360,8 +362,8 @@ impl DesktopControl {
         let sizes = self.sizes.lock();
         let sx = x * sizes.screen.width as f64 / sizes.picture.width as f64;
         let sy = y * sizes.screen.height as f64 / sizes.picture.height as f64;
-        let px = ((sizes.screen.width - 1) as f64).min(math_round(sx).max(0.0));
-        let py = ((sizes.screen.height - 1) as f64).min(math_round(sy).max(0.0));
+        let px = ((sizes.screen.width - 1) as f64).min(js_round(sx).max(0.0));
+        let py = ((sizes.screen.height - 1) as f64).min(js_round(sy).max(0.0));
         (px as i64, py as i64)
     }
 

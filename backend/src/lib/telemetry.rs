@@ -300,6 +300,15 @@ where
     );
 }
 
+/// `{ "agent.id": <id> }` when an agent id is set, else no props.
+pub fn agent_props() -> IndexMap<String, String> {
+    let mut props = IndexMap::new();
+    if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
+        props.insert("agent.id".to_string(), agent_id);
+    }
+    props
+}
+
 /// Emit a product analytics event as an OTEL Log Record.
 ///
 /// No-op when telemetry is not configured. The record has severity INFO, the
@@ -482,16 +491,8 @@ pub fn langfuse_embed_telemetry(function_id: &str) -> LangfuseEmbedTelemetry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Env;
+    use crate::config::test_config;
     use serde_json::Value;
-
-    fn config_with(pairs: &[(&str, &str)]) -> Config {
-        let env: Env = pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        Config::load(&env, &mut |_, _| {}).expect("config loads")
-    }
 
     #[tokio::test]
     async fn track_event_is_a_no_op_when_not_configured() {
@@ -509,7 +510,7 @@ mod tests {
 
     #[test]
     fn puts_the_deployment_id_first_on_the_resource_when_known() {
-        let config = config_with(&[("OTEL_EXPORTER_OTLP_ENDPOINT", "http://example.test")]);
+        let config = test_config(&[("OTEL_EXPORTER_OTLP_ENDPOINT", "http://example.test")]);
         let attributes = resource_attributes(&config, Some("deploy-1"));
         assert_eq!(attributes[0], ("deployment.id", "deploy-1".to_string()));
         assert!(
@@ -521,9 +522,9 @@ mod tests {
 
     #[test]
     fn reports_routing_by_whether_the_gateway_mount_is_set() {
-        let direct = config_with(&[]);
+        let direct = test_config(&[]);
         assert_eq!(llm_routing_for(&direct), "direct");
-        let nexus = config_with(&[("NEXUS_API_URL", "https://nexus.example.test")]);
+        let nexus = test_config(&[("NEXUS_API_URL", "https://nexus.example.test")]);
         assert_eq!(llm_routing_for(&nexus), "nexus");
     }
 
@@ -534,7 +535,7 @@ mod tests {
 
     #[test]
     fn attaches_the_service_environment_version_and_product_to_the_resource() {
-        let config = config_with(&[
+        let config = test_config(&[
             ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://example.test"),
             ("DEPLOYMENT_ENVIRONMENT", "staging"),
             ("SERVICE_VERSION", "v2026.6.18060952"),
@@ -554,7 +555,7 @@ mod tests {
 
     #[test]
     fn omits_service_version_and_product_name_when_not_configured() {
-        let config = config_with(&[("OTEL_EXPORTER_OTLP_ENDPOINT", "http://example.test")]);
+        let config = test_config(&[("OTEL_EXPORTER_OTLP_ENDPOINT", "http://example.test")]);
         let attributes = resource_attributes(&config, None);
         assert!(!attributes.iter().any(|(k, _)| *k == "service.version"));
         assert!(!attributes.iter().any(|(k, _)| *k == "product.name"));
@@ -595,7 +596,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn exports_an_event_as_an_otlp_json_log_record() {
         let (endpoint, mut rx) = collector().await;
-        let config = config_with(&[
+        let config = test_config(&[
             ("OTEL_EXPORTER_OTLP_ENDPOINT", &endpoint),
             ("OTEL_EXPORTER_OTLP_API_KEY", "key-1"),
             ("DEPLOYMENT_ENVIRONMENT", "staging"),

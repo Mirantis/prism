@@ -35,6 +35,7 @@ use crate::services::memory_manager_service::{MEMORY_MANAGER_SERVICE, MemoryBloc
 use crate::services::plugin_catalog_service::{PLUGIN_CATALOG_SERVICE, PluginEntry};
 use crate::services::skill_catalog_service::{SKILL_CATALOG_SERVICE, SkillEntry, SkillSource};
 use crate::services::tool_ledger_service::AnchoredToolChange;
+use crate::support::js::trim as js_trim;
 use crate::tools::conversation_history::COMPACTED_HISTORY_TOOL_NAME;
 use crate::types::{AgentMessageOrigin, HeartbeatTrigger, InvokeMode, TaskLastSend};
 
@@ -151,11 +152,6 @@ impl From<InvokeMode> for PromptMode {
             InvokeMode::Webhook => Self::Webhook,
         }
     }
-}
-
-/// `String.prototype.trim`.
-fn js_trim(text: &str) -> &str {
-    text.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
 }
 
 /// Build the system prompt as parts, each marked cacheable or not.

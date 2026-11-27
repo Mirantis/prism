@@ -45,7 +45,7 @@ use crate::lib::slack_source::{get_active_slack_connections, get_slack_connectio
 use crate::lib::slack_web_client::{
     FileUpload, SlackWebClient, may_receive_slack_token, slack_platform_error_code,
 };
-use crate::lib::telemetry::track_event;
+use crate::lib::telemetry::{agent_props, track_event};
 use crate::protocol::chat_protocol::GeneratedUiElement;
 use crate::queues::slack_heartbeat_throttle_queue::get_slack_heartbeat_throttle_queue;
 use crate::services::agent_workspace_service::AGENT_WORKSPACE_SERVICE;
@@ -648,15 +648,6 @@ fn describe_shared_files(files: &[SlackFileMeta]) -> String {
     } else {
         format!("(shared a file: {names})")
     }
-}
-
-/// `{ 'agent.id': config.agentId }` when an agent id is set.
-fn agent_props() -> IndexMap<String, String> {
-    let mut props = IndexMap::new();
-    if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-        props.insert("agent.id".to_string(), agent_id);
-    }
-    props
 }
 
 /// A string field of a JSON object, when it is a non-empty string.

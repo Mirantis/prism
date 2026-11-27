@@ -11,7 +11,9 @@ use indexmap::IndexMap;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use super::child_process::{DEFAULT_MAX_BUFFER, ExecFileOptions, exec_file, process_env};
+use super::child_process::{
+    COMMAND_TIMEOUT_MS, DEFAULT_MAX_BUFFER, ExecFileOptions, exec_file, process_env,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DesktopWindow {
@@ -57,7 +59,6 @@ impl Titled for DesktopWindow {
     }
 }
 
-const COMMAND_TIMEOUT_MS: u64 = 10_000;
 /// The desktop's own furniture, shown by `wmctrl` as windows on every workspace.
 const FURNITURE: [&str; 2] = ["xfce4-panel", "Desktop"];
 

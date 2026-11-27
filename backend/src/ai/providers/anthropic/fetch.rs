@@ -13,6 +13,7 @@ use crate::ai::errors::SharedError;
 use crate::ai::fetch_timeouts::{CONNECT_TIMEOUT, READ_TIMEOUT};
 use crate::ai::generate_text::with_user_agent_suffix;
 use crate::ai::json::{js_stringify, secure_json_parse};
+use crate::ai::providers::provider_utils::innermost_message;
 use crate::ai::{AbortError, ApiCallError, Headers};
 
 /// The `@ai-sdk/provider-utils` version the request's `user-agent` names.
@@ -131,14 +132,6 @@ fn network_error(err: reqwest::Error, url: &str) -> anyhow::Error {
     error.is_retryable = true;
     error.cause = Some(Arc::new(anyhow::Error::new(err)) as SharedError);
     error.into()
-}
-
-fn innermost_message(err: &(dyn std::error::Error + 'static)) -> String {
-    let mut current = err;
-    while let Some(source) = current.source() {
-        current = source;
-    }
-    current.to_string()
 }
 
 /// `Object.fromEntries(response.headers)`: lowercase names in sorted order, and

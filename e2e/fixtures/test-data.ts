@@ -46,3 +46,6 @@ export const E2E_WORKSPACE = path.join(os.tmpdir(), 'prism-e2e-workspace');
 export const E2E_DATA_DIR = path.join(os.tmpdir(), 'prism-e2e-data');
 
 export const SLACK_COMPUTER_PUBLIC_URL = 'http://localhost:5173';
+
+/** One day, for rows dated in the past. */
+export const DAY_MS = 24 * 60 * 60 * 1000;

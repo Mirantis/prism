@@ -104,8 +104,3 @@ pub fn engine_failure(command: &str, run: &CaptureResult) -> String {
         format!("{command}: {said}")
     }
 }
-
-/// Test-only: forget the host environment so a fake can stand in.
-pub fn reset_engine_host_for_tests(environment: Option<Arc<dyn ExecutionEnvironment>>) {
-    *HOST.write() = environment;
-}

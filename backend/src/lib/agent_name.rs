@@ -19,7 +19,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::support::js::len16;
+use crate::support::js::{len16, trim as js_trim};
 
 /// The longest name, in UTF-16 code units.
 pub const AGENT_NAME_MAX: usize = 64;
@@ -89,11 +89,6 @@ fn follows_rule(value: &str) -> bool {
 fn nfc(text: &str) -> String {
     use unicode_normalization::UnicodeNormalization;
     text.nfc().collect()
-}
-
-/// `String.prototype.trim`: JavaScript's white space and line terminators.
-fn js_trim(text: &str) -> &str {
-    crate::support::js::trim(text)
 }
 
 #[cfg(test)]

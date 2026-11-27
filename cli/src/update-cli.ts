@@ -10,12 +10,7 @@
 
 import { ApiError, apiClient } from './api-client.js';
 import { loadConfig } from './config.js';
-
-const REASON_TEXT: Record<string, string> = {
-  disabled_by_env: 'Updates are disabled (DISABLE_UPDATER is set).',
-  not_sea_install: 'This install updates by other means (pull a new image, or restart the dev server).',
-  dev_build: 'This is a development build — it has no release to update to.',
-};
+import { updateUnavailableText } from './commands/update.js';
 
 // Above the server's own worst-case budget (10 min download + 30 s checksum
 // + 5 min extract + 1 min probe), so a slow but succeeding update is never
@@ -39,7 +34,7 @@ export async function runUpdateCommand(): Promise<never> {
   }
 
   if (!status.enabled) {
-    console.log(REASON_TEXT[status.reason ?? ''] ?? 'Updates are not available in this install.');
+    console.log(updateUnavailableText(status.reason));
     process.exit(0);
   }
   if (status.applying) {

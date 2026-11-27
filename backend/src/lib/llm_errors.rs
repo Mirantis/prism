@@ -83,19 +83,6 @@ pub fn is_spending_limit_value(error: &Value) -> bool {
     matches!(body.get("type"), Some(Value::String(problem_type)) if problem_type.contains("budget-exceeded"))
 }
 
-/// Extract user-friendly detail from a budget-exceeded error.
-///
-/// Returns the RFC 7807 `detail` field (e.g. "Weekly budget: $4.96 of $4.00
-/// used"), or `None` if not available.
-pub fn get_spending_limit_detail(error: &anyhow::Error) -> Option<String> {
-    detail_of(&error_fields(error))
-}
-
-/// Log a warning when a budget-exceeded error is detected.
-pub fn log_spending_limit_warning(error: &anyhow::Error) {
-    log_spending_limit_warning_value(&error_fields(error));
-}
-
 fn log_spending_limit_warning_value(error: &Value) {
     let detail = detail_of(error);
     log_warn!(
@@ -170,14 +157,6 @@ fn detail_of(error: &Value) -> Option<String> {
         },
         _ => None,
     }
-}
-
-/// Extract the RFC 7807 `detail` field from an HTTP error response.
-///
-/// Works for any error that has a problem-details body, not just budget-exceeded
-/// 429s. Returns the detail string or `None`.
-pub fn get_error_detail(error: &anyhow::Error) -> Option<String> {
-    detail_of(&error_fields(error))
 }
 
 /// Message patterns the providers use for "the request does not fit the model's

@@ -515,6 +515,13 @@ impl UnsupportedFunctionalityError {
             functionality: functionality.to_string(),
         }
     }
+
+    pub fn with_message(functionality: &str, message: &str) -> Self {
+        Self {
+            message: message.to_string(),
+            functionality: functionality.to_string(),
+        }
+    }
 }
 display_message!(UnsupportedFunctionalityError);
 impl StdError for UnsupportedFunctionalityError {}
@@ -596,6 +603,9 @@ impl EmptyResponseBodyError {
 display_message!(EmptyResponseBodyError);
 impl StdError for EmptyResponseBodyError {}
 
+/// The text of the DOM `AbortError` an aborted signal throws.
+pub const ABORTED_MESSAGE: &str = "This operation was aborted";
+
 /// The call was cancelled through its `CancellationToken`.
 #[derive(Debug, Clone)]
 pub struct AbortError {
@@ -608,7 +618,7 @@ impl AbortError {
     /// The reason an aborted `AbortSignal` carries.
     pub fn operation() -> Self {
         Self {
-            message: "This operation was aborted".to_string(),
+            message: ABORTED_MESSAGE.to_string(),
         }
     }
 

@@ -24,6 +24,10 @@ use super::codex::credentials::{
     subscription_environment as codex_subscription_environment,
 };
 
+/// The subcommand of the runtime's own executable that runs a coding agent for the
+/// desktop's terminal.
+pub const EXEC_SUBCOMMAND: &str = "coding-agent-exec";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TerminalCommand {
     Claude,
@@ -57,10 +61,6 @@ impl TerminalCommand {
             _ => None,
         }
     }
-}
-
-pub fn is_terminal_command(value: Option<&str>) -> bool {
-    TerminalCommand::parse(value).is_some()
 }
 
 /// Claude Code 2.1's subcommands: none of them is a session, so none takes `--settings`.

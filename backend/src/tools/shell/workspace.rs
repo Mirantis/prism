@@ -10,29 +10,17 @@
 //!   security boundary — the real boundary is filesystem permissions
 //!   (matches upstream's semantics: absolute paths outside the
 //!   workspace pass through and the check returns false).
+//! - `basename` is the last segment of a path, as Node's `path.basename`
+//!   reads it on this platform.
 //!
-//! Both follow the platform's path rules: `/` on Unix; on Windows `\` or `/`
+//! All three follow the platform's path rules: `/` on Unix; on Windows `\` or `/`
 //! separate, a drive (`C:\`) or UNC share (`\\server\share`) is the root, and
 //! the result uses `\`.
 
 #[cfg(not(windows))]
-use posix as rules;
+pub use posix::{basename, is_inside_workspace, resolve_path};
 #[cfg(windows)]
-use win32 as rules;
-
-pub fn resolve_path(workspace: &str, input_path: &str) -> String {
-    rules::resolve_path(workspace, input_path)
-}
-
-pub fn is_inside_workspace(full_path: &str, workspace: &str) -> bool {
-    rules::is_inside_workspace(full_path, workspace)
-}
-
-/// The last segment of `p`, as Node's `path.basename`: a Windows path from
-/// `resolve_path` uses `\`, so splitting on `/` alone would return it whole.
-pub fn basename(p: &str) -> &str {
-    rules::basename(p)
-}
+pub use win32::{basename, is_inside_workspace, resolve_path};
 
 /// Collapse `.` and `..` in the segments after `root`: a `..` above an
 /// absolute root is dropped, one in a relative path kept.

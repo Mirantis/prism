@@ -31,7 +31,7 @@ use diesel::sql_types::Text;
 use flate2::Compression;
 use flate2::read::MultiGzDecoder;
 use flate2::write::GzEncoder;
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexSet;
 use regex::Regex;
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -43,7 +43,7 @@ use crate::config::CONFIG;
 use crate::lib::log_redaction::err_json;
 use crate::lib::sqlite_bootstrap::load_sqlite_vec;
 use crate::lib::sqlite_path::resolve_prisma_sqlite_path;
-use crate::lib::telemetry::track_event;
+use crate::lib::telemetry::{agent_props, track_event};
 use crate::services::runtime_state_service::{
     CHATGPT_AUTH_CLIENT_ID, CHATGPT_AUTH_HOST_ID, CHATGPT_AUTH_TOKENS,
 };
@@ -363,10 +363,7 @@ async fn import_into(live_db: &str, buffer: &[u8]) -> anyhow::Result<()> {
 
     // Best-effort: the process restarts shortly after staging, so this may not
     // flush — losing it never affects the import itself.
-    let mut props = IndexMap::new();
-    if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-        props.insert("agent.id".to_string(), agent_id);
-    }
+    let props = agent_props();
     track_event("agent imported", None, Some(props));
     Ok(())
 }

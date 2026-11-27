@@ -185,7 +185,8 @@ fn missing_bedrock_mantle_settings_for(config: &Config) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lib::llm_providers::llm_provider::{provider_options_json, test_config};
+    use crate::config::test_config;
+    use crate::lib::llm_providers::llm_provider::provider_options_json;
 
     const MANTLE: &str = "https://bedrock-mantle.us-east-1.api.aws/anthropic/v1";
     const MOUNT: &str = "https://gateway.example.com/llm/bedrock-mantle/anthropic/us-east-1/v1";

@@ -11,11 +11,6 @@ export function formatUsd(usd: number): string {
   return USD.format(usd);
 }
 
-/** The amount to six decimals, for the place a figure's exact value is shown. */
-export function formatUsdExact(usd: number): string {
-  return `$${usd.toFixed(6)}`;
-}
-
 /** The chart's series, in their fixed order. */
 export const SPEND_KINDS: readonly SpendKind[] = ['main', 'coding-agent', 'voice'];
 

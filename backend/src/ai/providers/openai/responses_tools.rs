@@ -2,7 +2,7 @@
 //! and the mapping between the names the caller gives provider tools and the names
 //! OpenAI gives them (`createToolNameMapping`).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
@@ -15,7 +15,7 @@ use crate::ai::provider::{
 };
 
 /// The OpenAI tool name of each provider tool id.
-const PROVIDER_TOOL_NAMES: &[(&str, &str)] = &[
+pub(super) const PROVIDER_TOOL_NAMES: &[(&str, &str)] = &[
     ("openai.code_interpreter", "code_interpreter"),
     ("openai.computer", "computer"),
     ("openai.file_search", "file_search"),
@@ -37,50 +37,7 @@ const PROVIDER_TOOL_NAMES: &[(&str, &str)] = &[
 /// the runtime never declares.
 const PORTED_PROVIDER_TOOLS: &[&str] = &[TOOL_SEARCH_ID];
 
-/// Names of provider tools, both ways (`ToolNameMapping`).
-#[derive(Debug, Clone, Default)]
-pub struct ToolNameMapping {
-    custom_to_provider: HashMap<String, String>,
-    provider_to_custom: HashMap<String, String>,
-}
-
-impl ToolNameMapping {
-    /// `createToolNameMapping` with OpenAI's provider tool names.
-    pub fn new(tools: Option<&[LanguageModelV4Tool]>) -> Self {
-        let mut mapping = Self::default();
-        for tool in tools.unwrap_or_default() {
-            let LanguageModelV4Tool::Provider(tool) = tool else {
-                continue;
-            };
-            let Some((_, provider_name)) =
-                PROVIDER_TOOL_NAMES.iter().find(|(id, _)| *id == tool.id)
-            else {
-                continue;
-            };
-            mapping
-                .custom_to_provider
-                .insert(tool.name.clone(), provider_name.to_string());
-            mapping
-                .provider_to_custom
-                .insert(provider_name.to_string(), tool.name.clone());
-        }
-        mapping
-    }
-
-    pub fn to_provider_tool_name(&self, custom_tool_name: &str) -> String {
-        self.custom_to_provider
-            .get(custom_tool_name)
-            .cloned()
-            .unwrap_or_else(|| custom_tool_name.to_string())
-    }
-
-    pub fn to_custom_tool_name(&self, provider_tool_name: &str) -> String {
-        self.provider_to_custom
-            .get(provider_tool_name)
-            .cloned()
-            .unwrap_or_else(|| provider_tool_name.to_string())
-    }
-}
+pub use crate::ai::providers::provider_utils::ToolNameMapping;
 
 /// What `prepareResponsesTools` gives the request.
 #[derive(Debug, Default)]
@@ -402,7 +359,7 @@ mod tests {
             id: "openai.web_search".to_string(),
             args: Map::new(),
         })];
-        let mapping = ToolNameMapping::new(Some(&tools));
+        let mapping = ToolNameMapping::new(Some(&tools), PROVIDER_TOOL_NAMES);
         assert!(prepare_responses_tools(Some(&tools), None, &mapping, true).is_err());
     }
 }

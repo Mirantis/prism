@@ -10,11 +10,9 @@ import { createBdd } from 'playwright-bdd';
 import { expect } from '@playwright/test';
 import * as dbHelper from '../support/db-helper';
 import { HomePage } from '../pages/home.page';
-import { DEFAULT_AGENT_ID } from '../fixtures/test-data';
+import { DAY_MS, DEFAULT_AGENT_ID } from '../fixtures/test-data';
 
 const { Given, When, Then } = createBdd();
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 function agentRows() {
   return dbHelper.getPrisma().conversationMessage.findMany({

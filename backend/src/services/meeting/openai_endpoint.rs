@@ -9,7 +9,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use base64::Engine;
 use indexmap::IndexMap;
-use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use regex::Regex;
 use serde_json::{Map, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -19,6 +18,7 @@ use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::config::CONFIG;
+use crate::support::js::encode_uri_component;
 use crate::{log_info, log_warn};
 
 const REALTIME_HOST: &str = "wss://api.openai.com/v1/realtime";
@@ -28,23 +28,6 @@ const LOOPBACK_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "[::1]"];
 
 /// The override is reported once, on the first session it opens.
 static OVERRIDE_REPORTED: AtomicBool = AtomicBool::new(false);
-
-/// What `encodeURIComponent` leaves as it is: letters, digits and `-_.!~*'()`.
-const URI_COMPONENT: &AsciiSet = &NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'_')
-    .remove(b'.')
-    .remove(b'!')
-    .remove(b'~')
-    .remove(b'*')
-    .remove(b'\'')
-    .remove(b'(')
-    .remove(b')');
-
-/// `encodeURIComponent`.
-fn encode_uri_component(text: &str) -> String {
-    utf8_percent_encode(text, URI_COMPONENT).to_string()
-}
 
 /// A URL's `host` as WHATWG URL reports it: the hostname, and the port when it is not
 /// the scheme's default.

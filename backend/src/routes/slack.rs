@@ -56,13 +56,12 @@ use indexmap::IndexMap;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::config::CONFIG;
 use crate::db::models::{NewSlackVerificationCode, SlackMapping, SlackVerificationType};
 use crate::db::schema::agent_workspaces::dsl as aw;
 use crate::db::schema::slack_mappings::dsl as m;
 use crate::db::schema::slack_verification_codes::dsl as vc;
 use crate::db::sql_types::DbDateTime;
-use crate::lib::telemetry::track_event;
+use crate::lib::telemetry::{agent_props, track_event};
 use crate::services::channel_adapter_interface::{ChannelContext, DeliverableMessage};
 use crate::services::conversation_service::{CONVERSATION_SERVICE, LiveThread};
 use crate::services::heartbeat_service::{HEARTBEAT_SERVICE, TriggerOutcome};
@@ -234,15 +233,6 @@ fn is_unique_violation(err: &anyhow::Error) -> bool {
             _
         ))
     )
-}
-
-/// `{ 'agent.id': config.agentId }` when an agent id is set.
-fn agent_props() -> IndexMap<String, String> {
-    let mut props = IndexMap::new();
-    if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-        props.insert("agent.id".to_string(), agent_id);
-    }
-    props
 }
 
 /// The answer, or the 500 `{ error }` a failure gets, logged as

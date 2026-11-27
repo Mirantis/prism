@@ -26,7 +26,7 @@ pub type DeferredStart = Box<
 
 /// The error a start returns when a stop cancelled it before the process.
 pub fn aborted() -> anyhow::Error {
-    anyhow::anyhow!("This operation was aborted")
+    anyhow::anyhow!(crate::ai::errors::ABORTED_MESSAGE)
 }
 
 /// The run that `start` returns, as one `CodingAgentRun` from the moment it is

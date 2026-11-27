@@ -7,6 +7,7 @@
 
 import {
   SUBAGENT_NAME,
+  clip,
   judge,
   renderAgentMessage,
   renderCodingTaskNotification,
@@ -173,11 +174,6 @@ function describeCalls(calls: ToolCallRecord[]): string {
 
 function describeTrace(trace: TurnTrace): string {
   return `${describeCalls(trace.calls)} | text: ${trace.text}`;
-}
-
-function clip(text: string, max: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }
 
 /** The command a shell call runs, or '' for any other call. */

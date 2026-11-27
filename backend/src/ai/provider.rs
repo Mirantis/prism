@@ -824,6 +824,15 @@ pub enum Warning {
     },
 }
 
+impl Warning {
+    pub fn unsupported(feature: &str, details: Option<String>) -> Self {
+        Warning::Unsupported {
+            feature: feature.to_string(),
+            details,
+        }
+    }
+}
+
 /// What a provider reports about the request it sent.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LanguageModelV4Request {

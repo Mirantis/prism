@@ -21,7 +21,9 @@ use crate::db::schema::memory_entries::dsl as m;
 use crate::db::sql_types::{DbDateTime, PrismaDateTime};
 use crate::lib::sqlite_bootstrap::{EMBEDDING_DIMENSION, init_sqlite_vec};
 use crate::log_warn;
-use crate::services::memory_manager_service::{MemorySearchResult, MemorySort};
+use crate::services::memory_manager_service::{
+    MemorySearchResult, MemorySort, ResultRow, to_result,
+};
 
 const DEFAULT_SIMILARITY_THRESHOLD: f64 = 0.3;
 const MAX_SEARCH_LIMIT: i64 = 100;
@@ -91,18 +93,7 @@ struct Hit {
     distance: f64,
 }
 
-type ResultRow = (String, String, String, i64, DateTime<Utc>);
 type ResultSql = (Text, Text, Text, BigInt, PrismaDateTime);
-
-fn to_result(row: ResultRow) -> MemorySearchResult {
-    MemorySearchResult {
-        id: row.0,
-        content: row.1,
-        category: row.2,
-        importance: row.3,
-        created_at: row.4,
-    }
-}
 
 /// The metadata read over a set of hit ids, with the agent, window and category
 /// filters vec0 cannot apply.

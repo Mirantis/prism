@@ -20,7 +20,7 @@ use crate::db::models::{NewSlackHeartbeatTrigger, SlackHeartbeatTrigger};
 use crate::db::schema::agent_workspaces::dsl as aw;
 use crate::db::schema::slack_heartbeat_triggers::dsl as t;
 use crate::db::sql_types::DbDateTime;
-use crate::lib::telemetry::track_event;
+use crate::lib::telemetry::{agent_props, track_event};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,15 +57,6 @@ pub struct TriggerChannelCheck {
     pub user_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
-}
-
-/// `{ 'agent.id': config.agentId }` when an agent id is set.
-fn agent_props() -> IndexMap<String, String> {
-    let mut props = IndexMap::new();
-    if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-        props.insert("agent.id".to_string(), agent_id);
-    }
-    props
 }
 
 pub struct SlackHeartbeatTriggerService;

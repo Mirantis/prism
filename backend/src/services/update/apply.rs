@@ -88,11 +88,7 @@ impl UpdateErrorCode {
     }
 }
 
-impl std::fmt::Display for UpdateErrorCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+crate::support::display_as_str!(UpdateErrorCode);
 
 /// A failed update step, with the code an attempt row records. Returned inside
 /// `anyhow::Error`; callers downcast to read the code.

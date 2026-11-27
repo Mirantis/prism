@@ -4,7 +4,6 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
-use futures::StreamExt;
 use parking_lot::Mutex;
 use serde_json::json;
 
@@ -12,7 +11,7 @@ use super::*;
 use crate::lib::coding_agents::coding_agent::{Effort, ModelTier};
 use crate::lib::coding_agents::subscription_switch::set_subscription_in_memory_for_tests;
 use crate::lib::coding_agents::testing::{
-    FakeChild, FakeEnvironment, FakeFiles, env_of, fake_paths, wait_for,
+    FakeChild, FakeEnvironment, FakeFiles, collect, env_of, fake_paths, result, wait_for,
 };
 use crate::lib::execution_environments::execution_environment::{ProcessMark, RunOptions};
 use crate::lib::execution_environments::get_execution_environment::set_execution_environment_for_tests;
@@ -52,10 +51,6 @@ fn args_of(spawns: &Spawns) -> Vec<String> {
     spawns.lock()[0].1.clone()
 }
 
-async fn collect(run: &Arc<dyn CodingAgentRun>) -> Vec<CodingAgentEvent> {
-    run.take_events().unwrap().collect().await
-}
-
 async fn events_for(lines: &[serde_json::Value]) -> Vec<CodingAgentEvent> {
     let child = FakeChild::new();
     let (environment, _) = spawning(child.clone());
@@ -65,15 +60,6 @@ async fn events_for(lines: &[serde_json::Value]) -> Vec<CodingAgentEvent> {
     }
     child.finish(Some(0));
     collect(&run).await
-}
-
-fn result(stop_reason: CodingAgentStopReason, turns: i64, message: &str) -> CodingAgentEvent {
-    CodingAgentEvent::Result {
-        stop_reason,
-        turns,
-        message: message.to_string(),
-        refusals: None,
-    }
 }
 
 fn has(args: &[String], arg: &str) -> bool {

@@ -36,7 +36,6 @@ use http::HeaderMap;
 use indexmap::IndexMap;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use parking_lot::{Mutex, RwLock};
-use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -55,7 +54,7 @@ use crate::db::schema::{
 use crate::lib::log_redaction::err_json;
 use crate::lib::proxy_dispatcher::get_proxy_dispatcher;
 use crate::lib::teams_config::{TeamsConnectionRecord, get_teams_config};
-use crate::lib::telemetry::track_event;
+use crate::lib::telemetry::{agent_props, track_event};
 use crate::services::attachment_service::AttachmentMeta;
 use crate::services::channel_adapter_interface::{
     ChannelAdapter, ChannelContext, ChannelDestination, ChannelName, ChatPlatform,
@@ -78,6 +77,7 @@ use crate::services::thread_reply_classifier_service::{
 use crate::support::http::{
     DEFAULT_JSON_LIMIT_BYTES, JsonBody, JsonOptions, empty, finish, json, with_json_body,
 };
+use crate::support::js::trim as js_trim;
 use crate::utils::teams_formatter::{
     FormatTeamsMessageOptions, format_teams_message, teams_channel_label,
 };
@@ -158,18 +158,6 @@ static HTML_HEX: LazyLock<Regex> =
 static HTML_AMP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)&amp;").expect("valid regex"));
 static SPACES_AND_TABS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[ \t]+").expect("valid regex"));
-
-/// The characters `encodeURIComponent` leaves as they are.
-const URI_COMPONENT: &AsciiSet = &NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'_')
-    .remove(b'.')
-    .remove(b'!')
-    .remove(b'~')
-    .remove(b'*')
-    .remove(b'\'')
-    .remove(b'(')
-    .remove(b')');
 
 /// Sign-in and the signing keys go direct, as the SDK's token and key clients do.
 static DIRECT_HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
@@ -1209,20 +1197,6 @@ fn retry_after_ms(error: &anyhow::Error) -> Option<u64> {
     error
         .downcast_ref::<TeamsHttpError>()
         .and_then(|e| e.retry_after_ms)
-}
-
-/// `String.prototype.trim`: JavaScript's white space and line terminators.
-fn js_trim(text: &str) -> &str {
-    crate::support::js::trim(text)
-}
-
-/// `{ 'agent.id': config.agentId }` when an agent id is set.
-fn agent_props() -> IndexMap<String, String> {
-    let mut props = IndexMap::new();
-    if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-        props.insert("agent.id".to_string(), agent_id);
-    }
-    props
 }
 
 /// An attacker-controlled activity field as a log line may hold it: control
@@ -2382,7 +2356,7 @@ impl TeamsAdapterService {
                     "[{}]({}/agents/attachments/{})",
                     a.filename.replace(['[', ']'], ""),
                     origin,
-                    utf8_percent_encode(&a.id, URI_COMPONENT)
+                    crate::support::js::encode_uri_component(&a.id)
                 )
             })
             .collect::<Vec<_>>()

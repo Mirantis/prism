@@ -17,9 +17,10 @@ use regex::Regex;
 use serde_json::json;
 
 use super::child_process::{
-    ChildHandle, DEFAULT_MAX_BUFFER, ExecFileOptions, Pipes, StopSignal, exec_file, kill_pid,
-    on_chunks, process_env, spawn_child,
+    COMMAND_TIMEOUT_MS, ChildHandle, DEFAULT_MAX_BUFFER, ExecFileOptions, Pipes, StopSignal,
+    exec_file, kill_pid, on_chunks, process_env, spawn_child,
 };
+use crate::lib::coding_agents::terminal::EXEC_SUBCOMMAND;
 use crate::lib::data_dir::resolve_data_dir;
 use crate::lib::execution_environments::execution_environment::ExecutionEnvironmentName;
 use crate::lib::execution_environments::get_execution_environment::get_execution_environment;
@@ -28,15 +29,10 @@ use crate::{log_debug, log_warn};
 
 /// How long a program gets to exit on SIGTERM before SIGKILL.
 const EXIT_GRACE_MS: u64 = 3_000;
-const COMMAND_TIMEOUT_MS: u64 = 10_000;
 /// The dock's settings, which are per dock and so addressed by their path.
 const DOCK_SETTINGS: &str = "net.launchpad.plank.dock.settings:/net/launchpad/plank/docks/dock1/";
 /// The dock's half of the desktop's theme; the image installs it.
 const DOCK_THEME: &str = "Orchis";
-
-/// The subcommand of the runtime's own executable that runs a coding agent for the
-/// desktop's terminal.
-const EXEC_SUBCOMMAND: &str = "coding-agent-exec";
 
 /// The executable the wrappers run with `coding-agent-exec`: the runtime's own.
 pub fn exec_entry() -> PathBuf {

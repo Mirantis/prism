@@ -1,20 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
 import { Coins, ArrowDownToLine, ArrowUpFromLine, Zap } from 'lucide-react';
 import { StatCard } from '@/components/shared/stat-card';
-import { runtimeApi } from '@/api/runtime-client';
-import { useAgent } from '@/lib/agent-context';
+import { useLlmUsage } from '@/hooks/use-llm-usage';
 import { formatTokens } from '@/lib/format';
-
-const WINDOW_HOURS = 24;
 
 /** Token spend over the last 24 hours, as four cards. */
 export function LlmUsageCards() {
-  const agent = useAgent();
-  const { data: usage, isPending, isError } = useQuery({
-    queryKey: ['llm-usage', agent.agentId, WINDOW_HOURS],
-    queryFn: () => runtimeApi.llmUsage(WINDOW_HOURS),
-    refetchInterval: 30_000,
-  });
+  const { data: usage, isPending, isError } = useLlmUsage();
 
   // Skeletons only while a first read is outstanding; a read that failed shows
   // dashes.

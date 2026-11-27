@@ -171,13 +171,6 @@ pub fn load_sqlite_vec(conn: &mut SqliteConnection) -> anyhow::Result<()> {
         })
 }
 
-/// Access the initialized handle. Errors if init has not been called.
-pub fn get_sqlite_vec() -> anyhow::Result<Arc<Database>> {
-    HANDLE.lock().as_ref().map(Arc::clone).ok_or_else(|| {
-        anyhow::anyhow!("SQLite vec handle is not initialized — call init_sqlite_vec() first")
-    })
-}
-
 /// Release the handle (graceful-shutdown path). The next [`init_sqlite_vec`]
 /// rebuilds the index.
 pub fn close_sqlite_vec() {

@@ -11,12 +11,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Weak};
 use std::time::Duration;
 
-use axum::body::Body;
 use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 use axum::extract::{FromRequest, Request};
 use axum::response::{IntoResponse, Response};
 use diesel::prelude::*;
-use http::{HeaderMap, StatusCode, header};
+use http::{StatusCode, header};
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -39,7 +38,7 @@ use crate::lib::telemetry::track_event;
 use crate::services::computer::computer_help_service::COMPUTER_HELP_SERVICE;
 use crate::services::computer::computer_service::COMPUTER_SERVICE;
 use crate::services::computer::computer_session::Controller;
-use crate::services::websocket_upgrades::serve_upgrades;
+use crate::services::websocket_upgrades::{joined_header, refuse, serve_upgrades};
 use crate::support::{js, now_ms};
 use crate::{log_info, log_warn};
 
@@ -115,25 +114,6 @@ struct Reports {
     last: String,
     building: bool,
     again: bool,
-}
-
-/// `HTTP/1.1 <status>` with `Connection: close` and nothing else.
-fn refuse(status: StatusCode) -> Response {
-    let mut response = (status, Body::empty()).into_response();
-    response
-        .headers_mut()
-        .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
-    response
-}
-
-/// A header as Node gives it: repeated values joined with `, `.
-fn joined_header(headers: &HeaderMap, name: header::HeaderName) -> Option<String> {
-    let values: Vec<&str> = headers
-        .get_all(name)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .collect();
-    (!values.is_empty()).then(|| values.join(", "))
 }
 
 /// `new URL(req.url, 'http://localhost').searchParams.get('computer') ?? ''`.

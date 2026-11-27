@@ -10,12 +10,17 @@ use std::task::{Context, Poll};
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use futures::StreamExt;
 use parking_lot::Mutex;
 use tokio::io::AsyncWrite;
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::io::StreamReader;
 
+use crate::lib::coding_agents::coding_agent::{
+    CodingAgentEvent, CodingAgentRun, CodingAgentStopReason,
+};
+pub use crate::lib::execution_environments::execution_environment::env_of;
 use crate::lib::execution_environments::execution_environment::{
     AgentPaths, DirEntry, ExecEnd, ExecOutput, ExecProcess, ExecStdin, ExecutionEnvironment,
     ExecutionEnvironmentName, ExecutionFiles, FileStat, PreparedWorkspace, ProcessEnv, ProcessMark,
@@ -508,12 +513,19 @@ impl ExecutionEnvironment for FakeEnvironment {
     }
 }
 
-/// An env built from pairs, in order.
-pub fn env_of(pairs: &[(&str, &str)]) -> ProcessEnv {
-    pairs
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect()
+/// Every event of `run`, once its stream ends.
+pub async fn collect(run: &Arc<dyn CodingAgentRun>) -> Vec<CodingAgentEvent> {
+    run.take_events().unwrap().collect().await
+}
+
+/// A `result` event without refusals.
+pub fn result(stop_reason: CodingAgentStopReason, turns: i64, message: &str) -> CodingAgentEvent {
+    CodingAgentEvent::Result {
+        stop_reason,
+        turns,
+        message: message.to_string(),
+        refusals: None,
+    }
 }
 
 /// Waits until `check` holds, for up to a second.

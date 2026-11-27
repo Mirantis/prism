@@ -14,7 +14,7 @@ use super::credentials::{
 };
 use crate::config::{CONFIG, CodexTierModel, CodingAgentName, TierSet};
 use crate::lib::coding_agents::bedrock_credentials::bedrock_region;
-use crate::lib::coding_agents::cli_run::{CliRunSpec, ParseLine, run_cli};
+use crate::lib::coding_agents::cli_run::{CliRunSpec, ParseLine, js_string, run_cli};
 use crate::lib::coding_agents::coding_agent::{
     CodingAgent, CodingAgentEvent, CodingAgentHome, CodingAgentMode, CodingAgentRun,
     CodingAgentStopReason, CodingAgentTask, CodingAgentUsage, PLAN_ONLY_INSTRUCTION,
@@ -310,14 +310,6 @@ fn model_for(
             })
         }
         None => use_bedrock.then(|| BEDROCK_DEFAULT_MODEL.to_string()),
-    }
-}
-
-/// A field's text: a string as it is, any other value as `String(value)`.
-fn js_string(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        other => other.to_string(),
     }
 }
 

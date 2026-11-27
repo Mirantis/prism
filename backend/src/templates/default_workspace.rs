@@ -18,6 +18,8 @@ use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::support::js::trim as js_trim;
+
 /// Default Soul: the agent's constitution (values framework, not prescriptive rules).
 const DEFAULT_SOUL_MD: &str = r#"## Core Truths
 - Skip filler such as "Great question!" and "I'd be happy to help!", and just help.
@@ -144,16 +146,6 @@ pub fn get_default_workspace_files() -> DefaultWorkspaceFiles {
         vision_md: DEFAULT_VISION_MD.to_string(),
         agent_md: DEFAULT_AGENT_MD.to_string(),
     }
-}
-
-/// Backwards compatibility alias of `get_default_workspace_files`.
-pub fn get_default_bootstrap_files() -> DefaultWorkspaceFiles {
-    get_default_workspace_files()
-}
-
-/// `String.prototype.trim`.
-fn js_trim(text: &str) -> &str {
-    text.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
 }
 
 fn guide_digest(guide: &str) -> String {

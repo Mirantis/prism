@@ -71,6 +71,7 @@ use crate::services::meeting::response_policy::{
 };
 use crate::services::meeting::transcript_log::format_transcript;
 use crate::services::voice::realtime_tools::PreparedTools;
+use crate::support::js::round as js_round;
 use crate::{log_debug, log_info, log_warn};
 
 /// How long a speaker reading stays worth believing.
@@ -1055,16 +1056,6 @@ fn locale_compare(a: &str, b: &str) -> Ordering {
             .collect()
     }
     base(a).cmp(&base(b)).then_with(|| a.cmp(b))
-}
-
-/// `Math.round`: the nearest integer, halves toward positive infinity.
-fn js_round(value: f64) -> i64 {
-    let floor = value.floor();
-    (if value - floor >= 0.5 {
-        floor + 1.0
-    } else {
-        floor
-    }) as i64
 }
 
 #[cfg(test)]

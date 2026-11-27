@@ -10,10 +10,9 @@
 
 import { createBdd } from 'playwright-bdd';
 import { expect } from '@playwright/test';
+import { RUNTIME_PORT } from '../support/runtime-port';
 
 const { Then } = createBdd();
-
-const RUNTIME_PORT = 3003;
 
 Then('the update banner is not shown', async ({ page }) => {
   await expect(page.getByTestId('update-banner')).toHaveCount(0);

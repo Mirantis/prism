@@ -183,15 +183,20 @@ impl Signal {
     }
 }
 
-impl std::fmt::Display for Signal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+crate::support::display_as_str!(Signal);
 
 /// The environment variables a process starts with (`NodeJS.ProcessEnv`), in
 /// insertion order.
 pub type ProcessEnv = IndexMap<String, String>;
+
+/// An env built from pairs, in order.
+#[cfg(test)]
+pub fn env_of(pairs: &[(&str, &str)]) -> ProcessEnv {
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
 
 /// A process's stdin, writable once taken.
 pub type ExecStdin = Pin<Box<dyn AsyncWrite + Send>>;
@@ -227,11 +232,7 @@ impl ExecutionEnvironmentName {
     }
 }
 
-impl std::fmt::Display for ExecutionEnvironmentName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+crate::support::display_as_str!(ExecutionEnvironmentName);
 
 /// What `prepare_workspace` reports: the usable root and, when the intended one
 /// could not be used, that root.

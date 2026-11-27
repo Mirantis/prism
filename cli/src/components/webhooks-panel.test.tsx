@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'ink-testing-library';
 import { WebhooksPanel } from './webhooks-panel.js';
 import { ApiError, type ApiClient, type WebhookSubscription } from '../api-client.js';
+import { flush, type } from '../testing/ink-keys.js';
 
 const { mockEditText } = vi.hoisted(() => ({ mockEditText: vi.fn() }));
 vi.mock('../editor.js', () => ({
@@ -10,7 +11,6 @@ vi.mock('../editor.js', () => ({
   resolveEditor: () => 'test-editor',
 }));
 
-const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 /** A save or an editor hand-off resolves over several ticks before its frame. */
 async function settle(): Promise<void> {
@@ -21,14 +21,6 @@ const TAB = '\t';
 const ENTER = '\r';
 const RIGHT = '\x1B[C';
 const LEFT = '\x1B[D';
-
-/** Ink parses one write per render, so each key needs the render it belongs to. */
-async function type(stdin: { write: (data: string) => void }, ...keys: string[]): Promise<void> {
-  for (const key of keys) {
-    stdin.write(key);
-    await flush();
-  }
-}
 
 const alerts: WebhookSubscription = {
   id: 'wh-1',

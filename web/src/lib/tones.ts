@@ -21,6 +21,17 @@ export const TONE_DOT: Record<Tone, string> = {
   neutral: 'bg-muted-foreground',
 };
 
+/** The word for an agent status as the runtime reports it. */
+export function agentStatusLabel(status: string): string {
+  return AGENT_STATUS_LABELS[status] ?? status;
+}
+
+const AGENT_STATUS_LABELS: Record<string, string> = {
+  RUNNING: 'Working',
+  IDLE: 'Idle',
+  ERROR: 'Error',
+};
+
 /** The tone for an agent status as the runtime reports it. */
 export function agentStatusTone(status: string | undefined): Tone {
   if (status === 'RUNNING') return 'primary';
