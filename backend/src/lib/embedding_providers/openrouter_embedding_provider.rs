@@ -96,7 +96,10 @@ mod tests {
 
     #[test]
     fn names_the_same_app_as_chat() {
-        let config = config(&[("OPENROUTER_APP_TITLE", "Example Product")]);
+        let config = gateway_test_config(&[
+            ("OPENROUTER_APP_URL", "https://example-product.example"),
+            ("OPENROUTER_APP_TITLE", "Example Product"),
+        ]);
         let s = openrouter_settings(&config, OPENROUTER_DIRECT);
         assert_eq!(s.headers, Some(open_router_attribution_headers(&config)));
         assert_eq!(s.headers.unwrap()["X-OpenRouter-Title"], "Example Product");
