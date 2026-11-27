@@ -102,4 +102,63 @@ describe('Input', () => {
       unmount();
     });
   });
+
+  describe('editing keys', () => {
+    // Home, xterm app-cursor Home, vt220 Home, rxvt Home, Ctrl+A, and Cmd+Left
+    // as xterm and kitty encode the super modifier.
+    it.each(['\x1b[H', '\x1bOH', '\x1b[1~', '\x1b[7~', '\x01', '\x1b[1;9D'])(
+      'moves to the start of the line on %j',
+      async (key) => {
+        expect(await typeAfter('one\ntwo', [key])).toBe('one\nXtwo');
+      },
+    );
+
+    it.each(['\x1b[F', '\x1bOF', '\x1b[4~', '\x1b[8~', '\x05', '\x1b[1;9C'])(
+      'moves to the end of the line on %j',
+      async (key) => {
+        const left = '\x1b[D';
+        expect(await typeAfter('hello world', [left, left, left, key])).toBe('hello worldX');
+      },
+    );
+
+    // Option+Left as xterm encodes Alt, Meta+B, Option+Left from an Esc+ profile,
+    // Ctrl+Left, and rxvt Ctrl+Left.
+    it.each(['\x1b[1;3D', '\x1bb', '\x1b\x1b[D', '\x1b[1;5D', '\x1bOd'])(
+      'moves back one word on %j',
+      async (key) => {
+        expect(await typeAfter('hello big world', [key])).toBe('hello big Xworld');
+      },
+    );
+
+    it.each(['\x1b[1;3C', '\x1bf', '\x1b[1;5C', '\x1bOc'])(
+      'moves forward one word on %j',
+      async (key) => {
+        expect(await typeAfter('hello big world', ['\x1b[H', key])).toBe('helloX big world');
+      },
+    );
+
+    it('submits on Option+Enter', async () => {
+      const onSubmit = vi.fn();
+      const onChange = vi.fn();
+      const { stdin, unmount } = render(
+        <Input value="ship it" onChange={onChange} onSubmit={onSubmit} />,
+      );
+      await press(stdin, '\x1b\r');
+      expect(onSubmit).toHaveBeenCalledWith('ship it');
+      expect(onChange).not.toHaveBeenCalled();
+      unmount();
+    });
+
+    it('leaves the value alone on Ctrl+O, Ctrl+C and Escape', async () => {
+      const onChange = vi.fn();
+      const { stdin, unmount } = render(
+        <Input value="draft" onChange={onChange} onSubmit={vi.fn()} />,
+      );
+      await press(stdin, '\x0f', '\x03', '\x1b');
+      // Ink holds a lone ESC for 20 ms before it emits Escape.
+      await new Promise((r) => setTimeout(r, 60));
+      expect(onChange).not.toHaveBeenCalled();
+      unmount();
+    });
+  });
 });
