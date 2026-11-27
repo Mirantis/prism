@@ -437,6 +437,20 @@ class TuiAdapter {
     }
   }
 
+  /** Whether the runtime has a conversation with this id (`GET /messages`). Undefined when it did not answer. */
+  async threadStatus(threadId: string): Promise<'found' | 'missing' | undefined> {
+    try {
+      const params = new URLSearchParams({ threadId, limit: '1' });
+      const res = await fetch(`${this.httpUrl}/messages?${params.toString()}`, {
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (res.status === 404) return 'missing';
+      return res.ok ? 'found' : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Show an existing conversation: its history now (as `history`), and its events from here on. */
   resumeThread(threadId: string): Promise<void> {
     this.adopt(threadId);

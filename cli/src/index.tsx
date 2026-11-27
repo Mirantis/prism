@@ -5,6 +5,7 @@ import { App } from './App.js';
 import { loadConfig } from './config.js';
 import { tuiAdapterService, ThreadSummary } from './tui-adapter.js';
 import { detectTerminalGraphics } from './images/terminal-graphics.js';
+import { OpenThread, parseLaunchArgs, resolveThreadLaunch } from './launch.js';
 
 // The CLI doesn't know — and isn't told — the userId or agentId. The
 // runtime owns both and substitutes them when our envelopes omit them.
@@ -20,10 +21,11 @@ if (args.includes('--version') || args.includes('-v')) {
 if (args.includes('--help') || args.includes('-h')) {
   console.log(
     'prism — Prism Agent terminal UI (connects to prism-server at $PRISM_HTTP_URL, default http://127.0.0.1:3003).\n' +
-      '  update     Check for a newer Prism release and install it.\n' +
-      '  acp        Serve the Agent Client Protocol on stdio, for an editor to start.\n' +
-      '  --resume   Pick a previous conversation to resume instead of starting fresh.\n' +
-      '             An agent in single-thread mode always opens its one conversation.',
+      '  update         Check for a newer Prism release and install it.\n' +
+      '  acp            Serve the Agent Client Protocol on stdio, for an editor to start.\n' +
+      '  --resume       Pick a previous conversation to resume instead of starting fresh.\n' +
+      '                 An agent in single-thread mode always opens its one conversation.\n' +
+      '  --resume <id>  Open the conversation with this id.',
   );
   process.exit(0);
 }
@@ -39,7 +41,7 @@ if (args[0] === 'update') {
 
 function main(): void {
   const cfg = loadConfig();
-  const resume = args.includes('--resume');
+  const launch = parseLaunchArgs(args);
   // Ink enters raw mode only when its input hooks mount, after the first frame. Raw mode
   // from the start keeps a Ctrl+C typed during boot a key press rather than a SIGINT.
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
@@ -47,7 +49,9 @@ function main(): void {
   // The terminal answers the graphics probe as input, so it runs before Ink reads stdin.
   const graphics = detectTerminalGraphics(process.stdin, process.stdout);
 
-  async function start(resumeData?: { sessions: ThreadSummary[]; cwd: string }): Promise<void> {
+  async function start(
+    opened: { resume?: { sessions: ThreadSummary[]; cwd: string }; thread?: OpenThread } = {},
+  ): Promise<void> {
     const terminalGraphics = await graphics;
     render(
       <App
@@ -57,13 +61,22 @@ function main(): void {
         hideCursor={cfg.hideCursor}
         hideStatusBar={cfg.hideStatusBar}
         graphics={terminalGraphics}
-        resume={resumeData}
+        resume={opened.resume}
+        thread={opened.thread}
       />,
       { exitOnCtrlC: false, interactive: true },
     );
   }
 
-  if (resume) {
+  /** Print why the launch cannot open a conversation, and exit with an error. */
+  function fail(message: string): never {
+    console.error(message);
+    process.exit(1);
+  }
+
+  const onWait = () => process.stderr.write(`Waiting for the Prism runtime at ${cfg.httpUrl}…\n`);
+
+  if (launch.kind === 'pick') {
     // Fetch the resumable threads before rendering so we can exit cleanly when
     // there's nothing to resume (and avoid flashing an empty picker). An agent in
     // single-thread mode has nothing to pick: the CLI opens its one conversation.
@@ -77,7 +90,18 @@ function main(): void {
         console.log('No sessions to resume.');
         process.exit(0);
       }
-      await start({ sessions, cwd: process.cwd() });
+      await start({ resume: { sessions, cwd: process.cwd() } });
+    })();
+  } else if (launch.kind === 'thread') {
+    void (async () => {
+      // The launch can wait for the runtime, so it asks in cooked mode, where Ctrl+C
+      // stops it. The terminal's answers to the graphics probe arrive in raw mode first.
+      await graphics;
+      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+      const opened = await resolveThreadLaunch(launch.id, tuiAdapterService, onWait);
+      if (opened.kind === 'exit') fail(opened.message);
+      if (process.stdin.isTTY) process.stdin.setRawMode(true);
+      await start(opened.kind === 'thread' ? { thread: { id: opened.id } } : {});
     })();
   } else {
     void start();

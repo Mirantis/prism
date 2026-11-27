@@ -38,22 +38,22 @@ const pressEscape = async (stdin: { write: (data: string) => void }) => {
 const flush = () => new Promise((r) => setImmediate(r));
 
 describe('ResumeList', () => {
-  it('renders the title (or id fallback), cwd, and time-ago + workspace labels', () => {
+  it('renders the title (or id fallback), cwd, time-ago + workspace labels, and the id', () => {
     const { lastFrame, unmount } = render(
       <ResumeList sessions={makeSessions()} cwd="/home/me/cwd" onSelect={vi.fn()} onCancel={vi.fn()} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Resume session (1 of 2)');
     expect(frame).toContain('/home/me/cwd');
-    // Titled thread shows its title, not the id; cursor sits on the first row.
+    // Titled thread shows its title; cursor sits on the first row.
     expect(frame).toContain('❯ Saha Translation');
-    expect(frame).not.toContain('thread-alpha');
     // Untitled thread falls back to its id.
-    expect(frame).toContain('thread-beta');
-    // basename + branch when both are known…
-    expect(frame).toContain('1 minute ago · ability-to-cancel (worktree/ability-to-cancel)');
-    // …basename only when there's no branch.
+    expect(frame).toContain('  thread-beta');
+    // basename + branch when both are known, then the id of a titled thread…
+    expect(frame).toContain('1 minute ago · ability-to-cancel (worktree/ability-to-cancel) · thread-alpha');
+    // …basename only when there's no branch, and no second id for an untitled one.
     expect(frame).toContain('53 minutes ago · prism-agent');
+    expect(frame).not.toContain('prism-agent · thread-beta');
     unmount();
   });
 

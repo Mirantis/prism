@@ -185,6 +185,32 @@ describe('TuiAdapter.openConversation', () => {
   });
 });
 
+describe('TuiAdapter.threadStatus', () => {
+  it('asks GET /messages for one row of the thread', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => [] });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(tuiAdapterService.threadStatus('thread-1')).resolves.toBe('found');
+    expect(fetchMock).toHaveBeenCalledWith('http://example.test:3003/messages?threadId=thread-1&limit=1', {
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it('reports a thread the runtime does not have', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+
+    await expect(tuiAdapterService.threadStatus('nope')).resolves.toBe('missing');
+  });
+
+  it('has no answer while the runtime does not answer', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503 }));
+    await expect(tuiAdapterService.threadStatus('thread-1')).resolves.toBeUndefined();
+
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    await expect(tuiAdapterService.threadStatus('thread-1')).resolves.toBeUndefined();
+  });
+});
+
 describe('TuiAdapter sending', () => {
   it('names the session thread on every message', async () => {
     stubRuntime();

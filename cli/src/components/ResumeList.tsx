@@ -80,6 +80,8 @@ export const ResumeList: React.FC<Props> = ({ sessions, cwd, onSelect, onCancel 
                   {'  '}
                   {formatRelativeTime(session.updatedAt)}
                   {workspace ? ` · ${workspace}` : ''}
+                  {/* An untitled row already shows its id as the title. */}
+                  {session.title ? ` · ${session.id}` : ''}
                 </Text>
               </Box>
             );

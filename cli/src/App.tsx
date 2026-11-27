@@ -41,6 +41,7 @@ import {
 import { AttachmentMeta, formatFileSize, latestTurnAttachments, listPathSuggestions } from './attachments.js';
 import { formatShellRecord, runShellCommand, shellCommandOf, type ShellRun } from './shell-command.js';
 import type { TerminalGraphics } from './images/terminal-graphics.js';
+import type { OpenThread } from './launch.js';
 
 export interface AppProps {
   userId: string;
@@ -56,6 +57,8 @@ export interface AppProps {
    * it; `cwd` is the launch directory, shown for context.
    */
   resume?: { sessions: ThreadSummary[]; cwd: string };
+  /** The conversation the launch flags named (`--resume <id>`), opened with no picker. */
+  thread?: OpenThread;
 }
 
 /** Input prefix that switches the popup from commands to path suggestions. */
@@ -70,7 +73,7 @@ function spinnerLabel(turn: TurnState): string {
   return 'compacting conversation…';
 }
 
-export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hideStatusBar, graphics, resume }) => {
+export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hideStatusBar, graphics, resume, thread }) => {
   const { exit } = useApp();
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   // In resume mode, the thread picker owns the screen until the user selects a
@@ -145,9 +148,9 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // id is known before anything is sent, so slash commands that need a thread
   // (e.g. /goal) work at once and every message names it. A runtime that is not
   // up yet is asked again until it answers. Skipped in resume mode, where the
-  // picked thread is shown instead.
+  // picked thread is shown instead, and when the launch named a thread.
   useEffect(() => {
-    if (resume) return;
+    if (resume || thread) return;
     let stopped = false;
     let retry: NodeJS.Timeout | undefined;
     const start = async () => {
@@ -164,7 +167,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       stopped = true;
       clearTimeout(retry);
     };
-  }, [userId, agent.id, resume]);
+  }, [userId, agent.id, resume, thread]);
 
   // Subscribe to the adapter's event bus. Every event here belongs to this
   // session's conversation: the adapter drops the others.
@@ -218,6 +221,14 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       bus.off('unsupported', onUnsupported);
     };
   }, [appendSystemMessage]);
+
+  // The launch named a thread: show it, as the picker shows a picked one. This effect
+  // runs after the subscription above, so the thread's history reaches the transcript.
+  useEffect(() => {
+    if (!thread) return;
+    setActiveThreadId(thread.id);
+    void tuiAdapterService.resumeThread(thread.id);
+  }, [thread]);
 
   // Slash-command popup: visible while the input starts with '/' and no space
   // has been typed yet. After Tab or Enter accepts a row (which appends a
