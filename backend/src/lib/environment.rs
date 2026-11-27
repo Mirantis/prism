@@ -34,6 +34,22 @@ pub fn install_tls_provider() {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 }
 
+/// The variable a terminal sets so that a program can ask it to resume the program
+/// after a restart (OSC 7577).
+pub const TERMINAL_RESUME_TOKEN: &str = "OSC7577_TOKEN";
+
+/// Remove the terminal's resume token from this process's environment, so that no
+/// process the runtime starts can register a command that the terminal runs later.
+///
+/// # Safety
+///
+/// No other thread may run, since another thread can read the environment while
+/// it changes.
+pub unsafe fn remove_terminal_resume_token() {
+    // SAFETY: the caller guarantees that this is the only thread.
+    unsafe { std::env::remove_var(TERMINAL_RESUME_TOKEN) };
+}
+
 /// Whether this is the packaged binary, which carries its release version baked
 /// in at build time (`PRISM_VERSION`).
 pub fn is_sea() -> bool {
@@ -209,6 +225,23 @@ pub fn process_env() -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
+
+    #[cfg(unix)]
+    #[test]
+    #[serial]
+    fn keeps_the_terminal_resume_token_from_child_processes() {
+        // SAFETY: serial test; the variable is removed again below.
+        unsafe { std::env::set_var(TERMINAL_RESUME_TOKEN, "dummy-token-replace-me") };
+        // SAFETY: serial test, as above.
+        unsafe { remove_terminal_resume_token() };
+
+        let output = std::process::Command::new("sh")
+            .args(["-c", "printf %s \"${OSC7577_TOKEN-unset}\""])
+            .output()
+            .expect("sh runs");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "unset");
+    }
 
     #[test]
     fn names_a_tls_provider_so_a_default_client_config_builds() {
