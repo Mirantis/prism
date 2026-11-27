@@ -3,8 +3,8 @@
  * agent-runtime: listing prior threads (with git-branch labels), resuming a
  * selected thread (asserted authoritatively by its replayed history, plus that
  * the latest-thread pointer is left untouched — resuming pins by id, it does
- * NOT bump createdAt), Escape to exit, and the empty-state message. No Bedrock
- * interaction required.
+ * NOT bump createdAt), opening a thread by id, Escape to exit, and the
+ * empty-state message. No Bedrock interaction required.
  */
 
 import fs from 'node:fs';
@@ -102,8 +102,8 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     if (session) await session.stop();
   });
 
-  const launchResume = () => {
-    session = startPrism({ env: env.prismEnv, runtime: env.runtime, args: ['--resume'] });
+  const launchResume = (...args: string[]) => {
+    session = startPrism({ env: env.prismEnv, runtime: env.runtime, args: ['--resume', ...args] });
   };
 
   Scenario('The picker lists prior sessions with their workspace', ({ Given, When, Then, And }) => {
@@ -198,6 +198,39 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     And('the CLI shuts down with exit code 0', async () => {
       const code = await session!.waitForExit(30_000);
       expect(code).toBe(0);
+    });
+  });
+
+  Scenario('Resuming by id opens that thread with no picker', ({ Given, When, Then, And }) => {
+    Given('two prior conversation threads exist', async () => {
+      olderThreadId = await seedThread(env.port, gitRepoDir);
+      newerThreadId = await seedThread(env.port, plainDir);
+      seedMessage(env.dbPath, olderThreadId, RESUMED_MARKER);
+    });
+    When("I launch the CLI with --resume and the older thread's id", () => {
+      launchResume(olderThreadId);
+    });
+    Then('that thread becomes the active conversation', async () => {
+      await session!.waitForFrame(new RegExp(RESUMED_MARKER), BOOT_FRAME_TIMEOUT_MS);
+    });
+    And('the resume picker is not shown', () => {
+      expect(session!.output()).not.toContain('Resume session');
+    });
+  });
+
+  Scenario('Resuming an unknown id exits with an error', ({ Given, When, Then, And }) => {
+    Given('a prior conversation thread exists', async () => {
+      olderThreadId = await seedThread(env.port, plainDir);
+    });
+    When('I launch the CLI with --resume and an unknown id', () => {
+      launchResume('no-such-thread');
+    });
+    Then('the CLI reports that no conversation has that id', async () => {
+      await session!.waitForFrame(/No conversation with id no-such-thread\./, BOOT_FRAME_TIMEOUT_MS);
+    });
+    And('the CLI shuts down with a non-zero exit code', async () => {
+      const code = await session!.waitForExit(30_000);
+      expect(code).not.toBe(0);
     });
   });
 });

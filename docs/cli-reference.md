@@ -21,6 +21,7 @@ prism [command] [flags]
 | Flag | Description |
 |------|-------------|
 | `--resume` | Show a picker of previous conversations to resume, instead of starting fresh. An agent with [one conversation](web-ui.md#one-conversation) has nothing to pick, and `prism` opens that conversation. |
+| `--resume <id>` | Open the conversation with this id. The picker shows each id. An unknown id prints an error and exits with a non-zero code. An agent with one conversation opens that conversation. |
 | `--version`, `-v` | Print the version and exit. |
 | `--help`, `-h` | Print help and exit. |
 

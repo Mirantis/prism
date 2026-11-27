@@ -23,7 +23,8 @@ When your provider needs setup, `prism` lists its requirements under **Connect a
 - **Resume.** Run `prism --resume` to pick a previous conversation from a
   list. The picker shows each thread's title, how long ago it was active, and
   the working directory (and git branch) it was started in. Select one with the
-  arrow keys and Enter; Escape cancels.
+  arrow keys and Enter; Escape cancels. To open one conversation without the
+  picker, run `prism --resume <id>` with the id the picker shows.
 - **One conversation.** When the agent keeps
   [one conversation](web-ui.md#one-conversation), `prism` always opens it with its
   recent history, and `--resume` shows no picker. Its commands run where the

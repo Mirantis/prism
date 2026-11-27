@@ -894,6 +894,44 @@ describe('App', () => {
     unmount();
   });
 
+  it('opens the thread the launch named, with no picker and no fresh session', async () => {
+    adapterStub.resumeThread.mockImplementationOnce(async () => {
+      adapterStub.events.emit('history', [
+        {
+          id: 'm1',
+          threadId: 'thread-beta',
+          role: 'AGENT',
+          content: 'reply from before',
+          triggeredBy: 'USER_INPUT',
+          toolCalls: null,
+          blocks: null,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App {...baseProps} thread={{ id: 'thread-beta' }} />,
+    );
+    try {
+      await settle();
+      expect(adapterStub.resumeThread).toHaveBeenCalledWith('thread-beta');
+      expect(adapterStub.openConversation).not.toHaveBeenCalled();
+      const frame = lastFrame() ?? '';
+      expect(frame).not.toContain('Resume session');
+      expect(frame).toContain('reply from before');
+
+      stdin.write('next question');
+      await settle();
+      stdin.write('\r');
+      await settle();
+      expect(adapterStub.submitUserMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'next question' }),
+      );
+    } finally {
+      unmount();
+    }
+  });
+
   it('dismisses the picker without resuming anything when Escape is pressed', async () => {
     // Escape triggers a clean shutdown (the e2e asserts the actual exit code 0);
     // here we verify the picker is dismissed and no history was loaded.

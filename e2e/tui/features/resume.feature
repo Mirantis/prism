@@ -24,3 +24,15 @@ Feature: Resuming a previous conversation with --resume
     When I launch the CLI with --resume
     Then the CLI reports there are no sessions to resume
     And the CLI shuts down with exit code 0
+
+  Scenario: Resuming by id opens that thread with no picker
+    Given two prior conversation threads exist
+    When I launch the CLI with --resume and the older thread's id
+    Then that thread becomes the active conversation
+    And the resume picker is not shown
+
+  Scenario: Resuming an unknown id exits with an error
+    Given a prior conversation thread exists
+    When I launch the CLI with --resume and an unknown id
+    Then the CLI reports that no conversation has that id
+    And the CLI shuts down with a non-zero exit code
