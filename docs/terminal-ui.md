@@ -136,11 +136,10 @@ content is gone.
 
 ### Images in replies
 
-At start-up the terminal UI asks the terminal whether it supports the kitty
-graphics protocol and which terminal it is. When the terminal answers the
-graphics query and names itself as kitty 0.28 or later, or Ghostty, an image
-the agent places in its reply is drawn at its place in the text. Every other
-terminal, and kitty or Ghostty inside tmux or screen, shows `[image: …]` there.
+In kitty 0.28 or later, Ghostty, Rio 0.3.11 or later, Rex, and any terminal that
+reports kitty's Unicode placeholders, an image the agent places in its reply is
+drawn at its place in the text. Every other terminal, and these terminals inside
+tmux or screen, shows `[image: …]` there.
 An image in a table cell always shows as `[image: …]`.
 
 ## Panels

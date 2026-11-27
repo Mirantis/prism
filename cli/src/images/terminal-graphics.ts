@@ -14,14 +14,19 @@ export interface TerminalGraphics {
 }
 
 const QUERY_ID = 31;
+const PLACEHOLDER_QUERY_ID = 32;
 
 /**
- * A graphics query for a 1×1 picture, the cell size in pixels (`CSI 16 t`), the
- * terminal's name and version (XTVERSION), then primary device attributes. Every
- * terminal answers the last one, so its answer ends the wait: a terminal that
- * does not know a query answers nothing to it.
+ * A graphics query for a 1×1 picture, a feature query for Unicode placeholders,
+ * the cell size in pixels (`CSI 16 t`), the terminal's name and version
+ * (XTVERSION), then primary device attributes. Every terminal answers the last
+ * one, so its answer ends the wait: a terminal that does not know a query
+ * answers nothing to it.
  */
-export const PROBE = `\x1b_Gi=${QUERY_ID},s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[16t\x1b[>0q\x1b[c`;
+export const PROBE =
+  `\x1b_Gi=${QUERY_ID},s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\` +
+  `\x1b_Ga=q,i=${PLACEHOLDER_QUERY_ID},e=T,U=1\x1b\\` +
+  `\x1b[16t\x1b[>0q\x1b[c`;
 
 const GRAPHICS_REPLY = /\x1b_G([^\x1b]*)\x1b\\/g;
 const CELL_REPLY = /\x1b\[6;(\d+);(\d+)t/g;
@@ -30,6 +35,8 @@ const ATTRIBUTES_REPLY = /\x1b\[\?[\d;]*c/g;
 
 export interface ProbeReplies {
   graphics: boolean;
+  /** The feature query reports `U=1`: the terminal draws Unicode placeholders. */
+  placeholders: boolean;
   cell: { width: number; height: number } | null;
   /** The XTVERSION answer, such as `kitty(0.36.4)`. */
   terminal: string | null;
@@ -41,8 +48,12 @@ export interface ProbeReplies {
 
 export function parseProbeReplies(input: string): ProbeReplies {
   let graphics = false;
+  let placeholders = false;
   for (const [, body] of input.matchAll(GRAPHICS_REPLY)) {
-    if (body!.startsWith(`i=${QUERY_ID};`) && body!.endsWith(';OK')) graphics = true;
+    if (!body!.endsWith(';OK')) continue;
+    const keys = body!.slice(0, -';OK'.length).split(',');
+    if (keys.includes(`i=${QUERY_ID}`)) graphics = true;
+    if (keys.includes(`i=${PLACEHOLDER_QUERY_ID}`) && keys.includes('e=T') && keys.includes('U=1')) placeholders = true;
   }
   const cellMatch = [...input.matchAll(CELL_REPLY)][0];
   const cell = cellMatch ? { height: Number(cellMatch[1]), width: Number(cellMatch[2]) } : null;
@@ -53,23 +64,47 @@ export function parseProbeReplies(input: string): ProbeReplies {
     .replace(CELL_REPLY, '')
     .replace(VERSION_REPLY, '')
     .replace(ATTRIBUTES_REPLY, '');
-  return { graphics, cell: cell && cell.width > 0 && cell.height > 0 ? cell : null, terminal, complete, rest };
+  return {
+    graphics,
+    placeholders,
+    cell: cell && cell.width > 0 && cell.height > 0 ? cell : null,
+    terminal,
+    complete,
+    rest,
+  };
 }
 
 /**
- * The terminals that draw Unicode placeholders: kitty from 0.28 and Ghostty. A
- * graphics answer alone does not say it, and other terminals that answer it
- * draw placeholders as unknown characters.
+ * The XTVERSION names of the terminals that draw Unicode placeholders without
+ * answering the feature query, with the first version that draws them. Other
+ * terminals that answer the graphics query draw placeholders as unknown
+ * characters.
  */
+const PLACEHOLDER_TERMINALS: [RegExp, number[]][] = [
+  [/^kitty\((\d+)\.(\d+)/, [0, 28]],
+  [/^ghostty\b/i, []],
+  [/^Rio (\d+)\.(\d+)\.(\d+)/, [0, 3, 11]],
+  [/^rex\b/, []],
+];
+
+function atLeast(version: string[], min: number[]): boolean {
+  for (const [i, part] of min.entries()) {
+    const found = Number(version[i]);
+    if (found !== part) return found > part;
+  }
+  return true;
+}
+
 export function drawsPlaceholders(terminal: string | null): boolean {
   if (!terminal) return false;
-  if (/^ghostty\b/i.test(terminal)) return true;
-  const kitty = /^kitty\((\d+)\.(\d+)/.exec(terminal);
-  return kitty !== null && (Number(kitty[1]) > 0 || Number(kitty[2]) >= 28);
+  return PLACEHOLDER_TERMINALS.some(([name, min]) => {
+    const match = name.exec(terminal);
+    return match !== null && atLeast(match.slice(1), min);
+  });
 }
 
 export function graphicsFrom(replies: ProbeReplies): TerminalGraphics {
-  const kitty = replies.graphics && drawsPlaceholders(replies.terminal);
+  const kitty = replies.placeholders || (replies.graphics && drawsPlaceholders(replies.terminal));
   return { protocol: kitty ? 'kitty' : 'text', cell: replies.cell };
 }
 
