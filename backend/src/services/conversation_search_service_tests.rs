@@ -386,6 +386,7 @@ async fn the_tool_searches_then_reads_the_current_conversation() {
         user_id: "user-1".into(),
         thread_id: Some("web".into()),
         workspace_root: None,
+        scope: SearchScope::All,
     };
 
     let found = run_conversation_search(
@@ -445,4 +446,240 @@ async fn the_tool_searches_then_reads_the_current_conversation() {
         .unwrap();
         assert_eq!(refused["note"], note);
     }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn blanks_the_copy_of_a_message_the_channel_no_longer_holds() {
+    let _db = crate::db::testing::test_db();
+    seed(&[("slack", AGENT, None)]).await;
+    let first = [
+        read_from_channel("4.0", 4, "<@U1:Dana>: the token is tok-123"),
+        read_from_channel("5.0", 5, "<@U1:Dana>: thanks"),
+        read_from_channel("6.0", 6, "<@U1:Dana>: one more thing"),
+    ];
+    CONVERSATION_SEARCH_SERVICE
+        .record_channel_messages("slack", &first)
+        .await
+        .unwrap();
+    assert_eq!(
+        CONVERSATION_SEARCH_SERVICE
+            .search(options("tok-123"))
+            .await
+            .unwrap()
+            .matches
+            .len(),
+        1
+    );
+
+    // A windowed read from 5.0 on leaves 4.0 out, and 4.0 is outside its span.
+    CONVERSATION_SEARCH_SERVICE
+        .record_channel_messages("slack", &first[1..])
+        .await
+        .unwrap();
+    assert_eq!(
+        CONVERSATION_SEARCH_SERVICE
+            .search(options("tok-123"))
+            .await
+            .unwrap()
+            .matches
+            .len(),
+        1
+    );
+    CONVERSATION_SEARCH_SERVICE
+        .record_channel_messages(
+            "slack",
+            // The person deleted the token and the thanks; this read spans both.
+            &[
+                read_from_channel("3.0", 3, "<@U1:Dana>: hello"),
+                first[2].clone(),
+            ],
+        )
+        .await
+        .unwrap();
+    assert!(
+        CONVERSATION_SEARCH_SERVICE
+            .search(options("tok-123"))
+            .await
+            .unwrap()
+            .matches
+            .is_empty()
+    );
+    let all = CONVERSATION_SEARCH_SERVICE
+        .list_history("slack", 0, 20)
+        .await
+        .unwrap();
+    assert_eq!(
+        all.messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        ["<@U1:Dana>: hello", "<@U1:Dana>: one more thing"]
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn numbers_rows_with_the_text_default_time_where_the_read_puts_them() {
+    let _db = crate::db::testing::test_db();
+    seed(&[("web", AGENT, None)]).await;
+    stored(
+        "web",
+        "written",
+        1,
+        MessageRole::User,
+        "a written row",
+        |_| {},
+    )
+    .await;
+    crate::db::run(|conn| {
+        use diesel::connection::SimpleConnection;
+        conn.batch_execute(
+            r#"INSERT INTO "conversation_messages" ("id", "threadId", "role", "content", "triggeredBy", "createdAt") VALUES
+               ('legacy-a', 'web', 'USER', 'legacy marker one', 'USER_INPUT', '2026-10-08 07:00:00'),
+               ('legacy-b', 'web', 'AGENT', 'legacy marker two', 'USER_INPUT', '2026-10-08 07:30:00');"#,
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let found = CONVERSATION_SEARCH_SERVICE
+        .search(options("legacy marker"))
+        .await
+        .unwrap();
+    let mut positions = ids(&found);
+    positions.sort();
+    assert_eq!(
+        positions,
+        [("legacy-a".to_string(), 1), ("legacy-b".to_string(), 2)]
+    );
+    for (id, position) in positions {
+        let read = CONVERSATION_SEARCH_SERVICE
+            .get_history_message("web", position)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(read.id, id);
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_search_of_one_conversation_also_matches_its_tool_results() {
+    let _db = crate::db::testing::test_db();
+    seed(&[("web", AGENT, None)]).await;
+    stored("web", "ask", 1, MessageRole::User, "deploy it", |_| {}).await;
+    stored("web", "deploy", 2, MessageRole::Agent, "Deployed.", |row| {
+        row.tool_calls = Some(json!([{
+            "tool": "shell_exec",
+            "input": { "command": "./deploy.sh" },
+            "output": "uploading...\nbuild id: bld-7f3a9c2e\ndone"
+        }]));
+    })
+    .await;
+
+    let everywhere = CONVERSATION_SEARCH_SERVICE
+        .search(options("bld-7f3a9c2e"))
+        .await
+        .unwrap();
+    assert!(everywhere.matches.is_empty());
+
+    let mut in_one = options("Build ID");
+    in_one.thread_id = Some("web".into());
+    let found = CONVERSATION_SEARCH_SERVICE.search(in_one).await.unwrap();
+    assert_eq!(ids(&found), [("deploy".to_string(), 1)]);
+    assert!(found.matches[0].excerpt.starts_with("[tool result] "));
+    assert!(found.matches[0].excerpt.contains("bld-7f3a9c2e"));
+
+    let mut any = options("build nightly");
+    any.thread_id = Some("web".into());
+    let found = CONVERSATION_SEARCH_SERVICE.search(any).await.unwrap();
+    assert!(found.any_word);
+    assert_eq!(ids(&found), [("deploy".to_string(), 1)]);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_run_reaches_only_the_conversations_its_scope_allows() {
+    let _db = crate::db::testing::test_db();
+    seed(&[
+        ("public", AGENT, None),
+        ("private", AGENT, None),
+        ("web", AGENT, None),
+    ])
+    .await;
+    crate::db::run(|conn| {
+        for (thread, channel) in [("public", "C-PUBLIC"), ("private", "C-PRIVATE")] {
+            diesel::update(conversation_threads::table.find(thread))
+                .set(conversation_threads::external_channel_id.eq(channel))
+                .execute(conn)?;
+        }
+        Ok(())
+    })
+    .await
+    .unwrap();
+    for thread in ["public", "private", "web"] {
+        stored(
+            thread,
+            thread,
+            1,
+            MessageRole::User,
+            "the password is hunter2",
+            |_| {},
+        )
+        .await;
+    }
+    let search = |scope: SearchScope, current: &str, conversation: Option<&str>| {
+        let bound = ConversationSearchToolsInput {
+            agent_id: AGENT.into(),
+            user_id: "user-1".into(),
+            thread_id: Some(current.into()),
+            workspace_root: None,
+            scope,
+        };
+        let input = ConversationSearchInput {
+            query: Some("password".into()),
+            conversation_id: conversation.map(str::to_string),
+            max_results: Some(10),
+            ..ConversationSearchInput::default()
+        };
+        async move {
+            run_conversation_search(input, &bound, at(30))
+                .await
+                .unwrap()
+        }
+    };
+    let found = |result: &Value| -> Vec<String> {
+        let mut ids: Vec<String> = result["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["conversationId"].as_str().unwrap().to_string())
+            .collect();
+        ids.sort();
+        ids
+    };
+
+    let channel = SearchScope::Channel("C-PUBLIC".into());
+    assert_eq!(
+        found(&search(channel.clone(), "public", None).await),
+        ["public"]
+    );
+    assert_eq!(
+        search(channel.clone(), "public", Some("private")).await["note"],
+        "No conversation has the id private."
+    );
+    assert_eq!(
+        search(SearchScope::Current, "web", None).await["matches"][0]["conversationId"],
+        "web"
+    );
+    assert_eq!(
+        search(SearchScope::Current, "web", Some("public")).await["note"],
+        "No conversation has the id public."
+    );
+    assert_eq!(
+        found(&search(SearchScope::All, "web", None).await),
+        ["private", "public", "web"]
+    );
 }

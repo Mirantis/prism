@@ -417,3 +417,96 @@ fn matches_a_phrase_and_any_word() {
     })
     .unwrap();
 }
+
+#[test]
+#[serial_test::serial]
+fn leaves_out_the_context_rows_the_runtime_adds() {
+    let _db = crate::db::testing::test_db();
+    crate::db::run_sync(|conn| {
+        seed(conn, &["t1"]);
+        message(conn, "t1", "said", 1, |row| {
+            row.content = "the staging cluster codename is TANGERINE-42".into()
+        });
+        for (i, minute) in (2..7).enumerate() {
+            message(conn, "t1", &format!("recalled-{i}"), minute, |row| {
+                row.content =
+                    "<recalled-memories>staging cluster codename TANGERINE-42</recalled-memories>"
+                        .into();
+                row.internal_step = true;
+            });
+        }
+        assert_eq!(find(conn, "TANGERINE"), ["said"]);
+
+        // A row that becomes hidden leaves the index.
+        diesel::update(conversation_messages::table.find("said"))
+            .set(conversation_messages::internal_step.eq(true))
+            .execute(conn)?;
+        assert!(find(conn, "TANGERINE").is_empty());
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+#[serial_test::serial]
+fn keeps_the_person_messages_no_channel_read_held() {
+    let _db = crate::db::testing::test_db();
+    crate::db::run_sync(|conn| {
+        seed(conn, &["t1"]);
+        message(conn, "t1", "copied", 5, |row| {
+            row.content = "rollback plan".into()
+        });
+        message(conn, "t1", "pressed", 5, |row| {
+            row.content = "rollback plan pressed".into();
+            row.trigger_name = Some(PRESS_TRIGGER_NAME.into());
+        });
+        // Sent while a turn ran, after the last read.
+        message(conn, "t1", "later", 8, |row| {
+            row.content = "rollback plan later".into()
+        });
+        channel_message(conn, "t1", "5.0", 5, "<@U1:Dana>: rollback plan");
+
+        let mut found = find(conn, "rollback plan");
+        found.sort();
+        assert_eq!(found, ["c-5.0", "later", "pressed"]);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+#[serial_test::serial]
+fn limits_a_search_to_one_channels_conversations_and_the_current_one() {
+    let _db = crate::db::testing::test_db();
+    crate::db::run_sync(|conn| {
+        seed(conn, &["public", "private", "web"]);
+        for (thread, channel) in [("public", "C-PUBLIC"), ("private", "C-PRIVATE")] {
+            diesel::update(conversation_threads::table.find(thread))
+                .set(conversation_threads::external_channel_id.eq(channel))
+                .execute(conn)?;
+        }
+        for thread in ["public", "private", "web"] {
+            message(conn, thread, thread, 1, |row| {
+                row.content = "the password is hunter2".into()
+            });
+        }
+
+        let mut everywhere = find(conn, "password");
+        everywhere.sort();
+        assert_eq!(everywhere, ["private", "public", "web"]);
+        assert_eq!(
+            find_with(conn, "password", |query| {
+                query.channel_id = Some("C-PUBLIC".into());
+            }),
+            ["public"]
+        );
+        let mut with_current = find_with(conn, "password", |query| {
+            query.channel_id = Some("C-PUBLIC".into());
+            query.current_thread_id = Some("web".into());
+        });
+        with_current.sort();
+        assert_eq!(with_current, ["public", "web"]);
+        Ok(())
+    })
+    .unwrap();
+}

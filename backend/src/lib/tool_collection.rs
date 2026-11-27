@@ -28,6 +28,7 @@ use crate::services::channel_adapter_interface::ChannelName;
 use crate::services::coding_agent_sign_in::coding_agent_account::installed_clis;
 use crate::services::computer::computer_access::ComputerUse;
 use crate::services::computer::supported::has_computer_for_mode;
+use crate::services::conversation_search_service::{CONVERSATION_SEARCH_SERVICE, SearchScope};
 use crate::services::delivery_target_service::PostingCeiling;
 use crate::services::outbound_message_service::SEND_MESSAGE_TOOL_NAME;
 use crate::services::plugin_mcp_service::PLUGIN_MCP_SERVICE;
@@ -140,7 +141,7 @@ pub struct CollectedTools {
 ///    computer), cron, goals, coding-agent sign-in, ask questions (chat only),
 ///    agent config, shell, share file, send message (left out when the posting
 ///    ceiling reaches nowhere: neither web chat nor any target), attachments, web fetch, conversation
-///    history (when the thread is stored in the database), skills, meeting (when
+///    search (scoped by `conversation_search_scope`), skills, meeting (when
 ///    available; `in_meeting_session` is `mode == "meeting"`).
 /// 3. Fetches the platform MCP tools (`CONFIG.nexus_mcp_url`) and the plugin tools,
 ///    and merges each after the built-ins without overriding a taken name, logging
@@ -275,6 +276,8 @@ pub async fn collect_tools(input: CollectToolsInput) -> anyhow::Result<Collected
             user_id: input.user_id.clone(),
             thread_id: thread_id.map(str::to_string),
             workspace_root: workspace_root.map(str::to_string),
+            scope: conversation_search_scope(mode, thread_id, origin_channel, origin_channel_id)
+                .await?,
         },
     ));
     // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md body on
@@ -517,6 +520,36 @@ fn omit(tools: ToolSet, names: &HashSet<&str>) -> ToolSet {
         .collect()
 }
 
+/// The conversations a run may search: the audience of the run sees what it finds.
+/// A voice meeting, where anyone with the link can speak, and a webhook run, whose
+/// payload anyone can write, reach only their own conversation. A run in a channel's
+/// conversation, or one a channel started, reaches that channel's conversations and
+/// its own. A run on the owner's own surfaces reaches every conversation.
+async fn conversation_search_scope(
+    mode: &str,
+    thread_id: Option<&str>,
+    origin_channel: ChannelName,
+    origin_channel_id: Option<&str>,
+) -> anyhow::Result<SearchScope> {
+    if mode == "meeting" || mode == "webhook" {
+        return Ok(SearchScope::Current);
+    }
+    let held_in = match thread_id {
+        Some(thread_id) => {
+            CONVERSATION_SEARCH_SERVICE
+                .conversation_channel(thread_id)
+                .await?
+        }
+        None => None,
+    };
+    let origin = origin_channel_id
+        .filter(|_| origin_channel != ChannelName::Websocket)
+        .map(str::to_string);
+    Ok(held_in
+        .or(origin)
+        .map_or(SearchScope::All, SearchScope::Channel))
+}
+
 /// Filter the assembled tool set by invocation mode.
 ///
 /// Named for built-ins because that is what it omits, but it runs over every tool —
@@ -648,6 +681,30 @@ pub fn filter_tools_by_mode(tools: ToolSet, mode: &str) -> ToolSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_meeting_and_a_webhook_search_only_their_own_conversation() {
+        for mode in ["meeting", "webhook"] {
+            assert_eq!(
+                conversation_search_scope(mode, None, ChannelName::Slack, Some("C1"))
+                    .await
+                    .unwrap(),
+                SearchScope::Current
+            );
+        }
+        assert_eq!(
+            conversation_search_scope("chat", None, ChannelName::Slack, Some("C1"))
+                .await
+                .unwrap(),
+            SearchScope::Channel("C1".into())
+        );
+        assert_eq!(
+            conversation_search_scope("chat", None, ChannelName::Websocket, Some("C1"))
+                .await
+                .unwrap(),
+            SearchScope::All
+        );
+    }
     use crate::ai::Tool;
     use crate::lib::llm_providers::llm_provider::{
         ANTHROPIC_CACHE_POINT, provider_options, provider_options_json,

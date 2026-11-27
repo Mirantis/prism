@@ -3,7 +3,9 @@
 //! replaced included.
 //!
 //! A read returns the messages as they are stored, tool results included; a search
-//! matches only what the index holds (`lib::message_search_index`).
+//! matches what the index holds (`lib::message_search_index`), and a search of one
+//! conversation also its tool results. A run reaches the conversations its
+//! [`SearchScope`] allows.
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::Deserialize;
@@ -14,12 +16,13 @@ use crate::db::models::MessageRole;
 use crate::lib::tool_output_store::tool_output_path;
 use crate::services::conversation_search_service::{
     CONVERSATION_SEARCH_SERVICE, HistoryMessage, HistoryPage, SearchOptions, SearchOutcome,
+    SearchScope,
 };
 use crate::support::iso;
 use crate::support::js::{len16, slice16, stringify, stringify_pretty, truthy};
 
 pub const CONVERSATION_SEARCH_TOOL_NAME: &str = "search_conversations";
-const CONVERSATION_SEARCH_DESCRIPTION: &str = "Search your conversations on every surface for what was said in them, or read one conversation. Use it when the user refers to something said in another conversation, or when this conversation's summary leaves out an exact detail: a command, an error, a value, what the user said word for word. A search takes a short query: a few distinctive keywords, not documents, code or long passages. It matches the words of messages, your replies and the inputs of your tool calls, but not tool results. Each match gives its conversation_id and the message's position in that conversation. To read around a match, give that conversation_id and an offset a few positions before it, without a query; a smaller offset reads earlier messages. Give conversation_id and position to read one message in full, with its tool results. The conversation_id \"current\" is this conversation, including the part its summary replaced.";
+const CONVERSATION_SEARCH_DESCRIPTION: &str = "Search your conversations on every surface for what was said in them, or read one conversation. Use it when the user refers to something said in another conversation, or when this conversation's summary leaves out an exact detail: a command, an error, a value, what the user said word for word. A search takes a short query: a few distinctive keywords, not documents, code or long passages. It matches the words of messages, your replies and the inputs of your tool calls; tool results only in a search with a conversation_id. Each match gives its conversation_id and the message's position in that conversation. To read around a match, give that conversation_id and an offset a few positions before it, without a query; a smaller offset reads earlier messages. Give conversation_id and position to read one message in full, with its tool results. The conversation_id \"current\" is this conversation, including the part its summary replaced.";
 
 /// The conversation id that names the conversation the tool runs in.
 pub const CURRENT_CONVERSATION: &str = "current";
@@ -118,6 +121,8 @@ pub struct ConversationSearchToolsInput {
     /// The conversation the run belongs to, which `"current"` names.
     pub thread_id: Option<String>,
     pub workspace_root: Option<String>,
+    /// The conversations the run may search and read.
+    pub scope: SearchScope,
 }
 
 pub fn get_conversation_search_tools(input: ConversationSearchToolsInput) -> ToolSet {
@@ -145,21 +150,33 @@ pub(crate) async fn run_conversation_search(
     bound: &ConversationSearchToolsInput,
     now: DateTime<Utc>,
 ) -> anyhow::Result<Value> {
+    let no_conversation = || json!({ "note": "This run has no conversation of its own." });
     let conversation = match input.conversation_id.as_deref() {
+        // A run that may read only its own conversation searches that one.
+        None if bound.scope == SearchScope::Current => match &bound.thread_id {
+            Some(thread_id) => Some(thread_id.clone()),
+            None => return Ok(no_conversation()),
+        },
         None => None,
         Some(CURRENT_CONVERSATION) => match &bound.thread_id {
             Some(thread_id) => Some(thread_id.clone()),
-            None => return Ok(json!({ "note": "This run has no conversation of its own." })),
+            None => return Ok(no_conversation()),
         },
         Some(id) => Some(id.to_string()),
     };
-    if let Some(id) = &conversation
-        && CONVERSATION_SEARCH_SERVICE
-            .conversation_title(&bound.agent_id, id)
+    let current = bound.thread_id.as_deref();
+    // Saved tool outputs are in the store of the workspace the conversation's runs used.
+    let mut root = bound.workspace_root.clone();
+    if let Some(id) = &conversation {
+        let Some(found) = CONVERSATION_SEARCH_SERVICE
+            .conversation(&bound.agent_id, id, &bound.scope, current)
             .await?
-            .is_none()
-    {
-        return Ok(json!({ "note": format!("No conversation has the id {id}.") }));
+        else {
+            return Ok(json!({ "note": format!("No conversation has the id {id}.") }));
+        };
+        if current != Some(id.as_str()) {
+            root = found.workspace_root;
+        }
     }
     let query = input
         .query
@@ -173,7 +190,7 @@ pub(crate) async fn run_conversation_search(
                 "note": "Give a query to search, or a conversation_id to read."
             }));
         };
-        let root = bound.workspace_root.as_deref();
+        let root = root.as_deref();
         if let Some(position) = input.position {
             let message = CONVERSATION_SEARCH_SERVICE
                 .get_history_message(&thread_id, position)
@@ -204,6 +221,11 @@ pub(crate) async fn run_conversation_search(
         .search(SearchOptions {
             query: query.to_string(),
             agent_id: bound.agent_id.clone(),
+            channel_id: match &bound.scope {
+                SearchScope::Channel(channel) => Some(channel.clone()),
+                _ => None,
+            },
+            current_thread_id: bound.thread_id.clone(),
             thread_id: conversation,
             after_ms,
             before_ms,
