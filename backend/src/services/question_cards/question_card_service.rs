@@ -15,7 +15,6 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::config::CONFIG;
 use crate::db::models::{ConversationMessage, ConversationThread, MessageTrigger};
 use crate::db::schema::{conversation_messages, conversation_threads};
 use crate::db::sql_types::DbJson;
@@ -420,16 +419,18 @@ impl QuestionCardService {
         Ok(AnswerOutcome::Answered(answered))
     }
 
-    /// Every card that waits in the agent's conversations a client sees, oldest first.
-    pub async fn waiting(&self, agent_id: &str) -> anyhow::Result<Vec<WaitingCard>> {
+    /// Every card that waits in `user_id`'s conversations with the agent that a
+    /// client sees, oldest first: the cards `find` answers.
+    pub async fn waiting(&self, agent_id: &str, user_id: &str) -> anyhow::Result<Vec<WaitingCard>> {
         let filter = CONVERSATION_SERVICE
-            .client_thread_filter(agent_id, &CONFIG.owner_user_id())
+            .client_thread_filter(agent_id, user_id)
             .await?;
-        let agent_id = agent_id.to_string();
+        let (agent_id, user_id) = (agent_id.to_string(), user_id.to_string());
         let rows: Vec<(ConversationMessage, ConversationThread)> = crate::db::read(move |conn| {
             Ok(conversation_messages::table
                 .inner_join(conversation_threads::table)
                 .filter(conversation_threads::agent_id.eq(agent_id))
+                .filter(conversation_threads::user_id.eq(user_id))
                 .filter(web_thread())
                 .filter(conversation_messages::blocks.is_not_null())
                 .order((

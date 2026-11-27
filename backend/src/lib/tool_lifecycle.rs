@@ -45,7 +45,7 @@ pub type ToolLifecycleListener = Arc<dyn Fn(ToolLifecycleEvent) + Send + Sync>;
 /// progress UI never sticks on a failed tool. Each event names the step the call
 /// runs in, one after the `steps_finished` steps that ended before it. Without a
 /// listener the tools are returned untouched.
-pub fn with_tool_lifecycle_events(
+pub(crate) fn with_tool_lifecycle_events(
     tools: ToolSet,
     on_tool_event: Option<ToolLifecycleListener>,
     steps_finished: Arc<AtomicUsize>,
@@ -56,44 +56,66 @@ pub fn with_tool_lifecycle_events(
     tools
         .into_iter()
         .map(|(name, tool)| {
-            let Some(execute) = tool.execute.clone() else {
-                return (name, tool);
-            };
-            let listener = on_tool_event.clone();
-            let tool_name = name.clone();
-            let steps_finished = steps_finished.clone();
-            let wrapped: ToolExecuteFunction = Arc::new(move |args, options| {
-                let execute = execute.clone();
-                let listener = listener.clone();
-                let tool_name = tool_name.clone();
-                let step = steps_finished.load(Ordering::SeqCst) + 1;
-                Box::pin(async move {
-                    notify(
-                        &listener,
-                        ToolLifecycleEvent {
-                            kind: ToolLifecycleEventType::Started,
-                            tool_name: tool_name.clone(),
-                            step,
-                        },
-                    );
-                    // `completed` on every path, a cancelled future included.
-                    let _completed = CompletedGuard {
-                        listener,
-                        tool_name,
-                        step,
-                    };
-                    execute(args, options).await
-                })
-            });
-            (
-                name,
-                Tool {
-                    execute: Some(wrapped),
-                    ..tool
-                },
-            )
+            let tool = observed(&name, tool, &on_tool_event, &steps_finished);
+            (name, tool)
         })
         .collect()
+}
+
+/// [`with_tool_lifecycle_events`] for the tool `name` alone, which joins `tools`
+/// after the others were wrapped. The other tools and the order stay as they are.
+pub(crate) fn with_tool_lifecycle_events_on(
+    mut tools: ToolSet,
+    name: &str,
+    on_tool_event: Option<ToolLifecycleListener>,
+    steps_finished: Arc<AtomicUsize>,
+) -> ToolSet {
+    if let (Some(on_tool_event), Some(tool)) = (on_tool_event, tools.get_mut(name)) {
+        *tool = observed(name, tool.clone(), &on_tool_event, &steps_finished);
+    }
+    tools
+}
+
+/// `tool` with `on_tool_event` fired around its execution, or untouched without one.
+fn observed(
+    name: &str,
+    tool: Tool,
+    on_tool_event: &ToolLifecycleListener,
+    steps_finished: &Arc<AtomicUsize>,
+) -> Tool {
+    let Some(execute) = tool.execute.clone() else {
+        return tool;
+    };
+    let listener = on_tool_event.clone();
+    let tool_name = name.to_string();
+    let steps_finished = steps_finished.clone();
+    let wrapped: ToolExecuteFunction = Arc::new(move |args, options| {
+        let execute = execute.clone();
+        let listener = listener.clone();
+        let tool_name = tool_name.clone();
+        let step = steps_finished.load(Ordering::SeqCst) + 1;
+        Box::pin(async move {
+            notify(
+                &listener,
+                ToolLifecycleEvent {
+                    kind: ToolLifecycleEventType::Started,
+                    tool_name: tool_name.clone(),
+                    step,
+                },
+            );
+            // `completed` on every path, a cancelled future included.
+            let _completed = CompletedGuard {
+                listener,
+                tool_name,
+                step,
+            };
+            execute(args, options).await
+        })
+    });
+    Tool {
+        execute: Some(wrapped),
+        ..tool
+    }
 }
 
 /// Reports `completed` when dropped, which is when the wrapped call ends however
@@ -267,6 +289,44 @@ mod tests {
                 (ToolLifecycleEventType::Started, 14),
                 (ToolLifecycleEventType::Completed, 14),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn wraps_only_the_named_tool_in_its_place() {
+        let mut tools = ToolSet::new();
+        tools.insert(
+            "kubectl".into(),
+            make_tool(Ok(json!("ok")), Default::default()),
+        );
+        tools.insert(
+            "load_tools".into(),
+            make_tool(Ok(json!("loaded")), Default::default()),
+        );
+        let kubectl = tools["kubectl"].execute.clone().unwrap();
+        let (listener, events) = recorder(Default::default());
+        let steps_finished = Arc::new(AtomicUsize::new(2));
+        let wrapped =
+            with_tool_lifecycle_events_on(tools, "load_tools", Some(listener), steps_finished);
+
+        assert_eq!(
+            wrapped.keys().collect::<Vec<_>>(),
+            ["kubectl", "load_tools"]
+        );
+        assert!(Arc::ptr_eq(
+            &kubectl,
+            wrapped["kubectl"].execute.as_ref().unwrap()
+        ));
+        let execute = wrapped["load_tools"].execute.clone().unwrap();
+        execute(json!({}), ToolExecutionOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&*events.lock()).unwrap(),
+            json!([
+                { "type": "started", "toolName": "load_tools", "step": 3 },
+                { "type": "completed", "toolName": "load_tools", "step": 3 },
+            ])
         );
     }
 

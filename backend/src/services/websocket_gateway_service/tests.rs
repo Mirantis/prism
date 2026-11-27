@@ -859,6 +859,7 @@ async fn run_a_stepping_turn(verbose: bool) -> Vec<Value> {
             json!({ "threadId": THREAD, "state": "running" }),
             json!({ "threadId": THREAD, "state": "running", "step": { "index": 1, "tool": "web_search" } }),
             json!({ "threadId": THREAD, "state": "running", "step": { "index": 2, "tool": "read_file" } }),
+            json!({ "threadId": THREAD, "state": "running" }),
             json!({ "threadId": THREAD, "state": "idle", "outcome": "completed" }),
         ]
     );
@@ -896,6 +897,7 @@ async fn a_verbose_turn_reports_its_step_and_shows_the_steps_text() {
 // ============================================================================
 
 const OTHER_THREAD: &str = "5b1e8c2d-7a4f-4e3b-9c6d-1f2e3a4b5c6d";
+const THEIR_THREAD: &str = "6c2f9d3e-8b5a-4f4c-8d7e-2a3b4c5d6e7f";
 
 /// A message in `thread_id` whose question card has `id` and `status`, stored at `second`.
 async fn seed_card(thread_id: &str, id: &str, status: &str, second: u32) {
@@ -945,18 +947,27 @@ async fn lists_the_waiting_question_cards_of_every_conversation_in_the_welcome()
         diesel::insert_into(conversation_threads::table)
             .values(&thread)
             .execute(conn)?;
+        // Another user's conversation, which `GET /messages` does not open.
+        let mut theirs =
+            NewConversationThread::new(CONFIG.agent_id().unwrap(), "someone-else".to_string());
+        theirs.id = THEIR_THREAD.into();
+        diesel::insert_into(conversation_threads::table)
+            .values(&theirs)
+            .execute(conn)?;
         Ok(())
     })
     .await
     .unwrap();
-    let (answered, first, second) = (
+    let (answered, first, second, theirs) = (
         "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
         "1b2c3d4e-5f6a-4b7c-9d8e-0f1a2b3c4d5e",
         "2c3d4e5f-6a7b-4c8d-ae9f-1a2b3c4d5e6f",
+        "3d4e5f6a-7b8c-4d9e-8fa0-2b3c4d5e6f7a",
     );
     seed_card(THREAD, answered, "answered", 1).await;
     seed_card(OTHER_THREAD, first, "waiting", 2).await;
     seed_card(THREAD, second, "waiting", 3).await;
+    seed_card(THEIR_THREAD, theirs, "waiting", 4).await;
     let url = serve().await;
 
     let mut client = Client::open(&url, &[]).await;
@@ -970,5 +981,95 @@ async fn lists_the_waiting_question_cards_of_every_conversation_in_the_welcome()
             { "id": second, "threadId": THREAD },
         ])
     );
+    client.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
+async fn a_chat_that_ends_while_other_work_runs_on_the_thread_reports_no_step() {
+    let _db = crate::db::testing::test_db();
+    fresh_stream();
+    seed().await;
+    AGENT_WORKSPACE_SERVICE
+        .update_verbose(&json!(false))
+        .await
+        .unwrap();
+    let url = serve().await;
+    let release = Arc::new(tokio::sync::Notify::new());
+    *crate::services::thread_title_service::testing::GENERATE.write() =
+        Some(Arc::new(|_: &str| None));
+    *crate::services::conversation_engine_service::testing::INVOKE.write() =
+        Some(stepping_model(release.clone()));
+    // A goal that runs on the conversation after the chat.
+    let goal =
+        crate::services::conversation_thread_activity_service::CONVERSATION_THREAD_ACTIVITY_SERVICE
+            .begin_thread(THREAD, &CONFIG.owner_user_id());
+
+    let mut client = ready(&url).await;
+    client.send(send_frame("s1", json!({}))).await;
+    client
+        .next(|f| f["type"] == "turn" && f["payload"]["step"]["index"] == 1)
+        .await;
+    release.notify_one();
+    client
+        .next(|f| f["type"] == "turn" && f["payload"]["step"]["index"] == 2)
+        .await;
+    let ended = loop {
+        let frame = client.next_frame().await;
+        if frame["type"] == "turn" {
+            break frame;
+        }
+    };
+    assert_eq!(
+        ended["payload"],
+        json!({ "threadId": THREAD, "state": "running" })
+    );
+    let mut late = Client::open(&url, &[]).await;
+    late.hello(None).await;
+    let welcome = late.welcome().await;
+    assert_eq!(
+        welcome["payload"]["snapshot"]["turns"],
+        json!([{ "threadId": THREAD, "state": "running" }])
+    );
+
+    goal.end();
+    client
+        .next(|f| f["type"] == "turn" && f["payload"]["state"] == "idle")
+        .await;
+    late.close().await;
+    client.close().await;
+    *crate::services::conversation_engine_service::testing::INVOKE.write() = None;
+    *crate::services::thread_title_service::testing::GENERATE.write() = None;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
+async fn a_welcome_without_a_resume_is_followed_by_the_events_published_while_the_snapshot_was_read()
+ {
+    let _db = crate::db::testing::test_db();
+    fresh_stream();
+    seed().await;
+    let url = serve().await;
+    EVENT_STREAM_SERVICE.publish(turn_event());
+    let before = EVENT_STREAM_SERVICE.seq();
+    let published = Arc::new(parking_lot::Mutex::new(None));
+    let during_read = published.clone();
+    *testing::AFTER_SNAPSHOT_READ.write() = Some(Arc::new(move || {
+        // A change the snapshot read missed, such as a card that closed.
+        let entry = EVENT_STREAM_SERVICE.publish(turn_event());
+        *during_read.lock() = Some(entry.seq);
+    }));
+
+    let mut client = Client::open(&url, &[]).await;
+    client.hello(None).await;
+    let welcome = client.welcome().await;
+    let next = client.next_frame().await;
+    *testing::AFTER_SNAPSHOT_READ.write() = None;
+
+    assert_eq!(welcome["payload"]["resumed"], json!(false));
+    assert_eq!(welcome["payload"]["seq"], json!(before));
+    assert_eq!(next["type"], json!("turn"));
+    assert_eq!(next["seq"], json!(before + 1));
+    assert_eq!(next["seq"], json!(published.lock().unwrap()));
     client.close().await;
 }

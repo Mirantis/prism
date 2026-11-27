@@ -118,6 +118,11 @@ class FakeRuntime implements Runtime {
     this.events.emit('event', { type: 'turn', seq: 0, payload: { threadId, state, outcome, error } });
   }
 
+  /** Report the step the running turn is on, as the runtime does at each step's first tool call. */
+  step(index: number, tool: string): void {
+    this.events.emit('event', { type: 'turn', seq: 0, payload: { threadId: THREAD, state: 'running', step: { index, tool } } });
+  }
+
   /** Confirm a message, which the runtime does once a turn has it. `duplicate`: it was stored before, and sent again. */
   confirm(sent: OutgoingMessage, duplicate = false): void {
     this.events.emit('sent', { messageId: sent.id, seq: 0, queued: false, duplicate });
@@ -360,6 +365,22 @@ describe('a prompt', () => {
     await vi.waitFor(() => expect(runtime.cancelled).toEqual([THREAD]));
     runtime.turn('idle', 'cancelled');
 
+    await expect(response).resolves.toEqual({ stopReason: 'cancelled' });
+  });
+
+  it('does not cancel again at a step of the turn it cancelled', async () => {
+    const session = await connectWithSession();
+    const { runtime, agent, sessionId } = session;
+    const { response, sent } = await prompt(session, 'Keep working');
+    runtime.accept(sent);
+    await agent.notify(methods.agent.session.cancel, { sessionId });
+    await vi.waitFor(() => expect(runtime.cancelled).toEqual([THREAD]));
+
+    runtime.step(2, 'web_search');
+    runtime.turn('running');
+    await settled();
+    expect(runtime.cancelled).toEqual([THREAD]);
+    runtime.turn('idle', 'cancelled');
     await expect(response).resolves.toEqual({ stopReason: 'cancelled' });
   });
 

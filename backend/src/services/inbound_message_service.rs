@@ -355,14 +355,8 @@ impl InboundMessageService {
         });
         CONVERSATION_ENGINE_SERVICE
             .events
-            .on_step_started(|started| {
-                INBOUND_MESSAGE_SERVICE.announce_step(
-                    &started.thread_id,
-                    TurnStep {
-                        index: started.index,
-                        tool: started.tool.clone(),
-                    },
-                );
+            .on_step_changed(|changed| {
+                INBOUND_MESSAGE_SERVICE.announce_step(&changed.thread_id, changed.step.clone());
             });
         Self {
             accepting: Mutex::new(HashMap::new()),
@@ -894,8 +888,10 @@ impl InboundMessageService {
         });
     }
 
-    /// Tell every client the step a running turn started, when the thread is announced running.
-    fn announce_step(&self, thread_id: &str, step: TurnStep) {
+    /// Tell every client the step a running turn is on, when the thread is announced
+    /// running and the step differs from what they were told. `None` says the turn's
+    /// step ended: a `running` event without `step`.
+    fn announce_step(&self, thread_id: &str, step: Option<TurnStep>) {
         EVENT_STREAM_SERVICE.exclusive(|| {
             {
                 let mut announced = self.announced.lock();
@@ -905,17 +901,17 @@ impl InboundMessageService {
                 else {
                     return;
                 };
-                if running.step.as_ref() == Some(&step) {
+                if running.step == step {
                     return;
                 }
-                running.step = Some(step.clone());
+                running.step = step.clone();
             }
             EVENT_STREAM_SERVICE.publish(StreamEvent::Turn(TurnEventPayload {
                 thread_id: thread_id.to_string(),
                 state: TurnState::Running,
                 outcome: None,
                 error: None,
-                step: Some(step),
+                step,
             }));
         });
     }
