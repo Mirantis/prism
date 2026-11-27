@@ -96,8 +96,11 @@ Installed skills are available to Claude Code, Codex, and Antigravity CLI
 through the **[coding sub-agent](tools.md#coding-sub-agent)**. Claude Code also
 discovers the repository's `.claude/skills/` directory.
 
-Antigravity CLI (`agy`) reads global skills from `~/.gemini/config/skills`. At
-startup, Prism links `~/.gemini/config/skills` to your Prism skills directory
-only when nothing exists at that path, and leaves any existing directory or
-symlink untouched. If you later change `PRISM_SKILLS_DIR` or move the data
-directory, update that symlink yourself so `agy` points at the new location.
+Antigravity CLI (`agy`) reads global skills from `~/.gemini/config/skills/` and
+discovery manifests in `~/.gemini/config/skills.json`. At startup, Prism creates
+`~/.gemini/config/skills.json` pointing at your Prism skills directory when
+neither that file exists nor `~/.gemini/config/skills` already points there, so
+any user-owned `~/.gemini/config/skills/` folder or symlink keeps working
+alongside Prism's skills. Prism leaves an existing `skills.json` untouched; if
+you already have one, or later change `PRISM_SKILLS_DIR` or move the data
+directory, add or update the entry in `~/.gemini/config/skills.json` yourself.

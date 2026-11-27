@@ -34,6 +34,46 @@ pub const COMMAND: &str = "agy";
 /// The name a usage row gets when `agy` runs the model its own settings choose.
 const UNNAMED_MODEL: &str = "agy";
 
+/// Per-session settings passed to `agy` when `GEMINI_API_KEY` is set, routing
+/// directly to the Gemini API without modifying `~/.gemini/antigravity-cli/settings.json`.
+const GEMINI_API_KEY_SETTINGS: &str = r#"{"modelProvider":"gemini"}"#;
+
+/// Maximum bytes read from an existing user-owned `~/.gemini/config/skills.json`.
+const MAX_SKILLS_MANIFEST_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgyAuthMethod {
+    GeminiApiKey,
+    Adc,
+    Account,
+}
+
+impl AgyAuthMethod {
+    fn as_str(self) -> &'static str {
+        match self {
+            AgyAuthMethod::GeminiApiKey => "gemini-api-key",
+            AgyAuthMethod::Adc => "adc",
+            AgyAuthMethod::Account => "account",
+        }
+    }
+}
+
+fn agy_auth_method(env: &ProcessEnv) -> AgyAuthMethod {
+    if env
+        .get("GEMINI_API_KEY")
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return AgyAuthMethod::GeminiApiKey;
+    }
+    if env
+        .get("AGY_ADC_AUTH")
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"))
+    {
+        return AgyAuthMethod::Adc;
+    }
+    AgyAuthMethod::Account
+}
+
 pub struct AgyAgent {
     /// A test hook; production runs in the selected environment.
     environment: Option<Arc<dyn ExecutionEnvironment>>,
@@ -63,11 +103,15 @@ impl CodingAgent for AgyAgent {
         DISPLAY_NAME
     }
 
-    /// Links the runtime's skills directory into `agy`'s global customization
-    /// root (`<home>/.gemini/config/skills`) only when nothing exists there yet.
-    /// `agy` has no setting to relocate `~/.gemini` away from `$HOME`, so an
-    /// existing directory, file or symlink is left untouched and only reported
-    /// via `skills_linked`. Any filesystem failure is logged and reported as
+    /// Shares the runtime's skills directory with `agy` via its global
+    /// discovery manifest (`<home>/.gemini/config/skills.json`), which loads
+    /// alongside any user-owned `~/.gemini/config/skills/` directory without
+    /// replacing it.
+    ///
+    /// If `<home>/.gemini/config/skills` already points at the runtime's skills
+    /// dir or `<home>/.gemini/config/skills.json` already exists, nothing is
+    /// written and `skills_linked` reports whether the runtime's skills dir is
+    /// already referenced. Any filesystem failure is logged and reported as
     /// `skills_linked: false` so startup never fails for optional skills.
     async fn prepare_home(&self) -> anyhow::Result<CodingAgentHome> {
         let env = self.target();
@@ -81,12 +125,26 @@ impl CodingAgent for AgyAgent {
         let config_dir = format!("{home}/.gemini/config");
         let skills_dir = env.paths().skills_dir;
         let link = format!("{config_dir}/skills");
+        let manifest = format!("{config_dir}/skills.json");
         let files = env.files();
 
-        match files.lstat(&link).await {
-            Ok(_) => Ok(CodingAgentHome {
+        if points_at(&*env, &link, &skills_dir).await {
+            return Ok(CodingAgentHome {
                 config_dir,
-                skills_linked: points_at(&*env, &link, &skills_dir).await,
+                skills_linked: true,
+            });
+        }
+
+        match files.lstat(&manifest).await {
+            Ok(_) => Ok(CodingAgentHome {
+                config_dir: config_dir.clone(),
+                skills_linked: manifest_references_skills(
+                    &*env,
+                    &config_dir,
+                    &manifest,
+                    &skills_dir,
+                )
+                .await,
             }),
             Err(err) if io_error_kind(&err) == Some(std::io::ErrorKind::NotFound) => {
                 if let Err(err) = files.mkdir(&config_dir).await {
@@ -99,10 +157,20 @@ impl CodingAgent for AgyAgent {
                         skills_linked: false,
                     });
                 }
-                if let Err(err) = files.symlink(&skills_dir, &link).await {
+                let target = files
+                    .realpath(&skills_dir)
+                    .await
+                    .unwrap_or_else(|_| skills_dir.clone());
+                let content = format!(
+                    "{}\n",
+                    serde_json::to_string_pretty(&json!({
+                        "entries": [{ "path": target }]
+                    }))?
+                );
+                if let Err(err) = files.write_text(&manifest, &content, None).await {
                     log_warn!(
-                        json!({ "link": link, "target": skills_dir, "err": err_json(&err) }),
-                        "[Startup] Could not link Antigravity CLI skills directory"
+                        json!({ "manifest": manifest, "target": target, "err": err_json(&err) }),
+                        "[Startup] Could not write Antigravity CLI skills manifest"
                     );
                     return Ok(CodingAgentHome {
                         config_dir,
@@ -111,13 +179,13 @@ impl CodingAgent for AgyAgent {
                 }
                 Ok(CodingAgentHome {
                     config_dir,
-                    skills_linked: points_at(&*env, &link, &skills_dir).await,
+                    skills_linked: true,
                 })
             }
             Err(err) => {
                 log_warn!(
-                    json!({ "link": link, "err": err_json(&err) }),
-                    "[Startup] Could not inspect Antigravity CLI skills directory"
+                    json!({ "manifest": manifest, "err": err_json(&err) }),
+                    "[Startup] Could not inspect Antigravity CLI skills manifest"
                 );
                 Ok(CodingAgentHome {
                     config_dir,
@@ -127,14 +195,24 @@ impl CodingAgent for AgyAgent {
         }
     }
 
-    /// Available when `~/.gemini/antigravity-cli/jetski_state.pbtxt` exists and
-    /// `agy models` returns available models in the execution environment.
+    /// Available when `agy` can serve models in the execution environment:
+    /// via `GEMINI_API_KEY` (`--settings '{"modelProvider":"gemini"}'`), via
+    /// `AGY_ADC_AUTH=true`, or via a local signed-in account whose
+    /// `~/.gemini/antigravity-cli/jetski_state.pbtxt` exists.
     async fn is_available(&self, env: &ProcessEnv) -> anyhow::Result<bool> {
         let target = self.target();
-        if !has_agy_home(&*target, env).await {
+        let auth = agy_auth_method(env);
+        if auth == AgyAuthMethod::Account && !has_agy_home(&*target, env).await {
             return Ok(false);
         }
-        let args = vec!["models".to_string()];
+        let args = match auth {
+            AgyAuthMethod::GeminiApiKey => vec![
+                "--settings".to_string(),
+                GEMINI_API_KEY_SETTINGS.to_string(),
+                "models".to_string(),
+            ],
+            AgyAuthMethod::Adc | AgyAuthMethod::Account => vec!["models".to_string()],
+        };
         Ok(probe_cli(&*target, COMMAND, &args, env.clone(), None)
             .await
             .is_ok_and(|run| {
@@ -143,9 +221,11 @@ impl CodingAgent for AgyAgent {
     }
 
     fn run(&self, task: CodingAgentTask) -> Arc<dyn CodingAgentRun> {
+        let auth = agy_auth_method(&task.env);
         let started_at = crate::support::now_ms();
         let mut props = IndexMap::new();
         props.insert("task.id".to_string(), task.task_id.clone());
+        props.insert("auth.method".to_string(), auth.as_str().to_string());
         let owner = CONFIG.owner_user_id();
         track_event("agy task started", Some(&owner), Some(props.clone()));
 
@@ -155,14 +235,17 @@ impl CodingAgent for AgyAgent {
             .unwrap_or_else(|| get_execution_environment_for(task.workdir.as_deref()));
         let models = CONFIG.coding_agent_models.agy.clone();
         let requested_model = model_for(&task, &models);
-        let (parse_line, flush) =
-            create_parser(requested_model.unwrap_or_else(|| UNNAMED_MODEL.to_string()));
+        let subscription = auth == AgyAuthMethod::Account;
+        let (parse_line, flush) = create_parser(
+            requested_model.unwrap_or_else(|| UNNAMED_MODEL.to_string()),
+            subscription,
+        );
         let run = run_cli(
             CliRunSpec {
                 task_id: task.task_id.clone(),
                 display_name: DISPLAY_NAME.to_string(),
                 command: COMMAND.to_string(),
-                args: build_args(&task, &models),
+                args: build_args(&task, auth, &models),
                 cwd: task.workdir.clone(),
                 env: task.env.clone(),
                 parse_line,
@@ -222,14 +305,60 @@ pub(crate) fn models_output_signed_in(stdout: &str, stderr: &str) -> bool {
     })
 }
 
+/// Whether an existing `skills.json` discovery manifest lists `skills_dir` in `entries`.
+async fn manifest_references_skills(
+    environment: &dyn ExecutionEnvironment,
+    config_dir: &str,
+    manifest: &str,
+    skills_dir: &str,
+) -> bool {
+    let files = environment.files();
+    let Ok(raw) = files
+        .read_text(manifest, Some(MAX_SKILLS_MANIFEST_BYTES))
+        .await
+    else {
+        return false;
+    };
+    let Ok(parsed) = serde_json::from_str::<Value>(&raw) else {
+        return false;
+    };
+    let Some(entries) = parsed.get("entries").and_then(Value::as_array) else {
+        return false;
+    };
+    let canonical_skills = files.realpath(skills_dir).await.ok();
+    for entry in entries {
+        let Some(path) = non_empty_text(entry, "path") else {
+            continue;
+        };
+        let resolved = if std::path::Path::new(path).is_absolute() {
+            path.to_string()
+        } else {
+            format!("{config_dir}/{path}")
+        };
+        if resolved == skills_dir
+            || canonical_skills
+                .as_deref()
+                .is_some_and(|canonical| resolved == canonical)
+            || points_at(environment, &resolved, skills_dir).await
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// `-p <prompt> --output-format stream-json`, `--mode plan` for plan tasks or
-/// `--dangerously-skip-permissions` for edit tasks, plus optional `--model`,
-/// `--effort` and `--resume`.
+/// `--dangerously-skip-permissions` for edit tasks, plus optional `--settings`,
+/// `--model`, `--effort` and `--resume`.
 ///
 /// Headless `agy` denies shell commands under `accept-edits` when stdin is
 /// closed, so edit tasks pass `--dangerously-skip-permissions`. Plan tasks pass
 /// `--mode plan` and prepend `PLAN_ONLY_INSTRUCTION`.
-fn build_args(task: &CodingAgentTask, models: &TierSet<String>) -> Vec<String> {
+fn build_args(
+    task: &CodingAgentTask,
+    auth: AgyAuthMethod,
+    models: &TierSet<String>,
+) -> Vec<String> {
     let prompt = [
         (task.mode == CodingAgentMode::Plan).then_some(PLAN_ONLY_INSTRUCTION),
         task.append_system_prompt.as_deref(),
@@ -247,6 +376,11 @@ fn build_args(task: &CodingAgentTask, models: &TierSet<String>) -> Vec<String> {
         "--output-format".to_string(),
         "stream-json".to_string(),
     ];
+
+    if auth == AgyAuthMethod::GeminiApiKey {
+        args.push("--settings".to_string());
+        args.push(GEMINI_API_KEY_SETTINGS.to_string());
+    }
 
     match task.mode {
         CodingAgentMode::Plan => {
@@ -297,7 +431,7 @@ fn count(value: &Value, key: &str) -> i64 {
 /// Parses `agy --output-format stream-json` NDJSON lines into neutral events,
 /// plus an EOF flusher that emits any buffered in-progress `text_delta` if the
 /// process exits or is stopped before reaching `state: "DONE"` or `result`.
-fn create_parser(initial_model: String) -> (ParseLine, FlushEvents) {
+fn create_parser(initial_model: String, subscription: bool) -> (ParseLine, FlushEvents) {
     let mut model = initial_model;
     let pending_text = Arc::new(parking_lot::Mutex::new(String::new()));
     let flush_pending = pending_text.clone();
@@ -383,9 +517,10 @@ fn create_parser(initial_model: String) -> (ParseLine, FlushEvents) {
                                 long_cache_write_tokens: 0,
                                 output_tokens,
                                 cost_usd: None,
-                                // `agy` authenticates with a Google account plan rather than
-                                // per-token API billing, so Spending records $0 subscription usage.
-                                subscription: true,
+                                // Account-based `agy` sessions run under a Google plan ($0
+                                // subscription usage); `GEMINI_API_KEY` and `AGY_ADC_AUTH`
+                                // bill per token.
+                                subscription,
                             },
                         });
                     }
