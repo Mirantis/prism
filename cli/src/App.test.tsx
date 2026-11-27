@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from 'ink-testing-library';
+import { createHash } from 'node:crypto';
 
 // Mock the singleton adapter before importing App. `vi.mock` is hoisted to
 // the top of the file, so the stub has to be declared via `vi.hoisted()` —
@@ -1121,6 +1122,151 @@ describe('App', () => {
       unmount();
 
       expect(reports()).toEqual([]);
+    });
+  });
+
+  describe('terminal resume', () => {
+    const isTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    const reporting = { token: 'dummy-token-replace-me', command: ['/usr/local/bin/prism'], cwd: '/work/repo' };
+    let written: string[];
+
+    beforeEach(() => {
+      written = [];
+      Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+      vi.spyOn(process.stdout, 'write').mockImplementation((chunk: string | Uint8Array) => {
+        written.push(String(chunk));
+        return true;
+      });
+    });
+
+    afterEach(() => {
+      vi.mocked(process.stdout.write).mockRestore();
+      if (isTTY) Object.defineProperty(process.stdout, 'isTTY', isTTY);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+    });
+
+    /** Every OSC 7577 report written so far: its command and directory decoded, or `clear`. */
+    type ResumeReport = { argv: string[]; cwd: string } | 'clear';
+    const resumeReports = () =>
+      written.flatMap((chunk): ResumeReport[] => {
+        if (!chunk.startsWith('\x1b]7577;') || !chunk.endsWith('\x1b\\')) return [];
+        const body = chunk.slice('\x1b]7577;'.length, -2);
+        const [signed, mac] = body.split(':mac=');
+        expect(createHash('sha256').update(`${signed}:${reporting.token}`).digest('hex')).toBe(mac);
+        const pairs: Record<string, string> = Object.fromEntries(
+          signed!.split(':').map((pair) => [pair.slice(0, pair.indexOf('=')), pair.slice(pair.indexOf('=') + 1)]),
+        );
+        if (pairs.clear) return ['clear'];
+        const decode = (value: string) => Buffer.from(value, 'base64').toString('utf8');
+        return [{ argv: pairs.argv!.split(',').map(decode), cwd: decode(pairs.cwd!) }];
+      });
+
+    const resumeOf = (threadId: string) => ({ argv: ['/usr/local/bin/prism', '--resume', threadId], cwd: '/work/repo' });
+
+    it("reports the session's conversation once it exists", async () => {
+      const { unmount } = render(<App {...baseProps} resumeReporting={reporting} />);
+      try {
+        await settle();
+        expect(resumeReports()).toEqual([resumeOf('thread-mine')]);
+      } finally {
+        unmount();
+      }
+    });
+
+    it('reports the conversation picked in the picker', async () => {
+      const { stdin, unmount } = render(<App {...resumeProps} resumeReporting={reporting} />);
+      try {
+        await settle();
+        expect(resumeReports()).toEqual([]);
+        stdin.write('\r');
+        await settle();
+        expect(resumeReports()).toEqual([resumeOf('thread-alpha')]);
+      } finally {
+        unmount();
+      }
+    });
+
+    it('reports again when the editor gives the terminal back', async () => {
+      let closeEditor: (text: string) => void = () => {};
+      mockEditText.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            closeEditor = (text) => resolve({ text, changed: true, file: '/tmp/p/d.md', discard: vi.fn() });
+          }),
+      );
+      const { stdin, unmount } = render(<App {...baseProps} resumeReporting={reporting} />);
+      try {
+        await settle();
+        stdin.write('/webhooks ');
+        await settle();
+        stdin.write('\r');
+        await settle(5);
+        for (const key of ['\r', '\t', '\t', '\t', '\t', ' ']) {
+          stdin.write(key);
+          await settle(1);
+        }
+        await settle();
+        expect(mockEditText).toHaveBeenCalled();
+        expect(resumeReports()).toHaveLength(1);
+
+        closeEditor('Edited: {status}');
+        await settle(5);
+        expect(resumeReports()).toEqual([resumeOf('thread-mine'), resumeOf('thread-mine')]);
+      } finally {
+        unmount();
+      }
+    });
+
+    it('clears the record when the user exits with Ctrl+C or /exit', async () => {
+      const ctrlC = render(<App {...baseProps} resumeReporting={reporting} />);
+      await settle();
+      ctrlC.stdin.write('\x03');
+      await settle();
+      ctrlC.unmount();
+      expect(resumeReports()).toEqual([resumeOf('thread-mine'), 'clear']);
+
+      written = [];
+      const slashExit = render(<App {...baseProps} resumeReporting={reporting} />);
+      await settle();
+      // The trailing space closes the slash popup, so one Enter runs the command.
+      slashExit.stdin.write('/exit ');
+      await settle();
+      slashExit.stdin.write('\r');
+      await settle(5);
+      slashExit.unmount();
+      expect(resumeReports()).toEqual([resumeOf('thread-mine'), 'clear']);
+    });
+
+    it('clears the record when the user leaves the picker with Escape', async () => {
+      const { stdin, unmount } = render(<App {...resumeProps} resumeReporting={reporting} />);
+      await pressEscape(stdin);
+      await settle();
+      unmount();
+      expect(resumeReports()).toEqual(['clear']);
+    });
+
+    it('keeps the record when the app unmounts without a user exit, as on a hang-up', async () => {
+      const { unmount } = render(<App {...baseProps} resumeReporting={reporting} />);
+      await settle();
+      unmount();
+      expect(resumeReports()).toEqual([resumeOf('thread-mine')]);
+    });
+
+    it('writes nothing without a token or when stdout is not a terminal', async () => {
+      const withoutToken = render(<App {...baseProps} />);
+      await settle();
+      withoutToken.stdin.write('\x03');
+      await settle();
+      withoutToken.unmount();
+
+      Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+      const notTerminal = render(<App {...baseProps} resumeReporting={reporting} />);
+      await settle();
+      notTerminal.stdin.write('\x03');
+      await settle();
+      notTerminal.unmount();
+
+      expect(resumeReports()).toEqual([]);
     });
   });
 });

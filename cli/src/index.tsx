@@ -6,6 +6,7 @@ import { loadConfig } from './config.js';
 import { tuiAdapterService, ThreadSummary } from './tui-adapter.js';
 import { detectTerminalGraphics } from './images/terminal-graphics.js';
 import { Launch, OpenThread, parseLaunchArgs, resolveContinueLaunch, resolveThreadLaunch } from './launch.js';
+import { ownCommand, programResumeSequence, ResumeReporting, takeResumeToken } from './program-resume.js';
 
 // The CLI doesn't know — and isn't told — the userId or agentId. The
 // runtime owns both and substitutes them when our envelopes omit them.
@@ -14,6 +15,8 @@ import { Launch, OpenThread, parseLaunchArgs, resolveContinueLaunch, resolveThre
 // `--version` / `--help` short-circuit before any render work, so the packaged
 // binary can be smoke-tested without a TTY.
 const args = process.argv.slice(2);
+// Taken before any command runs, so that no process the CLI starts inherits the token.
+const resumeToken = takeResumeToken();
 if (args.includes('--version') || args.includes('-v')) {
   console.log(process.env.PRISM_VERSION ?? '0.0.0-dev');
   process.exit(0);
@@ -26,7 +29,8 @@ if (args.includes('--help') || args.includes('-h')) {
       '  --resume       Pick a previous conversation to resume instead of starting fresh.\n' +
       '                 An agent in single-thread mode always opens its one conversation.\n' +
       '  --resume <id>  Open the conversation with this id.\n' +
-      '  --continue     Open the most recently active conversation started in this directory.',
+      '  --continue     Open the most recently active conversation started in this directory.\n' +
+      'A terminal with program resume (OSC 7577) reopens the conversation after it restarts.',
   );
   process.exit(0);
 }
@@ -43,16 +47,18 @@ if (args[0] === 'update') {
 function main(): void {
   const cfg = loadConfig();
   const launch = parseLaunchArgs(args);
-  if (launch.kind === 'invalid') {
-    console.error(launch.message);
-    process.exit(1);
-  }
+  if (launch.kind === 'invalid') fail(launch.message);
   // Ink enters raw mode only when its input hooks mount, after the first frame. Raw mode
   // from the start keeps a Ctrl+C typed during boot a key press rather than a SIGINT.
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
 
   // The terminal answers the graphics probe as input, so it runs before Ink reads stdin.
   const graphics = detectTerminalGraphics(process.stdin, process.stdout);
+
+  // The resume command carries no environment, so the CLI reports one only when
+  // PRISM_HTTP_URL is unset or names the address of the settings file.
+  const resumeReporting: ResumeReporting | undefined =
+    resumeToken && !cfg.httpUrlFromEnv ? { token: resumeToken, command: ownCommand(), cwd: process.cwd() } : undefined;
 
   async function start(
     opened: { resume?: { sessions: ThreadSummary[]; cwd: string }; thread?: OpenThread } = {},
@@ -68,13 +74,18 @@ function main(): void {
         graphics={terminalGraphics}
         resume={opened.resume}
         thread={opened.thread}
+        resumeReporting={resumeReporting}
       />,
       { exitOnCtrlC: false, interactive: true },
     );
   }
 
-  /** Print why the launch cannot open a conversation, and exit with an error. */
+  /**
+   * Print why the launch cannot open a conversation, and exit with an error. A
+   * terminal that resumed this command would run it again, so the record is cleared.
+   */
   function fail(message: string): never {
+    if (resumeToken && process.stdout.isTTY) process.stdout.write(programResumeSequence({ clear: true }, resumeToken));
     console.error(message);
     process.exit(1);
   }

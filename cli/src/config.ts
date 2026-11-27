@@ -20,6 +20,8 @@ export interface PrismConfig {
   hideStatusBar: boolean;
   /** Base URL of the agent-runtime. wsUrl is derived from this. */
   httpUrl: string;
+  /** True when `PRISM_HTTP_URL` sets `httpUrl` to an address the settings file does not name. */
+  httpUrlFromEnv: boolean;
 }
 
 const DEFAULTS: PrismConfig = {
@@ -28,6 +30,7 @@ const DEFAULTS: PrismConfig = {
   hideCursor: false,
   hideStatusBar: false,
   httpUrl: 'http://localhost:3003',
+  httpUrlFromEnv: false,
 };
 
 export function configFilePath(): string {
@@ -79,6 +82,7 @@ function readFromFile(): PrismConfig {
     hideCursor: pickBoolean(obj, 'hideCursor', DEFAULTS.hideCursor),
     hideStatusBar: pickBoolean(obj, 'hideStatusBar', DEFAULTS.hideStatusBar),
     httpUrl: pickString(obj, 'httpUrl', DEFAULTS.httpUrl),
+    httpUrlFromEnv: false,
   };
 }
 
@@ -86,9 +90,11 @@ function applyEnvOverrides(cfg: PrismConfig): PrismConfig {
   // PRISM_HTTP_URL is the only env override; it lets the e2e harness and
   // ad-hoc runs point at a non-default agent-runtime without writing a
   // settings file. Applied uniformly whether the file existed or not.
+  const fromEnv = process.env.PRISM_HTTP_URL;
   return {
     ...cfg,
-    httpUrl: process.env.PRISM_HTTP_URL ?? cfg.httpUrl,
+    httpUrl: fromEnv ?? cfg.httpUrl,
+    httpUrlFromEnv: fromEnv !== undefined && fromEnv !== cfg.httpUrl,
   };
 }
 

@@ -16,6 +16,7 @@ import { appendLocal, ChatEntry, markFailed, upsertMessage, withHistory } from '
 import { useCompaction } from './hooks/use-compaction.js';
 import { useUpdateNotice } from './hooks/use-update-notice.js';
 import { useProgramStatus } from './hooks/use-program-status.js';
+import { useProgramResume } from './hooks/use-program-resume.js';
 import { Header } from './components/Header.js';
 import { LlmProviderWarning } from './components/llm-provider-warning.js';
 import { MessageList } from './components/MessageList.js';
@@ -42,6 +43,7 @@ import { AttachmentMeta, formatFileSize, latestTurnAttachments, listPathSuggesti
 import { formatShellRecord, runShellCommand, shellCommandOf, type ShellRun } from './shell-command.js';
 import type { TerminalGraphics } from './images/terminal-graphics.js';
 import type { OpenThread } from './launch.js';
+import type { ResumeReporting } from './program-resume.js';
 
 export interface AppProps {
   userId: string;
@@ -59,6 +61,8 @@ export interface AppProps {
   resume?: { sessions: ThreadSummary[]; cwd: string };
   /** The conversation the launch flags named (`--resume <id>`, `--continue`), opened with no picker. */
   thread?: OpenThread;
+  /** Set when the terminal can resume this session after it restarts (OSC 7577). */
+  resumeReporting?: ResumeReporting;
 }
 
 /** Input prefix that switches the popup from commands to path suggestions. */
@@ -73,7 +77,7 @@ function spinnerLabel(turn: TurnState): string {
   return 'compacting conversation…';
 }
 
-export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hideStatusBar, graphics, resume, thread }) => {
+export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hideStatusBar, graphics, resume, thread, resumeReporting }) => {
   const { exit } = useApp();
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   // In resume mode, the thread picker owns the screen until the user selects a
@@ -324,10 +328,6 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     triggerShutdown();
   }, [triggerShutdown]);
 
-  useEffect(() => {
-    if (shuttingDown) exit();
-  }, [shuttingDown, exit]);
-
   const openPanel = useCallback((id: PanelId) => setActivePanel(id), []);
 
   // Hand the whole terminal to a child process that needs it (an editor), then
@@ -369,6 +369,16 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     },
     [stdin, isRawModeSupported],
   );
+  const clearResume = useProgramResume(resumeReporting, activeThreadId, suspended);
+
+  // A user exit (Ctrl+C, /exit, Escape in the picker) clears the terminal's resume
+  // record before Ink's `exit()`. A hang-up or a termination leaves it.
+  useEffect(() => {
+    if (!shuttingDown) return;
+    clearResume();
+    exit();
+  }, [shuttingDown, exit, clearResume]);
+
   const stageAttachment = useCallback(
     (att: AttachmentMeta) => setStaged((prev) => [...prev, att]),
     [],

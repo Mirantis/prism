@@ -67,6 +67,17 @@ describe('loadConfig', () => {
     expect(cfg.httpUrl).toBe('http://example.com:9999');
   });
 
+  it('says when only PRISM_HTTP_URL names the runtime address', () => {
+    vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ httpUrl: 'http://example.com:9999' }));
+    expect(loadConfig().httpUrlFromEnv).toBe(false);
+
+    process.env.PRISM_HTTP_URL = 'http://example.com:9999';
+    expect(loadConfig().httpUrlFromEnv).toBe(false);
+
+    process.env.PRISM_HTTP_URL = 'http://127.0.0.1:54321';
+    expect(loadConfig().httpUrlFromEnv).toBe(true);
+  });
+
   it('falls back to defaults for wrong-typed keys', () => {
     vi.spyOn(fs, 'readFileSync').mockReturnValue(
       JSON.stringify({ hideCursor: 'yes', modelId: 42 }),

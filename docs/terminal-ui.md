@@ -36,6 +36,13 @@ When your provider needs setup, `prism` lists its requirements under **Connect a
 
 To switch to a different thread mid-session, exit and relaunch with `--resume`.
 
+In a terminal that supports program resume (OSC 7577), `prism` comes back on
+the same conversation, in the same directory, when the terminal restores its
+tabs after a restart. Exit with **Ctrl+C** or `/exit` to end the session for
+good. The terminal brings `prism` back only when `PRISM_HTTP_URL` is unset or
+names the same address as `httpUrl`, since a resumed `prism` starts without the
+environment it ran with.
+
 ## Chatting
 
 Type your message and press **Enter** to send. While the agent is working, a
