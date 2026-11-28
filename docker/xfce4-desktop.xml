@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <!--
-  A plain backdrop in the theme's own dark, a shade below the windows so they stand off it.
-  One backdrop for every workspace, and the monitor named twice because the desktop writes
-  the output's name and a numbered fallback.
+  The image's wallpaper, zoomed to fill the screen, over the theme's own dark as the colour
+  behind it. One backdrop for every workspace, and the monitor named twice because the
+  desktop writes the output's name and a numbered fallback. No icons on the desktop: the dock
+  holds the programs.
 -->
 <channel name="xfce4-desktop" version="1.0">
+  <property name="desktop-icons" type="empty">
+    <property name="style" type="int" value="0"/>
+  </property>
   <property name="backdrop" type="empty">
     <property name="single-workspace-mode" type="bool" value="true"/>
     <property name="single-workspace-number" type="int" value="0"/>
@@ -13,7 +17,8 @@
       <property name="monitor0" type="empty">
         <property name="workspace0" type="empty">
           <property name="color-style" type="int" value="0"/>
-          <property name="image-style" type="int" value="0"/>
+          <property name="image-style" type="int" value="5"/>
+          <property name="last-image" type="string" value="/usr/share/backgrounds/prism/wallpaper.svg"/>
           <property name="rgba1" type="array">
             <value type="double" value="0.106"/>
             <value type="double" value="0.106"/>
@@ -25,7 +30,8 @@
       <property name="monitorscreen" type="empty">
         <property name="workspace0" type="empty">
           <property name="color-style" type="int" value="0"/>
-          <property name="image-style" type="int" value="0"/>
+          <property name="image-style" type="int" value="5"/>
+          <property name="last-image" type="string" value="/usr/share/backgrounds/prism/wallpaper.svg"/>
           <property name="rgba1" type="array">
             <value type="double" value="0.106"/>
             <value type="double" value="0.106"/>

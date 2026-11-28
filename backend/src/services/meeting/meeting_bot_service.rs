@@ -1114,6 +1114,7 @@ impl MeetingBotService {
             .start(BrowserStackOptions {
                 env: handles.browser_env.clone(),
                 profile_dir: None,
+                window_position: None,
             })
             .await?;
 

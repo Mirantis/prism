@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080">
+  <!-- The desktop's backdrop: dark slate, lit by soft glows in the logo's colours. -->
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#151a2e"/>
+      <stop offset="1" stop-color="#0b0d17"/>
+    </linearGradient>
+    <radialGradient id="indigo" cx="0.2" cy="0.15" r="0.6">
+      <stop offset="0" stop-color="#5c6cc3" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#5c6cc3" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="magenta" cx="0.85" cy="0.9" r="0.55">
+      <stop offset="0" stop-color="#b62c7f" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#b62c7f" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="amber" cx="0.95" cy="0.1" r="0.35">
+      <stop offset="0" stop-color="#e98f46" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#e98f46" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#base)"/>
+  <rect width="1920" height="1080" fill="url(#indigo)"/>
+  <rect width="1920" height="1080" fill="url(#magenta)"/>
+  <rect width="1920" height="1080" fill="url(#amber)"/>
+</svg>
