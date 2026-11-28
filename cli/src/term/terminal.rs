@@ -208,9 +208,9 @@ fn wake_pipe() -> (std::os::fd::OwnedFd, std::os::fd::OwnedFd) {
     }
 }
 
-pub fn is_tty() -> bool {
+pub fn stdin_is_tty() -> bool {
     use std::io::IsTerminal;
-    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+    std::io::stdin().is_terminal()
 }
 
 pub fn stdout_is_tty() -> bool {

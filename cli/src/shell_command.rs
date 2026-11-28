@@ -101,25 +101,34 @@ fn run_recorded(command: &str, log: &std::path::Path) -> std::io::Result<i64> {
     Ok(exit_code_of(status))
 }
 
+/// The shell process for a piped command. `cmd.exe` parses its own command line, so the
+/// command goes to it verbatim as `/d /s /c "<command>"`, never quoted by the MSVC rules.
+fn shell_process(command: &str) -> Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = Command::new("cmd");
+        cmd.raw_arg(format!("/d /s /c \"{command}\""));
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", command]);
+        cmd
+    }
+}
+
 fn run_piped(command: &str) -> std::io::Result<(i64, OutputCapture)> {
     // The console sends Ctrl+C to this process as well as to the command. While a
     // listener is registered, tokio's console handler takes the event, so Ctrl+C stops
     // only the command. A handler routine is not inherited, so the command still gets it.
     #[cfg(windows)]
     let _ctrl_c = tokio::signal::windows::ctrl_c().ok();
-    let mut child = if cfg!(windows) {
-        Command::new("cmd")
-            .args(["/C", command])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?
-    } else {
-        Command::new("sh")
-            .args(["-c", command])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?
-    };
+    let mut child = shell_process(command)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
     // Both streams go into one bounded capture as their chunks arrive, in that order.
     let (chunks, received) = std::sync::mpsc::channel::<(bool, Vec<u8>)>();
     let pipe = |mut from: Box<dyn Read + Send>, is_err: bool| {

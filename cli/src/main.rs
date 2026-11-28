@@ -90,7 +90,7 @@ fn restore_terminal() {
 
 async fn chat(resume: bool) -> i32 {
     let cfg = config::load_config();
-    let interactive = terminal::is_tty();
+    let interactive = terminal::stdin_is_tty();
     // Raw mode from the start keeps a Ctrl+C typed during boot a key press rather than a SIGINT.
     if interactive {
         terminal::enable_raw();
@@ -120,7 +120,7 @@ async fn chat(resume: bool) -> i32 {
     let (term_tx, mut term_rx) = mpsc::unbounded_channel::<TermInput>();
     let reader = interactive.then(|| Reader::start(term_tx));
     // The terminal answers the graphics probe as input, so it runs before the chat reads stdin.
-    let (graphics, typed_early) = if interactive {
+    let (graphics, typed_early) = if interactive && terminal::stdout_is_tty() {
         detect_terminal_graphics(&mut term_rx).await
     } else {
         (TerminalGraphics::TEXT, String::new())

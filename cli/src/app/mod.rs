@@ -9,8 +9,10 @@ pub mod adapter;
 mod keys;
 mod view;
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -86,6 +88,9 @@ pub struct App {
     shutting_down: bool,
     composer: TextInput,
     command_index: usize,
+    /// The `/attach` suggestions and the draft they were listed for, so a frame reads the
+    /// directory only when the draft changes.
+    path_cache: RefCell<Option<(String, Arc<Vec<PathSuggestion>>)>>,
     expanded_message_id: Option<String>,
     panel: Option<Panel>,
     sign_in: Option<SignInRequest>,
@@ -133,6 +138,7 @@ impl App {
             api: api.clone(),
             tx: tx.clone(),
             interactive: opts.interactive,
+            open_panel: Arc::default(),
         };
         let (columns, rows) = terminal::size();
         let mut adapter = Adapter::new(api, tx);
@@ -158,6 +164,7 @@ impl App {
             shutting_down: false,
             composer: TextInput::default(),
             command_index: 0,
+            path_cache: RefCell::default(),
             expanded_message_id: None,
             panel: None,
             sign_in: None,
@@ -286,13 +293,21 @@ impl App {
         filter_by_prefix(if v.len() == 1 { "/" } else { v })
     }
 
-    fn path_suggestions(&self) -> Vec<PathSuggestion> {
+    fn path_suggestions(&self) -> Arc<Vec<PathSuggestion>> {
         if !self.attach_mode() {
-            return Vec::new();
+            return Arc::default();
         }
-        let partial = &self.composer.value[Self::attach_prefix().len()..];
+        let draft = &self.composer.value;
+        if let Some((value, list)) = &*self.path_cache.borrow()
+            && value == draft
+        {
+            return list.clone();
+        }
+        let partial = &draft[Self::attach_prefix().len()..];
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        list_path_suggestions(partial, &cwd)
+        let list = Arc::new(list_path_suggestions(partial, &cwd));
+        *self.path_cache.borrow_mut() = Some((draft.clone(), list.clone()));
+        list
     }
 
     fn popup_len(&self) -> usize {
@@ -369,6 +384,7 @@ impl App {
             }
             AppEvent::SendMessage(text) => self.send_message(text, Vec::new()),
             AppEvent::OpenPanel(id) => {
+                self.ctx.open_panel.fetch_add(1, Ordering::Relaxed);
                 self.panel = Some(match id {
                     PanelId::Schedules => Panel::Schedules(SchedulesPanel::open(&self.ctx)),
                     PanelId::Config => Panel::Config(ConfigPanel::open(&self.ctx)),
@@ -378,7 +394,7 @@ impl App {
             AppEvent::Stage(att) => self.staged.push(att),
             AppEvent::ClearStaged => self.staged.clear(),
             AppEvent::Shutdown => self.shutting_down = true,
-            AppEvent::Panel(msg) => self.on_panel_msg(msg),
+            AppEvent::Panel(panel, msg) => self.on_panel_msg(panel, msg),
             AppEvent::Suspend(ack) => {
                 self.suspended = true;
                 self.sign_in_panel = None;
@@ -430,9 +446,13 @@ impl App {
         }
     }
 
-    fn on_panel_msg(&mut self, msg: PanelMsg) {
+    fn on_panel_msg(&mut self, panel: u64, msg: PanelMsg) {
         let ctx = self.ctx.clone();
+        // A result for a panel that has closed since its request started is dropped.
+        let current = panel == ctx.open_panel.load(Ordering::Relaxed);
         match (msg, &mut self.panel) {
+            (PanelMsg::Schedules(_) | PanelMsg::Config(_) | PanelMsg::Webhooks(_), _)
+                if !current => {}
             (PanelMsg::Schedules(m), Some(Panel::Schedules(p))) => p.on_msg(m, &ctx),
             (PanelMsg::Config(m), Some(Panel::Config(p))) => p.on_msg(m),
             (PanelMsg::Webhooks(m), Some(Panel::Webhooks(p))) => p.on_msg(m),

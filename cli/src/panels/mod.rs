@@ -9,6 +9,7 @@ pub mod sign_in;
 pub mod webhooks;
 
 use std::future::Future;
+use std::sync::atomic::Ordering;
 
 use chrono::{DateTime, Local};
 
@@ -62,9 +63,10 @@ pub fn spawn_request<T: Send + 'static>(
     message: impl FnOnce(T) -> PanelMsg + Send + 'static,
 ) {
     let ctx = ctx.clone();
+    let panel = ctx.open_panel.load(Ordering::Relaxed);
     tokio::spawn(async move {
         let result = request.await;
-        ctx.send(AppEvent::Panel(message(result)));
+        ctx.send(AppEvent::Panel(panel, message(result)));
     });
 }
 

@@ -42,10 +42,14 @@ pub async fn run_acp_command(version: &str) -> i32 {
         });
     }
 
-    // The client closing stdin ends the session, once every request read has its answer.
+    // The client closing stdin ends the session, once every request read except a prompt has
+    // its answer. A prompt answers when its turn ends, and the client is no longer reading.
     let mut requests = tokio::task::JoinSet::new();
+    let mut prompts = tokio::task::JoinSet::new();
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     while let Ok(Some(line)) = lines.next_line().await {
+        while requests.try_join_next().is_some() {}
+        while prompts.try_join_next().is_some() {}
         let Ok(message) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
@@ -63,7 +67,7 @@ pub async fn run_acp_command(version: &str) -> i32 {
             Some(id) if method == "session/prompt" => match start_prompt(&bridge, &params) {
                 Ok(answer) => {
                     let out = out.clone();
-                    requests.spawn(async move { out.respond(id, answer.await) });
+                    prompts.spawn(async move { out.respond(id, answer.await) });
                 }
                 Err(e) => out.respond(id, Err(e)),
             },
@@ -85,6 +89,7 @@ pub async fn run_acp_command(version: &str) -> i32 {
             }
         }
     }
+    prompts.abort_all();
     while requests.join_next().await.is_some() {}
     out.flush().await;
     runtime.close();

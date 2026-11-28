@@ -11,3 +11,11 @@ Feature: Prism as an Agent Client Protocol agent
     When a second ACP client starts "prism acp"
     Then it lists the session under the project folder
     And loading the session replays the prompt and the reply
+
+  Scenario: The ACP client quits while a prompt is still running
+    Given an ACP client that started "prism acp"
+    When the client starts a session in a project folder
+    And the client prompts the agent to run "sleep 30" in its shell
+    And the agent is working on the prompt
+    When the client closes its end of the connection
+    Then "prism acp" exits within 5 seconds

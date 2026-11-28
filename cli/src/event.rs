@@ -2,6 +2,7 @@
 //! send them.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use tokio::sync::{mpsc, oneshot};
 
@@ -48,7 +49,8 @@ pub enum AppEvent {
     Stage(AttachmentMeta),
     ClearStaged,
     Shutdown,
-    Panel(PanelMsg),
+    /// A panel request's result, with the id of the panel that sent the request.
+    Panel(u64, PanelMsg),
     /// Hand the terminal to a child process; answer once it is free.
     Suspend(oneshot::Sender<()>),
     /// Take the terminal back; answer once the screen is drawn again.
@@ -71,6 +73,8 @@ pub struct Ctx {
     pub tx: AppTx,
     /// The terminal is a TTY, so a child process has to be handed it.
     pub interactive: bool,
+    /// The id of the open full-screen panel. Each opened panel gets a new one.
+    pub open_panel: Arc<AtomicU64>,
 }
 
 impl Ctx {

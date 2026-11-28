@@ -20,7 +20,7 @@ import {
   type SessionUpdate,
 } from '@agentclientprotocol/sdk';
 import { PRISM_CLI_BIN } from '../../support/runtime-command';
-import { setupRuntime, type RuntimeTestEnv } from '../setup';
+import { runtimeRequest, setupRuntime, type RuntimeTestEnv } from '../setup';
 
 const feature = loadFeatureFromText(readFileSync(join(import.meta.dirname, '../features/acp.feature'), 'utf8'));
 
@@ -28,6 +28,10 @@ interface AcpClient {
   agent: ClientContext;
   /** Every session update the agent sent, in order. */
   updates: SessionUpdate[];
+  /** Close the agent's stdin, as an editor that quits does. */
+  closeInput(): void;
+  /** Resolves when the process exits. */
+  exited: Promise<void>;
   stop(): void;
 }
 
@@ -46,7 +50,8 @@ async function startAcpClient(env: NodeJS.ProcessEnv): Promise<AcpClient> {
       ndJsonStream(Writable.toWeb(child.stdin!), Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>),
     );
   await connection.agent.request(methods.agent.initialize, { protocolVersion: 1 });
-  return { agent: connection.agent, updates, stop: () => child.kill() };
+  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  return { agent: connection.agent, updates, closeInput: () => child.stdin!.end(), exited, stop: () => child.kill() };
 }
 
 function textOf(updates: SessionUpdate[], kind: 'agent_message_chunk' | 'user_message_chunk'): string {
@@ -61,6 +66,7 @@ let first: AcpClient;
 let second: AcpClient;
 let sessionId: string;
 let response: PromptResponse;
+let quitting: AcpClient;
 const PROMPT = 'You MUST call the shell_exec tool with command: pwd. After it returns, reply with its output only.';
 
 describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, Scenario }) => {
@@ -72,6 +78,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, Scenario }) =
   AfterAllScenarios(async () => {
     first?.stop();
     second?.stop();
+    quitting?.stop();
     await env.cleanup();
     rmSync(projectDir, { recursive: true, force: true });
   });
@@ -123,4 +130,40 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, Scenario }) =
       });
     },
   );
+
+  Scenario('The ACP client quits while a prompt is still running', ({ Given, When, Then, And }) => {
+    let quitSession: string;
+    Given('an ACP client that started "prism acp"', async () => {
+      quitting = await startAcpClient(env.prismEnv);
+    });
+    When('the client starts a session in a project folder', async () => {
+      ({ sessionId: quitSession } = await quitting.agent.request(methods.agent.session.new, {
+        cwd: projectDir,
+        mcpServers: [],
+      }));
+    });
+    And('the client prompts the agent to run "sleep 30" in its shell', () => {
+      // The answer comes only when the turn ends, after the client has gone.
+      void quitting.agent
+        .request(methods.agent.session.prompt, {
+          sessionId: quitSession,
+          prompt: [{ type: 'text', text: 'You MUST call the shell_exec tool with command: sleep 30. Then reply "done".' }],
+        })
+        .catch(() => {});
+    });
+    And('the agent is working on the prompt', async () => {
+      await expect
+        .poll(async () => (await runtimeRequest<{ state: string }>(env.port, 'GET', '/agents/state')).state, {
+          timeout: 60_000,
+        })
+        .toBe('working');
+    });
+    When('the client closes its end of the connection', () => {
+      quitting.closeInput();
+    });
+    Then('"prism acp" exits within 5 seconds', async () => {
+      const timedOut = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 5_000));
+      expect(await Promise.race([quitting.exited.then(() => 'exited' as const), timedOut])).toBe('exited');
+    });
+  });
 });

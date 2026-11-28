@@ -143,14 +143,14 @@ impl App {
                     .collect()
             } else {
                 self.path_suggestions()
-                    .into_iter()
+                    .iter()
                     .map(|s| PopupItem {
                         description: if s.is_directory {
                             "dir".into()
                         } else {
                             String::new()
                         },
-                        name: s.display,
+                        name: s.display.clone(),
                     })
                     .collect()
             };
