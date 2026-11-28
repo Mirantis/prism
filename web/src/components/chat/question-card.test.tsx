@@ -167,15 +167,57 @@ describe('QuestionCard', () => {
       expect((checkbox('Newsletter') as HTMLInputElement).checked).toBe(false);
     });
 
-    it('moves on when a chosen option is clicked again, but not on an arrow key', () => {
+    it('moves on with Space on a radio an arrow key chose, with no click event', () => {
       show(BLOCK);
       const option = radio(/Over €500/);
       fireEvent.keyDown(option, { key: 'ArrowDown' });
       fireEvent.click(option);
       expect(screen.getByRole('heading', { name: 'Question 1 of 2' })).toBeTruthy();
       fireEvent.keyDown(option, { key: ' ' });
+      fireEvent.keyUp(option, { key: ' ' });
+      expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
+    });
+
+    it('moves on when a chosen option is clicked again', () => {
+      show(BLOCK);
+      const option = radio(/Over €500/);
+      fireEvent.keyDown(option, { key: 'ArrowDown' });
+      fireEvent.click(option);
+      fireEvent.pointerDown(option);
       fireEvent.click(option);
       expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
+    });
+
+    it('lets the rest of a double-click that moved the card on choose or press nothing', () => {
+      show(BLOCK);
+      fireEvent.click(screen.getAllByTestId('question-card-option')[1], { detail: 1 });
+      expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
+      fireEvent.click(screen.getAllByTestId('question-card-option')[1], { detail: 2 });
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }), { detail: 3 });
+      expect((checkbox('Webinar') as HTMLInputElement).checked).toBe(false);
+      expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
+    });
+
+    it('toggles a checkbox on every fast click when the card stays on the question', () => {
+      show(BLOCK);
+      fireEvent.click(screen.getByRole('button', { name: 'Skip' }), { detail: 0 });
+      const row = screen.getAllByTestId('question-card-option')[1];
+      fireEvent.click(row, { detail: 1 });
+      expect((checkbox('Webinar') as HTMLInputElement).checked).toBe(true);
+      fireEvent.click(row, { detail: 2 });
+      expect((checkbox('Webinar') as HTMLInputElement).checked).toBe(false);
+    });
+
+    it('shows a check on a chosen radio and a chosen checkbox', () => {
+      show(BLOCK);
+      const rows = () => screen.getAllByTestId('question-card-option');
+      fireEvent.keyDown(radio(/Over €500/), { key: 'ArrowDown' });
+      fireEvent.click(radio(/Over €500/));
+      expect(rows()[1].querySelector('svg')).toBeTruthy();
+      expect(rows()[0].querySelector('svg')).toBeNull();
+      fireEvent.click(next());
+      fireEvent.click(checkbox('Newsletter'));
+      expect(rows()[0].querySelector('svg')).toBeTruthy();
     });
 
     it('keeps focus on the option of a single question, which has no next question', () => {
@@ -185,6 +227,12 @@ describe('QuestionCard', () => {
       fireEvent.click(option);
       expect(document.activeElement).toBe(option);
       expect((send('Send answer') as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it('takes a digit typed with Shift, as some keyboard layouts type it', () => {
+      show(BLOCK);
+      fireEvent.keyDown(radio(/Over €500/), { key: '2', shiftKey: true });
+      expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
     });
 
     it('ignores number keys typed in the own-answer field, with a modifier, or past the last option', () => {

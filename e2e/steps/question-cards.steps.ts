@@ -110,6 +110,14 @@ When('I choose {string} on the question card', async ({ page }, label: string) =
   await card(page).getByTestId('question-card-option').filter({ hasText: label }).click();
 });
 
+When('I double-click {string} on the question card', async ({ page }, label: string) => {
+  await card(page).getByTestId('question-card-option').filter({ hasText: label }).dblclick();
+});
+
+Then('the question card has nothing chosen', async ({ page }) => {
+  await expect(card(page).locator('input:checked')).toHaveCount(0);
+});
+
 When('I skip the question', async ({ page }) => {
   await card(page).getByRole('button', { name: 'Skip', exact: true }).click();
 });

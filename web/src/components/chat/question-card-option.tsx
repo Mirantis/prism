@@ -4,7 +4,8 @@ import { cn } from '@/lib/utils';
 
 /**
  * One answer row: a native radio or checkbox, the number key that chooses it, its label,
- * detail and "Recommended" tag. A chosen checkbox shows a check in place of its number.
+ * detail and "Recommended" tag. A chosen row shows a check in place of its number, which
+ * stays visible when forced colours replace the row's colours.
  */
 export function QuestionCardOption({
   type,
@@ -27,7 +28,7 @@ export function QuestionCardOption({
   checked: boolean;
   inputRef?: Ref<HTMLInputElement>;
   onChange: () => void;
-  /** A click or Space on a radio that is already checked, which fires no change. */
+  /** A click or Space on a radio that is already checked. The browser fires no change for either. */
   onReselect?: () => void;
 }) {
   const detailId = useId();
@@ -50,6 +51,13 @@ export function QuestionCardOption({
         onClick={() => {
           if (type === 'radio' && checked) onReselect?.();
         }}
+        onKeyDown={(event) => {
+          if (event.key !== ' ' || type !== 'radio' || !checked) return;
+          // Chromium sends no click for Space on a checked radio. Other browsers send one, which this cancels.
+          event.preventDefault();
+          onReselect?.();
+        }}
+        data-question-option
         aria-label={recommended ? `${label}, Recommended` : label}
         aria-describedby={detail ? detailId : undefined}
         className="peer sr-only"
@@ -61,7 +69,7 @@ export function QuestionCardOption({
           'peer-checked:border-primary peer-checked:bg-primary peer-checked:text-primary-foreground',
         )}
       >
-        {type === 'checkbox' && checked ? <Check className="size-3.5" strokeWidth={3} /> : number}
+        {checked ? <Check className="size-3.5" strokeWidth={3} /> : number}
       </span>
       <span className="min-w-0 flex-1 pt-px">
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1">

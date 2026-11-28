@@ -56,6 +56,13 @@ Feature: The agent asks questions as a card
     And the conversation shows my answer "Launch: After the summer"
     And the agent has finished its turn
 
+  Scenario: A double-click answers one question
+    Given a conversation with a waiting question card
+    When I open that conversation
+    And I double-click "Under €500" on the question card
+    Then a question card waits with "Question 2 of 3"
+    And the question card has nothing chosen
+
   Scenario: A second answer changes nothing
     Given a conversation with a waiting question card
     When I open that conversation

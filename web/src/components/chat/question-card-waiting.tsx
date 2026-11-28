@@ -13,15 +13,14 @@ const SEND_FAILURES: Partial<Record<SendState, string>> = {
   refused: 'Couldn’t send these answers. Reload the page to see the current questions.',
 };
 
-/** A number key chooses an option, except while the person types, holds a modifier or holds the key down. */
+/**
+ * A number key chooses an option, except in the own-answer field, with Alt, Ctrl or Meta, or while held
+ * down. Some layouts type a digit with Shift.
+ */
 function optionKey(event: KeyboardEvent, options: number): number | null {
   // A held key would answer the next questions as well, since focus moves to each one in turn.
-  if (event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return null;
-  const target = event.target as HTMLElement;
-  if (target.isContentEditable || ['TEXTAREA', 'INPUT', 'SELECT'].includes(target.tagName)) {
-    // The option inputs themselves take the keys.
-    if (!(target instanceof HTMLInputElement && (target.type === 'radio' || target.type === 'checkbox'))) return null;
-  }
+  if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) return null;
+  if (event.target instanceof HTMLTextAreaElement) return null;
   const number = Number(event.key);
   return Number.isInteger(number) && number >= 1 && number <= options ? number - 1 : null;
 }
@@ -49,6 +48,8 @@ export function QuestionCardWaiting({
   const [step, setStep] = useState(0);
   const questionText = useRef<HTMLParagraphElement>(null);
   const focusQuestion = useRef(false);
+  // The step changed during the current click sequence.
+  const steppedThisClick = useRef(false);
   const total = card.questions.length;
   const several = total > 1;
   const last = step === total - 1;
@@ -68,6 +69,7 @@ export function QuestionCardWaiting({
   const goTo = (next: number) => {
     if (sending || next < 0 || next >= total || next === step) return;
     focusQuestion.current = true;
+    steppedThisClick.current = true;
     setStep(next);
   };
   const advance = () => {
@@ -85,11 +87,21 @@ export function QuestionCardWaiting({
       return;
     }
     // The focused control can leave with the change, as Skip and Clear do, so focus goes to the option.
-    event.currentTarget.querySelectorAll<HTMLInputElement>('[data-testid="question-card-option"] input')[option]?.focus();
+    event.currentTarget.querySelectorAll<HTMLInputElement>('[data-question-option]')[option]?.focus();
   };
 
   return (
-    <div onKeyDown={onKeyDown}>
+    <div
+      onKeyDown={onKeyDown}
+      onClickCapture={(event) => {
+        // A new click sequence starts at detail 1, and a keyboard click has detail 0.
+        if (event.detail === 1) steppedThisClick.current = false;
+        if (event.detail < 2 || !steppedThisClick.current) return;
+        // The rest of a double-click lands on whatever the new question put under the pointer.
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+    >
       <div className="flex items-center gap-2">
         <CircleHelp aria-hidden="true" className="size-[1.125rem] shrink-0 text-warning" />
         <h3 id={titleId} className="flex min-w-0 flex-1 items-baseline justify-between gap-2 text-[0.8125rem] font-medium text-muted-foreground">
@@ -117,11 +129,15 @@ export function QuestionCardWaiting({
                 className="group/step flex h-6 flex-1 cursor-pointer items-center rounded-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
                 onClick={() => goTo(index)}
               >
+                {/* The current bar is taller. Under forced colours each bar has an outline, and an answered bar is filled. */}
                 <span
                   className={cn(
-                    'h-1 w-full rounded-full transition-colors',
+                    'w-full rounded-full transition-colors forced-colors:border forced-colors:border-[CanvasText] forced-colors:forced-color-adjust-none',
+                    index === step ? 'h-1.5' : 'h-1',
                     done && (index === step ? 'bg-primary' : 'bg-primary/50'),
+                    done && 'forced-colors:bg-[Highlight]',
                     !done && (index === step ? 'bg-foreground/45' : 'bg-foreground/15 group-hover/step:bg-foreground/25'),
+                    !done && 'forced-colors:bg-[Canvas]',
                   )}
                 />
               </button>
