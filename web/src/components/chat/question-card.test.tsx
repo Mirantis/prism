@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ApiError } from '@/api/errors';
 import { runtimeApi } from '@/api/runtime-client';
 import { isQuestionCard, questionCardBlocks, type QuestionCardBlock } from '@/types';
@@ -45,6 +45,9 @@ const ANSWERED: QuestionCardBlock = {
 const radio = (name: RegExp | string) => screen.getByRole('radio', { name });
 const checkbox = (name: RegExp | string) => screen.getByRole('checkbox', { name });
 const send = (name = 'Send answers') => screen.getByRole('button', { name });
+const next = () => screen.getByRole('button', { name: 'Next' });
+/** The card's own status region, which follows the own-answer field's. */
+const cardStatus = () => screen.getAllByRole('status').at(-1)!;
 const status = () => screen.getByTestId('question-card-status').textContent;
 /** Focus and press Send, as a keyboard or pointer does in a browser. */
 const pressSend = (name = 'Send answers') => {
@@ -59,30 +62,30 @@ describe('QuestionCard', () => {
   afterEach(cleanup);
 
   describe('waiting', () => {
-    beforeEach(() => {
-      Element.prototype.scrollIntoView = vi.fn();
-    });
-
-    it('shows every question with nothing chosen and Send disabled', () => {
+    it('shows the first question with nothing chosen, Skip, and Next disabled', () => {
       show(BLOCK);
-      expect(screen.getByRole('heading', { name: '2 questions' })).toBeTruthy();
+      expect(screen.getByRole('heading', { name: 'Question 1 of 2' })).toBeTruthy();
       expect(screen.getAllByRole('radio').some((input) => (input as HTMLInputElement).checked)).toBe(false);
-      expect(screen.getAllByRole('checkbox').some((input) => (input as HTMLInputElement).checked)).toBe(false);
-      expect((send() as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.queryByRole('checkbox')).toBeNull();
+      expect((next() as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.getByRole('button', { name: 'Skip' })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: /^Send/ })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
       expect(status()).toBe('');
     });
 
-    it('words a single question in the singular and shows no count or number', () => {
+    it('shows a single question with no step, no Skip and Send disabled', () => {
       show(ONE);
-      expect(screen.getByRole('heading', { name: '1 question' })).toBeTruthy();
+      expect(screen.getByRole('heading', { name: 'Question' })).toBeTruthy();
       expect(screen.queryByTestId('question-card-status')).toBeNull();
-      expect(screen.getByRole('group', { name: 'How much can we spend?' })).toBeTruthy();
-      expect(send('Send answer')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Skip' })).toBeNull();
+      expect(screen.queryByRole('button', { name: /^Question 1/ })).toBeNull();
+      expect((send('Send answer') as HTMLButtonElement).disabled).toBe(true);
     });
 
-    it('names the group of questions after the card title', () => {
+    it('names the question group after the card title', () => {
       show(BLOCK);
-      expect(screen.getByRole('group', { name: '2 questions' }).contains(radio(/Over €500/))).toBe(true);
+      expect(screen.getByRole('group', { name: 'Question 1 of 2' }).contains(radio(/Over €500/))).toBe(true);
     });
 
     it('names Recommended with the option and describes it by its detail', () => {
@@ -92,90 +95,211 @@ describe('QuestionCard', () => {
       expect(document.getElementById(recommended.getAttribute('aria-describedby')!)?.textContent).toBe('fits the current plan');
     });
 
-    it('names each question by its number and text, and shows no header label', () => {
+    it('names the question by its text, and shows no header label', () => {
       show(BLOCK);
-      expect(screen.getByRole('group', { name: '1. How much can we spend?' })).toBeTruthy();
+      expect(screen.getByRole('group', { name: 'How much can we spend?' })).toBeTruthy();
       expect(screen.queryByText('Budget')).toBeNull();
     });
 
-    it('puts Choose any in the name of a multi-select question', () => {
+    it('numbers the options from 1', () => {
       show(BLOCK);
-      expect(screen.getByRole('group', { name: '2. Which channels? Choose any' })).toBeTruthy();
+      expect(screen.getAllByTestId('question-card-option').map((row) => row.textContent)).toEqual([
+        '1Under €500Recommendedfits the current plan',
+        '2Over €500',
+      ]);
     });
 
-    it('moves focus to the Other field when Other is chosen by pointer', () => {
+    it('moves to the next question when a single-select option is chosen, and focuses it', () => {
       show(BLOCK);
-      fireEvent.pointerDown(radio('Other…'));
-      fireEvent.click(radio('Other…'));
-      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Your answer to question 1' }));
-    });
-
-    it('scrolls the Other field into view when it takes focus', () => {
-      show(BLOCK);
-      fireEvent.pointerDown(radio('Other…'));
-      fireEvent.click(radio('Other…'));
-      expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
-    });
-
-    it('moves focus to the Other field when Other is chosen with Space', () => {
-      show(BLOCK);
-      const other = radio('Other…');
-      other.focus();
-      fireEvent.keyDown(other, { key: ' ' });
-      fireEvent.click(other);
-      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Your answer to question 1' }));
-    });
-
-    it('keeps focus on the radio when an arrow key lands on Other', () => {
-      show(BLOCK);
-      const other = radio('Other…');
-      other.focus();
-      fireEvent.keyDown(other, { key: 'ArrowDown' });
-      fireEvent.click(other);
-      expect(screen.getByRole('textbox', { name: 'Your answer to question 1' })).toBeTruthy();
-      expect(document.activeElement).toBe(other);
-    });
-
-    it('moves focus to the field after arrowing when a pointer then chooses Other', () => {
-      show(BLOCK);
-      const other = radio('Other…');
-      fireEvent.keyDown(other, { key: 'ArrowDown' });
+      fireEvent.pointerDown(radio(/Over €500/));
       fireEvent.click(radio(/Over €500/));
-      fireEvent.pointerDown(other);
-      fireEvent.click(other);
-      expect(document.activeElement).toBe(screen.getByRole('textbox'));
+      expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
+      expect(document.activeElement?.textContent).toBe('Which channels? Choose any');
+      expect(screen.getByRole('button', { name: 'Question 1, answered' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Question 2' }).getAttribute('aria-current')).toBe('step');
+    });
+
+    it('stays on the question when an arrow key moves the choice', () => {
+      show(BLOCK);
+      const option = radio(/Over €500/);
+      option.focus();
+      fireEvent.keyDown(option, { key: 'ArrowDown' });
+      fireEvent.click(option);
+      expect(screen.getByRole('heading', { name: 'Question 1 of 2' })).toBeTruthy();
+      expect(document.activeElement).toBe(option);
+      expect((next() as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it('chooses an option with its number key and moves on', () => {
+      show(BLOCK);
+      fireEvent.keyDown(screen.getByRole('group', { name: 'How much can we spend?' }), { key: '2' });
+      expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
+      fireEvent.keyDown(document.activeElement!, { key: '2' });
+      expect((checkbox('Webinar') as HTMLInputElement).checked).toBe(true);
+      expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
+      expect(status()).toBe('2 of 2 answered');
+    });
+
+    it('ignores a held number key, so the next questions keep their own answers', () => {
+      show(BLOCK);
+      fireEvent.keyDown(radio(/Over €500/), { key: '1' });
+      fireEvent.keyDown(document.activeElement!, { key: '1', repeat: true });
+      expect((checkbox('Newsletter') as HTMLInputElement).checked).toBe(false);
+    });
+
+    it('moves focus to the option a number key toggles in place', () => {
+      show(BLOCK);
+      fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+      const back = screen.getByRole('button', { name: 'Back' });
+      back.focus();
+      fireEvent.keyDown(back, { key: '1' });
+      expect((checkbox('Newsletter') as HTMLInputElement).checked).toBe(true);
+      expect(document.activeElement).toBe(checkbox('Newsletter'));
+    });
+
+    it('changes nothing on a number key while sending', async () => {
+      vi.spyOn(runtimeApi, 'answerQuestionCard').mockReturnValue(new Promise(() => {}));
+      show(BLOCK);
+      fireEvent.click(radio(/Over €500/));
+      pressSend();
+      await screen.findByRole('button', { name: 'Sending…' });
+      fireEvent.keyDown(checkbox('Newsletter'), { key: '1' });
+      expect((checkbox('Newsletter') as HTMLInputElement).checked).toBe(false);
+    });
+
+    it('moves on with Space on a radio an arrow key chose, with no click event', () => {
+      show(BLOCK);
+      const option = radio(/Over €500/);
+      fireEvent.keyDown(option, { key: 'ArrowDown' });
+      fireEvent.click(option);
+      expect(screen.getByRole('heading', { name: 'Question 1 of 2' })).toBeTruthy();
+      fireEvent.keyDown(option, { key: ' ' });
+      fireEvent.keyUp(option, { key: ' ' });
+      expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
+    });
+
+    it('moves on when a chosen option is clicked again', () => {
+      show(BLOCK);
+      const option = radio(/Over €500/);
+      fireEvent.keyDown(option, { key: 'ArrowDown' });
+      fireEvent.click(option);
+      fireEvent.pointerDown(option);
+      fireEvent.click(option);
+      expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
+    });
+
+    it('lets the rest of a double-click that moved the card on choose or press nothing', () => {
+      show(BLOCK);
+      fireEvent.click(screen.getAllByTestId('question-card-option')[1], { detail: 1 });
+      expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
+      fireEvent.click(screen.getAllByTestId('question-card-option')[1], { detail: 2 });
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }), { detail: 3 });
+      expect((checkbox('Webinar') as HTMLInputElement).checked).toBe(false);
+      expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
+    });
+
+    it('toggles a checkbox on every fast click when the card stays on the question', () => {
+      show(BLOCK);
+      fireEvent.click(screen.getByRole('button', { name: 'Skip' }), { detail: 0 });
+      const row = screen.getAllByTestId('question-card-option')[1];
+      fireEvent.click(row, { detail: 1 });
+      expect((checkbox('Webinar') as HTMLInputElement).checked).toBe(true);
+      fireEvent.click(row, { detail: 2 });
+      expect((checkbox('Webinar') as HTMLInputElement).checked).toBe(false);
+    });
+
+    it('shows a check on a chosen radio and a chosen checkbox', () => {
+      show(BLOCK);
+      const rows = () => screen.getAllByTestId('question-card-option');
+      fireEvent.keyDown(radio(/Over €500/), { key: 'ArrowDown' });
+      fireEvent.click(radio(/Over €500/));
+      expect(rows()[1].querySelector('svg')).toBeTruthy();
+      expect(rows()[0].querySelector('svg')).toBeNull();
+      fireEvent.click(next());
+      fireEvent.click(checkbox('Newsletter'));
+      expect(rows()[0].querySelector('svg')).toBeTruthy();
+    });
+
+    it('keeps focus on the option of a single question, which has no next question', () => {
+      show(ONE);
+      const option = radio(/Over €500/);
+      option.focus();
+      fireEvent.click(option);
+      expect(document.activeElement).toBe(option);
+      expect((send('Send answer') as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it('takes a digit typed with Shift, as some keyboard layouts type it', () => {
+      show(BLOCK);
+      fireEvent.keyDown(radio(/Over €500/), { key: '2', shiftKey: true });
+      expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
+    });
+
+    it('ignores number keys typed in the own-answer field, with a modifier, or past the last option', () => {
+      show(BLOCK);
+      fireEvent.keyDown(screen.getByRole('textbox'), { key: '1' });
+      fireEvent.keyDown(radio(/Over €500/), { key: '1', metaKey: true });
+      fireEvent.keyDown(radio(/Over €500/), { key: '3' });
+      expect(screen.getAllByRole('radio').some((input) => (input as HTMLInputElement).checked)).toBe(false);
+      expect(screen.getByRole('heading', { name: 'Question 1 of 2' })).toBeTruthy();
+    });
+
+    it('skips a question, and Back returns to it', () => {
+      show(BLOCK);
+      fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+      expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
+      expect(status()).toBe('0 of 2 answered');
+      expect((send() as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      expect(screen.getByRole('heading', { name: 'Question 1 of 2' })).toBeTruthy();
+      expect(document.activeElement?.textContent).toBe('How much can we spend?');
+    });
+
+    it('keeps a choice when the person goes back, and the step buttons move between questions', () => {
+      show(BLOCK);
+      fireEvent.click(radio(/Over €500/));
+      fireEvent.click(checkbox('Webinar'));
+      fireEvent.click(screen.getByRole('button', { name: 'Question 1, answered' }));
+      expect((radio(/Over €500/) as HTMLInputElement).checked).toBe(true);
+      expect(screen.queryByRole('button', { name: 'Skip' })).toBeNull();
+      fireEvent.click(next());
+      expect((checkbox('Webinar') as HTMLInputElement).checked).toBe(true);
+    });
+
+    it('shows the count and Send on the last question, Send enabled from one answer', () => {
+      show(BLOCK);
+      fireEvent.click(radio(/Over €500/));
+      expect(status()).toBe('1 of 2 answered');
+      expect((send() as HTMLButtonElement).disabled).toBe(false);
+      expect(screen.queryByRole('button', { name: 'Next' })).toBeNull();
     });
 
     it('marks a multi-select question and uses checkboxes for it', () => {
       show(BLOCK);
-      expect(screen.getByText('Choose any')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+      expect(screen.getByRole('group', { name: 'Which channels? Choose any' })).toBeTruthy();
       expect(checkbox('Newsletter')).toBeTruthy();
     });
 
-    it('offers Other last, only where the question allows it', () => {
-      show(BLOCK);
-      const group = within(screen.getByRole('group', { name: /How much can we spend/ }));
-      expect(group.getAllByRole('radio').at(-1)).toBe(group.getByRole('radio', { name: 'Other…' }));
-      expect(screen.getAllByText('Other…')).toHaveLength(1);
-    });
-
-    it('counts an answer, enables Send and shows Clear only then', () => {
+    it('shows Clear once the question has an answer, and Clear empties it', () => {
       show(BLOCK);
       expect(screen.queryByRole('button', { name: 'Clear answer to question 1' })).toBeNull();
       fireEvent.click(radio(/Over €500/));
-      expect(status()).toBe('1 of 2 answered');
-      expect((send() as HTMLButtonElement).disabled).toBe(false);
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
       fireEvent.click(screen.getByRole('button', { name: 'Clear answer to question 1' }));
       expect((radio(/Over €500/) as HTMLInputElement).checked).toBe(false);
-      expect(status()).toBe('');
+      expect((next() as HTMLButtonElement).disabled).toBe(true);
     });
 
     it.each([
-      ['single-select', /Over €500/, 'radio', 'Under €500, Recommended', 'Clear answer to question 1'],
-      ['multi-select', 'Webinar', 'checkbox', 'Newsletter', 'Clear answer to question 2'],
-    ] as const)('moves focus to the first option after Clear on a %s question', (_name, choose, role, first, clear) => {
+      ['single-select', 0, /Over €500/, 'radio', 'Under €500, Recommended', 'Clear answer to question 1'],
+      ['multi-select', 1, 'Webinar', 'checkbox', 'Newsletter', 'Clear answer to question 2'],
+    ] as const)('moves focus to the first option after Clear on a %s question', (_name, step, choose, role, first, clear) => {
       show(BLOCK);
-      fireEvent.click(screen.getByRole(role, { name: choose }));
+      fireEvent.click(screen.getByRole('button', { name: `Question ${step + 1}` }));
+      const option = screen.getByRole(role, { name: choose });
+      fireEvent.keyDown(option, { key: 'ArrowDown' });
+      fireEvent.click(option);
       const button = screen.getByRole('button', { name: clear });
       button.focus();
       fireEvent.click(button);
@@ -183,19 +307,84 @@ describe('QuestionCard', () => {
       expect(screen.queryByRole('button', { name: clear })).toBeNull();
     });
 
-    it('opens the Other field, counts it only with text, and keeps the text when another option is chosen', () => {
-      show(BLOCK);
-      fireEvent.click(radio('Other…'));
-      const field = screen.getByRole('textbox', { name: 'Your answer to question 1' }) as HTMLTextAreaElement;
-      expect(field.placeholder).toBe('Type your answer');
-      expect(field.maxLength).toBe(500);
-      expect(status()).toBe('');
-      fireEvent.change(field, { target: { value: 'As little as we can' } });
-      expect(status()).toBe('1 of 2 answered');
-      fireEvent.click(radio(/Over €500/));
-      expect(screen.queryByRole('textbox')).toBeNull();
-      fireEvent.click(radio('Other…'));
-      expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('As little as we can');
+    describe('the own-answer field', () => {
+      const field = () => screen.getByRole('textbox', { name: 'Your answer to question 1' }) as HTMLTextAreaElement;
+      const type = (value: string) => fireEvent.change(field(), { target: { value } });
+
+      it('sits under the options where the question allows it, and nowhere else', () => {
+        show(BLOCK);
+        expect(field().placeholder).toBe('Or write your own response');
+        expect(field().maxLength).toBe(500);
+        expect(screen.queryByText('Other…')).toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+        expect(screen.queryByRole('textbox')).toBeNull();
+      });
+
+      it('keeps the chosen option when only whitespace is typed, and sends no own answer', async () => {
+        const call = vi.spyOn(runtimeApi, 'answerQuestionCard').mockResolvedValue({ card: ANSWERED });
+        show(ONE);
+        fireEvent.click(radio(/Over €500/));
+        type('   ');
+        expect((radio(/Over €500/) as HTMLInputElement).checked).toBe(true);
+        pressSend('Send answer');
+        await waitFor(() => expect(call).toHaveBeenCalledWith('card-1', [{ options: [1] }]));
+      });
+
+      it('sends only the own answer of a single-select question once text replaces the option', async () => {
+        const call = vi.spyOn(runtimeApi, 'answerQuestionCard').mockResolvedValue({ card: ANSWERED });
+        show(ONE);
+        fireEvent.click(radio(/Over €500/));
+        type('As little as we can');
+        pressSend('Send answer');
+        await waitFor(() => expect(call).toHaveBeenCalledWith('card-1', [{ options: [], other: 'As little as we can' }]));
+      });
+
+      it('counts as an answer only with text', () => {
+        show(BLOCK);
+        type('   ');
+        expect((next() as HTMLButtonElement).disabled).toBe(true);
+        type('As little as we can');
+        expect((next() as HTMLButtonElement).disabled).toBe(false);
+      });
+
+      it('clears the chosen option on a single-select question, and an option clears the text', () => {
+        show(BLOCK);
+        const option = radio(/Over €500/);
+        fireEvent.keyDown(option, { key: 'ArrowDown' });
+        fireEvent.click(option);
+        type('As little as we can');
+        expect((radio(/Over €500/) as HTMLInputElement).checked).toBe(false);
+        fireEvent.keyDown(radio(/Over €500/), { key: 'ArrowDown' });
+        fireEvent.click(radio(/Over €500/));
+        expect(field().value).toBe('');
+      });
+
+      it('keeps the options of a multi-select question beside the text', async () => {
+        const call = vi.spyOn(runtimeApi, 'answerQuestionCard').mockResolvedValue({ card: ANSWERED });
+        show({ ...ONE, questions: [{ ...BLOCK.questions[1], allowOther: true }] });
+        fireEvent.click(checkbox('Webinar'));
+        type('A podcast');
+        expect((checkbox('Webinar') as HTMLInputElement).checked).toBe(true);
+        pressSend('Send answer');
+        await waitFor(() => expect(call).toHaveBeenCalledWith('card-1', [{ options: [1], other: 'A podcast' }]));
+      });
+
+      it('moves on with Enter once answered, and Enter never sends', () => {
+        const call = vi.spyOn(runtimeApi, 'answerQuestionCard');
+        show(BLOCK);
+        fireEvent.keyDown(field(), { key: 'Enter' });
+        expect(screen.getByRole('heading', { name: 'Question 1 of 2' })).toBeTruthy();
+        type('mine');
+        fireEvent.keyDown(field(), { key: 'Enter', shiftKey: true });
+        expect(screen.getByRole('heading', { name: 'Question 1 of 2' })).toBeTruthy();
+        fireEvent.keyDown(field(), { key: 'Enter' });
+        expect(screen.getByRole('heading', { name: 'Question 2 of 2' })).toBeTruthy();
+        cleanup();
+        show(ONE);
+        type('mine');
+        fireEvent.keyDown(field(), { key: 'Enter' });
+        expect(call).not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -205,12 +394,18 @@ describe('QuestionCard', () => {
     const follows = (first: Element, second: Element) =>
       Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
 
-    it('shows the intro directly under the title and above the first question', () => {
+    it('shows the intro under the title and above the question', () => {
       show({ ...BLOCK, intro: INTRO });
-      const title = screen.getByRole('heading', { name: '2 questions' });
+      const title = screen.getByRole('heading', { name: 'Question 1 of 2' });
       expect(intro()?.textContent).toBe(INTRO);
       expect(follows(title, intro()!)).toBe(true);
-      expect(follows(intro()!, screen.getByRole('group', { name: /How much can we spend/ }))).toBe(true);
+      expect(follows(intro()!, screen.getByRole('group', { name: 'How much can we spend?' }))).toBe(true);
+    });
+
+    it('stays on every question', () => {
+      show({ ...BLOCK, intro: INTRO });
+      fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+      expect(intro()?.textContent).toBe(INTRO);
     });
 
     it('leads in the foreground colour of an agent message', () => {
@@ -255,7 +450,7 @@ describe('QuestionCard', () => {
     });
   });
 
-  describe('the Other character count', () => {
+  describe('the own-answer character count', () => {
     const typed = (length: number) => {
       fireEvent.change(screen.getByRole('textbox'), { target: { value: 'x'.repeat(length) } });
       return screen.queryByTestId('question-card-count');
@@ -263,7 +458,6 @@ describe('QuestionCard', () => {
 
     it('appears when fewer than 50 characters remain, and describes the field', () => {
       show(BLOCK);
-      fireEvent.click(radio('Other…'));
       expect(typed(450)).toBeNull();
       const count = typed(451);
       expect(count?.textContent).toBe('49 characters left');
@@ -272,7 +466,6 @@ describe('QuestionCard', () => {
 
     it('announces once at 20 and once at 0, and not on the keys between', () => {
       show(BLOCK);
-      fireEvent.click(radio('Other…'));
       const region = screen.getByTestId('question-card-count-announcement');
       expect(region.getAttribute('role')).toBe('status');
       expect(region.textContent).toBe('');
@@ -290,7 +483,6 @@ describe('QuestionCard', () => {
 
     it('uses the singular for one and shows zero at the limit', () => {
       show(BLOCK);
-      fireEvent.click(radio('Other…'));
       expect(typed(499)?.textContent).toBe('1 character left');
       expect(typed(500)?.textContent).toBe('0 characters left');
     });
@@ -308,7 +500,9 @@ describe('QuestionCard', () => {
       await screen.findByRole('button', { name: 'Sending…' });
       expect(call).toHaveBeenCalledWith('card-1', [{ options: [1] }, { options: [1] }]);
       expect(screen.getByTestId('question-card').getAttribute('aria-busy')).toBe('true');
-      expect((radio(/Under €500/) as HTMLInputElement).matches(':disabled')).toBe(true);
+      expect((checkbox('Newsletter') as HTMLInputElement).matches(':disabled')).toBe(true);
+      expect((screen.getByRole('button', { name: 'Back' }) as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole('button', { name: 'Question 1, answered' }) as HTMLButtonElement).disabled).toBe(true);
 
       finish({ card: { ...ANSWERED, answeredBy: { id: 'ada-id', name: 'Ada Example' } } });
       await screen.findByRole('heading', { name: 'Answered by you' });
@@ -334,11 +528,11 @@ describe('QuestionCard', () => {
       composer.remove();
     });
 
-    it('sends a trimmed Other, and no Other when its field is closed', async () => {
+    it('sends a trimmed answer of the person’s own', async () => {
       const call = vi.spyOn(runtimeApi, 'answerQuestionCard').mockResolvedValue({ card: ANSWERED });
       show(BLOCK);
-      fireEvent.click(radio('Other…'));
       fireEvent.change(screen.getByRole('textbox'), { target: { value: '  mine  ' } });
+      fireEvent.click(next());
       pressSend();
       await waitFor(() => expect(call).toHaveBeenCalledWith('card-1', [{ options: [], other: 'mine' }, { options: [] }]));
     });
@@ -350,7 +544,8 @@ describe('QuestionCard', () => {
       pressSend();
       const alert = await screen.findByRole('alert');
       expect(alert.textContent).toBe('Couldn’t send your answers. Check your connection, then try again.');
-      expect((radio(/Over €500/) as HTMLInputElement).checked).toBe(true);
+      expect(status()).toBe('1 of 2 answered');
+      expect(document.activeElement).toBe(send());
       expect((send() as HTMLButtonElement).disabled).toBe(false);
     });
 
@@ -373,7 +568,7 @@ describe('QuestionCard', () => {
       pressSend();
       const alert = await screen.findByRole('alert');
       expect(alert.textContent).toBe('Couldn’t send these answers. Reload the page to see the current questions.');
-      expect((radio(/Over €500/) as HTMLInputElement).checked).toBe(true);
+      expect(status()).toBe('1 of 2 answered');
     });
 
     it('uses the standard failure line for a 400', async () => {
@@ -400,7 +595,7 @@ describe('QuestionCard', () => {
 
       expect(screen.getByRole('heading', { name: 'Answered' })).toBeTruthy();
       expect(screen.queryByTestId('question-card-notice')).toBeNull();
-      expect(screen.getByRole('status').textContent).toBe('');
+      expect(cardStatus().textContent).toBe('');
 
       finish({ card: closed });
       await waitFor(() => expect(screen.getByTestId('question-card').getAttribute('aria-busy')).toBe('false'));
@@ -415,7 +610,7 @@ describe('QuestionCard', () => {
       pressSend();
       await screen.findByRole('heading', { name: 'Answered by Grace Example' });
       expect(screen.getByTestId('question-card-notice').textContent).toBe(line);
-      expect(screen.getByRole('status').textContent).toBe(line);
+      expect(cardStatus().textContent).toBe(line);
     });
 
     it('treats a 409 with no stored card as a failed send', async () => {
@@ -428,15 +623,12 @@ describe('QuestionCard', () => {
   });
 
   describe('in forced-colours mode', () => {
-    it('gives Send, Clear and the Other field the transparent outline the rows have', () => {
+    it('gives the buttons and the own-answer field the transparent outline the rows have', () => {
       show(BLOCK);
-      fireEvent.click(radio('Other…'));
       fireEvent.change(screen.getByRole('textbox'), { target: { value: 'mine' } });
-      for (const control of [
-        send(),
-        screen.getByRole('button', { name: 'Clear answer to question 1' }),
-        screen.getByRole('textbox'),
-      ]) {
+      const first = [next(), screen.getByRole('button', { name: 'Clear answer to question 1' }), screen.getByRole('textbox')];
+      fireEvent.click(next());
+      for (const control of [...first, send(), screen.getByRole('button', { name: 'Back' }), screen.getByRole('button', { name: 'Question 1, answered' })]) {
         expect(control.className).toContain('outline-hidden');
         expect(control.className).not.toContain('outline-none');
       }
@@ -449,24 +641,24 @@ describe('QuestionCard', () => {
     it('is on the waiting card, empty, and is the same element that holds the line after a 409', async () => {
       vi.spyOn(runtimeApi, 'answerQuestionCard').mockRejectedValue(new ApiError('closed', {}, 409, { card: ANSWERED }));
       show(BLOCK);
-      const region = screen.getByRole('status');
+      const region = cardStatus();
       expect(region.textContent).toBe('');
 
       fireEvent.click(radio(/Over €500/));
       pressSend();
       await screen.findByRole('heading', { name: 'Answered by Grace Example' });
 
-      expect(screen.getByRole('status')).toBe(region);
+      expect(cardStatus()).toBe(region);
       expect(region.textContent).toBe(LINE);
       expect(screen.getByTestId('question-card-notice').getAttribute('aria-hidden')).toBe('true');
     });
 
     it('holds the line when a live update closes the card', () => {
       const { rerender } = show(BLOCK);
-      const region = screen.getByRole('status');
+      const region = cardStatus();
       fireEvent.click(radio(/Over €500/));
       rerender(<QuestionCard block={ANSWERED} viewer={ADA} />);
-      expect(screen.getByRole('status')).toBe(region);
+      expect(cardStatus()).toBe(region);
       expect(region.textContent).toBe(LINE);
     });
   });
@@ -493,7 +685,7 @@ describe('QuestionCard', () => {
     });
 
     it('leaves focus alone after a click on a row and then on blank page space', () => {
-      const { rerender } = show(BLOCK);
+      const { rerender } = show(ONE);
       const input = radio(/Over €500/);
       input.focus();
       fireEvent.click(input);
@@ -501,7 +693,7 @@ describe('QuestionCard', () => {
       expect(document.activeElement).toBe(document.body);
       const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus');
 
-      update(rerender, ANSWERED);
+      update(rerender, { ...ANSWERED, questions: ONE.questions, answers: [{ options: [0] }] });
 
       expect(document.activeElement).toBe(document.body);
       expect(focusSpy).not.toHaveBeenCalled();

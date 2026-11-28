@@ -11,7 +11,7 @@ Feature: The agent asks questions as a card
     When I navigate to the agent chat page
     And I type "Call ask_questions once, with one question: text 'Which colour should the banner use?', options 'Green' and 'Blue'. After my answer, reply with exactly COLOUR_NOTED." in the chat input
     And I send the message
-    Then a question card waits with "1 question"
+    Then a question card waits with "Question"
     When I choose "Green" on the question card
     And I send the question card
     Then the question card shows "Answered"
@@ -21,12 +21,13 @@ Feature: The agent asks questions as a card
   Scenario: Answers become one message, and a blank reads no answer
     Given a conversation with a waiting question card
     When I open that conversation
-    Then a question card waits with "3 questions"
+    Then a question card waits with "Question 1 of 3"
     And the question card shows its intro
-    And the answer button is disabled
+    And the Next button is disabled
     When I reload the page
     And I choose "Under €500" on the question card
     And I choose "Newsletter" on the question card
+    And I go to the next question
     Then the question card status reads "2 of 3 answered"
     When I send the question card
     Then the question card shows "Answered"
@@ -37,6 +38,30 @@ Feature: The agent asks questions as a card
     And the conversation shows my answer "Which channels should we use? Newsletter"
     And the conversation shows my answer "Launch: no answer"
     And the agent has finished its turn
+
+  Scenario: Keys, Skip, Back and an answer of my own
+    Given a conversation with a waiting question card
+    When I open that conversation
+    And I skip the question
+    And I press "1" on the question card
+    And I write my own response "A podcast"
+    And I go back to the previous question
+    And I press "2" on the question card
+    And I go to the next question
+    And I choose "After the summer" on the question card
+    And I send the question card
+    Then the question card shows "Answered"
+    And the conversation shows my answer "Budget: €500 to €2,000"
+    And the conversation shows my answer "Which channels should we use? Newsletter, A podcast"
+    And the conversation shows my answer "Launch: After the summer"
+    And the agent has finished its turn
+
+  Scenario: A double-click answers one question
+    Given a conversation with a waiting question card
+    When I open that conversation
+    And I double-click "Under €500" on the question card
+    Then a question card waits with "Question 2 of 3"
+    And the question card has nothing chosen
 
   Scenario: A second answer changes nothing
     Given a conversation with a waiting question card
@@ -61,4 +86,4 @@ Feature: The agent asks questions as a card
     When I open that conversation
     And the runtime is killed and starts again
     And I reload the page
-    Then a question card waits with "3 questions"
+    Then a question card waits with "Question 1 of 3"

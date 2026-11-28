@@ -149,9 +149,10 @@ The main conversation surface.
 ### Questions from the agent
 
 When the agent asks for your decisions as a card, choose your answers and send
-them, or type a reply instead. On a card with several questions you can skip any
-of them, as long as one has an answer. Anyone in the conversation can answer, and
-the first answer counts.
+them, or type a reply instead. On a question that takes one answer, choosing an
+option or pressing its number moves to the next question. **Send answers** on the
+last question sends every answer once at least one question has an answer. Anyone in
+the conversation can answer, and the first answer counts.
 
 If the card says **Your answers are saved. The reply is delayed.**, your answers
 are safe and the reply comes later. If it says **Couldn’t send these answers.
