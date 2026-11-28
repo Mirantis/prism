@@ -85,7 +85,7 @@ ENV HUSKY=0
 # libglib2.0-bin is how the session tells it how to look and not to hide itself.
 # The four packages after it are what the Orchis theme installed below needs to
 # draw: the GTK2 engines for the older toolkit, and librsvg for the window
-# frames, which the theme ships as SVG. xz-utils unpacks the theme.
+# frames and the wallpaper, both SVG. xz-utils unpacks the theme.
 #
 # Debian's `chromium` rather than Google Chrome. Chrome does now have arm64 Linux
 # builds, and the runtime prefers `/usr/bin/google-chrome` when an image happens to
@@ -359,13 +359,14 @@ RUN tar -xJf /tmp/orchis.tar.xz -C /usr/share/themes Orchis-Dark \
  && rm -f /tmp/orchis.tar.xz
 
 # What the desktop looks like before anyone touches it: the theme on every GTK program and
-# on the window frames, a plain backdrop in the theme's dark, and one panel along the top.
+# on the window frames, the wallpaper behind them, and one panel along the top.
 # XFCE's own default puts a second panel along the bottom edge, where the dock goes. The
 # dock items are the browser, the terminal and the file manager.
 COPY --chown=node:node docker/xsettings.xml docker/xfwm4.xml docker/xfce4-panel.xml \
      docker/xfce4-desktop.xml \
      /home/node/.config/xfce4/xfconf/xfce-perchannel-xml/
 COPY --chown=node:node docker/plank/ /home/node/.config/plank/dock1/launchers/
+COPY --chmod=0444 docker/wallpaper.svg /usr/share/backgrounds/prism/wallpaper.svg
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \

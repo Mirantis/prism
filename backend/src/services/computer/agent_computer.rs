@@ -4,8 +4,8 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -47,7 +47,8 @@ use crate::services::meeting::browser_control::{
     run_browser_command, summarize_tabs,
 };
 use crate::services::meeting::browser_stack::{
-    BrowserStack, BrowserStackOptions, GotoOptions, LoadState, PageHandle,
+    BROWSER_WINDOW_HEIGHT, BROWSER_WINDOW_WIDTH, BrowserStack, BrowserStackOptions, GotoOptions,
+    LoadState, PageHandle, WindowPosition,
 };
 use crate::support::js;
 use crate::support::js::round as js_round;
@@ -120,17 +121,72 @@ fn is_silent(pcm: &[u8]) -> bool {
     pcm.iter().all(|&byte| byte == 0)
 }
 
-/// What the agent's working tab shows before it goes anywhere. A page with content, so
-/// the screen stream has a picture from the first second; `about:blank` never repaints
+/// What the browser's first tab shows, written into it rather than loaded from an address,
+/// so the address bar shows `about:blank` and no URL of its own. The page has content, so
+/// the screen stream has a picture from the first second; an empty document never repaints
 /// and so never produces a frame.
-static START_PAGE: LazyLock<String> = LazyLock::new(|| {
-    let html = concat!(
-        "<!doctype html><title>Ready</title>",
-        "<body style=\"margin:0;height:100vh;display:flex;align-items:center;justify-content:center;",
-        "background:#18181b;color:#a1a1aa;font:24px system-ui,sans-serif\">Ready</body>",
-    );
-    format!("data:text/html,{}", js::encode_uri_component(html))
-});
+const START_PAGE: &str = r##"<!doctype html><title>Start page</title>
+<style>
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px;
+    background:
+      radial-gradient(ellipse at 50% 38%, rgba(92,108,195,.22), transparent 55%),
+      radial-gradient(circle, rgba(255,255,255,.06) 1px, transparent 1.5px) 0 0 / 28px 28px,
+      #10131f;
+    color: #e4e4e7; font-family: system-ui, sans-serif;
+  }
+  svg { width: 96px; filter: drop-shadow(0 8px 28px rgba(224,50,86,.35)); }
+  p { margin: 0; max-width: 420px; text-align: center; font-size: 18px; line-height: 1.5; color: #a1a1aa; }
+</style>
+<svg viewBox="0 0 19 17"><defs><linearGradient id="g" x1="18" y1="2" x2="1.5" y2="17.5" gradientUnits="userSpaceOnUse">
+<stop stop-color="#E04150"/><stop offset=".23" stop-color="#FFA545"/><stop offset=".46" stop-color="#E98F46"/>
+<stop offset=".66" stop-color="#E03256"/><stop offset=".82" stop-color="#B62C7F"/><stop offset="1" stop-color="#5C6CC3"/>
+</linearGradient></defs><path fill="url(#g)" d="M16.6807 12.8477L14.3613 17.001H10.1729L12.4863 12.8477L10.1729 8.70117H14.3613L16.6807 12.8477ZM19 17.001H15.2549L17.124 13.6484L19 17.001ZM3.74512 17H0L1.86914 13.6484L3.74512 17ZM6.73438 13.248H11.373L9.27246 17H4.63965L2.31934 12.8477L4.41504 9.10156L6.73438 13.248ZM13.9111 7.89941H9.27832L6.95898 12.0459L4.86426 8.2998L7.17773 4.14746H11.8164L13.9111 7.89941ZM11.373 3.3457H7.62695L9.49707 0L11.373 3.3457Z"/></svg>
+<p>This is my desktop. You can watch me work here, and take over at any time.</p>"##;
+
+/// Show the start page in `page`. A blank document first, so the address bar shows none
+/// of the site the tab showed before. False when the page did not load it.
+async fn show_start_page(page: &PageHandle) -> bool {
+    let shown = async {
+        page.goto(
+            "about:blank",
+            GotoOptions {
+                wait_until: LoadState::Load,
+                timeout_ms: Some(10_000),
+            },
+        )
+        .await?;
+        page.set_content(START_PAGE, 10_000).await
+    };
+    match shown.await {
+        Ok(()) => true,
+        Err(err) => {
+            log_warn!(
+                json!({ "err": err_json(&err) }),
+                "[VoiceChat] Start page did not load"
+            );
+            false
+        }
+    }
+}
+
+/// Make `page` the agent's first tab, showing the start page. The agent's first navigation
+/// lands in it, and every tab a person can use is one the tab bookkeeping covers, so a
+/// secure takeover clears its password fields too.
+async fn open_start_tab(browser: &BrowserStack, page: PageHandle) {
+    show_start_page(&page).await;
+    browser.adopt_tab(page);
+}
+
+/// Where the browser window's top-left corner goes to centre it on a desktop of `size`.
+fn centred_window(size: ScreenSize) -> WindowPosition {
+    let offset = |screen: i64, window: u32| ((screen - i64::from(window)) / 2).max(0) as u32;
+    WindowPosition {
+        x: offset(size.width, BROWSER_WINDOW_WIDTH),
+        y: offset(size.height, BROWSER_WINDOW_HEIGHT),
+    }
+}
 
 /// The label a screenshot goes into the session with; see `meeting_bot_service.rs`.
 const SCREEN_LOOK_NOTE: &str = "This is a picture of your own screen as it looks right now, in answer to your computer_screen call. Your user did not say this.";
@@ -178,8 +234,6 @@ struct AgentComputerState {
     desktop_env: IndexMap<String, String>,
     /// The user's own pointer and keyboard on that display, from the page.
     input: Option<Arc<DesktopInput>>,
-    /// The first, blank tab `BrowserStack::start()` opens; `browse` works in others.
-    main_page: Option<PageHandle>,
     /// The virtual display the browser and its desktop run on.
     display: Option<Arc<AudioStack>>,
     /// The virtual display's audio devices. Every program on the desktop plays into their
@@ -301,7 +355,6 @@ impl AgentComputer {
                 desktop_control: None,
                 desktop_env: IndexMap::new(),
                 input: None,
-                main_page: None,
                 display: None,
                 audio_handles: None,
                 desktop: None,
@@ -331,14 +384,13 @@ impl AgentComputer {
 
     /// Bring up the display, the desktop and the browser, at `screen` when given. Fails with
     /// `Could not open the browser: <reason>`, having stopped whatever had started.
-    pub async fn open_browser(&self, screen: Option<ScreenSize>) -> anyhow::Result<()> {
+    pub async fn open_browser(self: &Arc<Self>, screen: Option<ScreenSize>) -> anyhow::Result<()> {
         if let Some(screen) = screen {
             self.state.lock().size = clamp_screen(screen.width as f64, screen.height as f64);
         }
-        let browser = Arc::new(BrowserStack::new());
         let mut display: Option<Arc<AudioStack>> = None;
         let mut desktop: Option<Arc<DesktopSession>> = None;
-        let opened = self.bring_up(&browser, &mut display, &mut desktop).await;
+        let opened = self.bring_up(&mut display, &mut desktop).await;
         let Err(err) = opened else {
             return Ok(());
         };
@@ -350,7 +402,6 @@ impl AgentComputer {
         if let Some(input) = input {
             input.stop();
         }
-        browser.stop().await;
         if let Some(desktop) = desktop {
             desktop.stop().await;
         }
@@ -361,8 +412,7 @@ impl AgentComputer {
     }
 
     async fn bring_up(
-        &self,
-        browser: &Arc<BrowserStack>,
+        self: &Arc<Self>,
         display_slot: &mut Option<Arc<AudioStack>>,
         desktop_slot: &mut Option<Arc<DesktopSession>>,
     ) -> anyhow::Result<()> {
@@ -394,46 +444,127 @@ impl AgentComputer {
         let control = Arc::new(DesktopControl::new(env.clone(), size));
         {
             let mut state = self.state.lock();
-            state.desktop_env = desktop_env.clone();
+            state.desktop_env = desktop_env;
             state.desktop_control = Some(control.clone());
             state.input = Some(DesktopInput::new(env.clone(), control));
         }
 
-        let main_page = browser
-            .start(BrowserStackOptions {
-                // On the desktop's bus with accessibility on, so the browser's frame is in
-                // the tree.
-                env: desktop_env,
-                profile_dir: Some(
-                    Path::new(&resolve_data_dir()).join("voice-chat-browser-profile"),
-                ),
-            })
-            .await?;
-        self.state.lock().main_page = Some(main_page);
-        // The agent's working tab, open from the start so the page has something to show
-        // and the agent's first navigation lands in it rather than opening a second one.
-        let tab = browser.open_tab().await?;
-        let loaded = tab
-            .goto(
-                &START_PAGE,
-                GotoOptions {
-                    wait_until: LoadState::DomContentLoaded,
-                    timeout_ms: Some(10_000),
-                },
-            )
-            .await;
-        if let Err(err) = loaded {
-            log_warn!(
-                json!({ "err": err_json(&err) }),
-                "[VoiceChat] Start page did not load"
-            );
-        }
+        // On the queue, so a reopen for a browser that leaves during the launch runs after
+        // the computer holds it.
+        self.on_front_queue(async {
+            let browser = self.launch_browser().await?;
+            self.state.lock().browser = Some(browser);
+            anyhow::Ok(())
+        })
+        .await?;
         let mut state = self.state.lock();
-        state.browser = Some(browser.clone());
         state.display = Some(display);
         state.desktop = Some(desktop);
         state.audio_handles = Some(Arc::new(handles));
         Ok(())
+    }
+
+    /// Start the browser on the desktop, centred, with the start page in its one tab.
+    async fn launch_browser(self: &Arc<Self>) -> anyhow::Result<Arc<BrowserStack>> {
+        let (size, env) = {
+            let state = self.state.lock();
+            (state.size, state.desktop_env.clone())
+        };
+        let browser = Arc::new(BrowserStack::new());
+        let started = browser
+            .start(BrowserStackOptions {
+                // On the desktop's bus with accessibility on, so the browser's frame is in
+                // the tree.
+                env,
+                profile_dir: Some(
+                    Path::new(&resolve_data_dir()).join("voice-chat-browser-profile"),
+                ),
+                // Centred, so the wallpaper frames it.
+                window_position: Some(centred_window(size)),
+            })
+            .await;
+        let first_page = match started {
+            Ok(page) => page,
+            Err(err) => {
+                browser.stop().await;
+                return Err(err);
+            }
+        };
+        let computer = Arc::downgrade(self);
+        let gone = Arc::downgrade(&browser);
+        browser.on_exit(Arc::new(move || {
+            let (Some(computer), Some(gone)) = (computer.upgrade(), gone.upgrade()) else {
+                return;
+            };
+            tokio::spawn(computer.reopen_browser(gone));
+        }));
+        open_start_tab(&browser, first_page).await;
+        Ok(browser)
+    }
+
+    /// Replace `gone`, a browser that left on its own, with a new one on the same desktop.
+    /// Chromium quits with its last window, and a person in control can close that window.
+    ///
+    /// Boxed, because it and `launch_browser` start each other.
+    fn reopen_browser(self: Arc<Self>, gone: Arc<BrowserStack>) -> BoxFuture<'static, ()> {
+        Box::pin(async move { self.replace_browser(&gone, self.launch_browser()).await })
+    }
+
+    /// Put the browser `launch` starts in place of `gone`, on the front queue.
+    async fn replace_browser(
+        &self,
+        gone: &Arc<BrowserStack>,
+        launch: impl Future<Output = anyhow::Result<Arc<BrowserStack>>>,
+    ) {
+        self.on_front_queue(async {
+            if !self.holds(gone) {
+                return;
+            }
+            log_warn!("[VoiceChat] The browser closed; opening a new one");
+            gone.stop().await;
+            if !self.holds(gone) {
+                return;
+            }
+            match launch.await {
+                Ok(fresh) => {
+                    // `stop()` released the computer while this browser started.
+                    if !self.swap_browser(gone, Some(fresh.clone())) {
+                        fresh.stop().await;
+                    }
+                }
+                Err(err) => {
+                    log_error!(
+                        json!({ "err": err_json(&err) }),
+                        "[VoiceChat] Could not open a new browser"
+                    );
+                    self.swap_browser(gone, None);
+                }
+            }
+        })
+        .await
+    }
+
+    /// Put `next` in place of `gone` while the computer holds `gone`. False when it holds
+    /// another browser or none.
+    fn swap_browser(&self, gone: &Arc<BrowserStack>, next: Option<Arc<BrowserStack>>) -> bool {
+        let mut state = self.state.lock();
+        let held = state
+            .browser
+            .as_ref()
+            .is_some_and(|browser| Arc::ptr_eq(browser, gone));
+        if held {
+            state.browser = next;
+        }
+        held
+    }
+
+    /// Whether `browser` is the computer's browser.
+    fn holds(&self, browser: &Arc<BrowserStack>) -> bool {
+        self.state
+            .lock()
+            .browser
+            .as_ref()
+            .is_some_and(|held| Arc::ptr_eq(held, browser))
     }
 
     /// Send what the desktop plays, 48 kHz pcm16 mono, silence left out.
@@ -704,27 +835,37 @@ impl AgentComputer {
                     }
                     Some(tab) => tab - 1.0,
                 };
+                // The window keeps its last tab, which goes back to the start page.
+                if let [last] = tabs.as_slice()
+                    && index == 0.0
+                {
+                    if !show_start_page(last).await {
+                        return Ok(BrowserResult::message(
+                            false,
+                            "I could not close the page in the last tab.",
+                        ));
+                    }
+                    return Ok(BrowserResult::with_reading(
+                        true,
+                        "Closed the page. The one tab left shows the start page.",
+                        read(last).await,
+                    ));
+                }
                 let closed = match tab_index(index) {
-                    Some(index) if index as f64 >= 0.0 => browser.close_tab(index).await?,
-                    _ => false,
+                    Some(index) => browser.close_tab(index).await?,
+                    None => false,
                 };
-                if index < 0.0 || !closed {
+                let Some(page) = browser.front().filter(|_| closed) else {
                     return Ok(BrowserResult::message(
                         false,
                         "There is no such tab to close.",
                     ));
-                }
-                let page = browser.front();
-                let main_page = self.state.lock().main_page.clone();
-                match page {
-                    Some(page) if Some(&page) != main_page.as_ref() => Ok(
-                        BrowserResult::with_reading(true, "Closed the tab.", read(&page).await),
-                    ),
-                    _ => Ok(BrowserResult::message(
-                        true,
-                        "Closed the last tab. Nothing is open now.",
-                    )),
-                }
+                };
+                Ok(BrowserResult::with_reading(
+                    true,
+                    "Closed the tab.",
+                    read(&page).await,
+                ))
             }
 
             _ => Ok(run_browser_command(&browser.workbench().await?, &command).await),
@@ -741,14 +882,13 @@ impl Default for AgentComputer {
 #[async_trait]
 impl ComputerBrowser for AgentComputer {
     async fn browse(&self, command: BrowserCommand) -> anyhow::Result<BrowserResult> {
-        let Some(browser) = self.browser() else {
-            return Ok(BrowserResult::message(
-                false,
-                "There is no browser on this computer.",
-            ));
-        };
+        // The browser is read in the queue, so a command queued behind a reopen uses the
+        // new one.
         Ok(self
             .on_front_queue(async {
+                let Some(browser) = self.browser() else {
+                    return BrowserResult::message(false, "There is no browser on this computer.");
+                };
                 browser.observe_front().await;
                 match self.run_browse_command(&browser, command).await {
                     Ok(mut result) => {
@@ -1330,18 +1470,14 @@ impl Computer for AgentComputer {
     /// the retained picture of the user's own shared screen. Sharing goes on, so the
     /// next frame replaces what this drops.
     async fn clear_after_secure_window(&self) -> anyhow::Result<()> {
-        let pages = {
-            let mut state = self.state.lock();
-            state.user_screen = None;
-            state
-                .browser
-                .as_ref()
-                .map(|browser| browser.list_tabs())
-                .unwrap_or_default()
-        };
-        if !pages.is_empty() {
-            self.on_front_queue(clear_password_fields(&pages)).await;
-        }
+        self.state.lock().user_screen = None;
+        // The tabs are read in the queue, so a browser reopened ahead of this is the one
+        // cleared.
+        self.on_front_queue(async {
+            let pages = self.browser().map(|b| b.list_tabs()).unwrap_or_default();
+            clear_password_fields(&pages).await;
+        })
+        .await;
         Ok(())
     }
 
@@ -1457,7 +1593,6 @@ impl Computer for AgentComputer {
         let (browser, desktop, display) = {
             let mut state = self.state.lock();
             state.desktop_control = None;
-            state.main_page = None;
             state.audio_handles = None;
             (
                 state.browser.take(),
@@ -1485,11 +1620,237 @@ impl Computer for AgentComputer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::meeting::browser_stack::testing::{FakeBrowser, Live};
+
+    fn command(action: BrowserAction, tab: Option<f64>) -> BrowserCommand {
+        BrowserCommand {
+            action,
+            url: None,
+            tab,
+            target: None,
+            text: None,
+            key: None,
+            amount: None,
+        }
+    }
+
+    /// A computer whose browser is `stack`; the desktop parts stay unset.
+    fn computer_with(stack: &Arc<BrowserStack>) -> Arc<AgentComputer> {
+        let computer = Arc::new(AgentComputer::new());
+        computer.state.lock().browser = Some(stack.clone());
+        computer
+    }
+
+    /// A launch held back until `release` sends its result.
+    fn held_launch() -> (
+        tokio::sync::oneshot::Sender<anyhow::Result<Arc<BrowserStack>>>,
+        impl Future<Output = anyhow::Result<Arc<BrowserStack>>> + Send + 'static,
+    ) {
+        let (release, launched) = tokio::sync::oneshot::channel();
+        (release, async move { launched.await.unwrap() })
+    }
+
+    /// Wait until `fake`'s connection has closed, which `replace_browser` does first.
+    async fn closed(fake: &FakeBrowser) {
+        while fake.is_connected() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn shows_the_start_page_under_about_blank() {
+        let Some(live) = Live::start().await else {
+            return;
+        };
+        live.show("<title>Inbox</title><p>Mail</p>").await;
+
+        assert!(show_start_page(&live.page).await);
+
+        assert_eq!(live.page.title().await.unwrap(), "Start page");
+        assert_eq!(live.page.url(), "about:blank");
+        live.stop().await;
+    }
 
     #[test]
-    fn opens_the_working_tab_on_a_page_that_paints() {
-        assert!(START_PAGE.starts_with("data:text/html,%3C!doctype%20html%3E%3Ctitle%3EReady"));
-        assert!(START_PAGE.ends_with("Ready%3C%2Fbody%3E"));
+    fn centres_the_browser_window_on_the_desktop() {
+        let size = ScreenSize {
+            width: 1920,
+            height: 1080,
+        };
+        assert_eq!(centred_window(size), WindowPosition { x: 320, y: 180 });
+        let small = ScreenSize {
+            width: 1024,
+            height: 600,
+        };
+        assert_eq!(centred_window(small), WindowPosition { x: 0, y: 0 });
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn keeps_the_last_tab_and_shows_the_start_page_in_it() {
+        let Some(live) = Live::start().await else {
+            return;
+        };
+        live.show("<title>Inbox</title><p>Mail</p>").await;
+        let stack = live.stack();
+        stack.adopt_tab(live.page.clone());
+        let computer = computer_with(&stack);
+
+        let result = computer
+            .browse(command(BrowserAction::CloseTab, None))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert_eq!(
+            result.message,
+            "Closed the page. The one tab left shows the start page."
+        );
+        assert!(!live.page.is_closed());
+        assert_eq!(live.page.title().await.unwrap(), "Start page");
+        assert_eq!(live.page.url(), "about:blank");
+        live.stop().await;
+    }
+
+    #[tokio::test]
+    async fn reports_a_failure_when_the_last_tab_does_not_load_the_start_page() {
+        let fake = FakeBrowser::new();
+        let stack = fake.stack();
+        stack.adopt_tab(fake.scripted_page("https://notes.example.com/inbox"));
+        fake.fail("Page.navigate");
+        let computer = computer_with(&stack);
+
+        let result = computer
+            .browse(command(BrowserAction::CloseTab, None))
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+        assert_eq!(
+            result.message,
+            "I could not close the page in the last tab."
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn makes_the_start_tab_the_agents_first_tab_and_the_one_in_front() {
+        let Some(live) = Live::start().await else {
+            return;
+        };
+        let stack = live.stack();
+
+        open_start_tab(&stack, live.page.clone()).await;
+
+        assert_eq!(stack.list_tabs(), vec![live.page.clone()]);
+        assert_eq!(stack.front(), Some(live.page.clone()));
+        assert_eq!(live.page.title().await.unwrap(), "Start page");
+        live.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn closes_a_tab_normally_while_another_is_open() {
+        let Some(live) = Live::start().await else {
+            return;
+        };
+        live.show("<title>Notes</title>").await;
+        let second = live.browser.contexts()[0].new_page().await.unwrap();
+        let stack = live.stack();
+        stack.adopt_tab(live.page.clone());
+        stack.adopt_tab(second.clone());
+        let computer = computer_with(&stack);
+
+        let result = computer
+            .browse(command(BrowserAction::CloseTab, Some(2.0)))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.message, "Closed the tab.");
+        assert!(second.is_closed());
+        assert_eq!(live.page.title().await.unwrap(), "Notes");
+        live.stop().await;
+    }
+
+    #[tokio::test]
+    async fn replaces_a_browser_that_closed_and_clears_the_new_tabs_at_a_hand_back() {
+        let old = FakeBrowser::new();
+        let gone = old.stack();
+        let new = FakeBrowser::new();
+        let fresh = new.stack();
+        let tab = new.scripted_page("https://notes.example.com/sign-in");
+        fresh.adopt_tab(tab.clone());
+        let computer = computer_with(&gone);
+        let (release, launch) = held_launch();
+
+        let replacing = {
+            let computer = computer.clone();
+            tokio::spawn(async move { computer.replace_browser(&gone, launch).await })
+        };
+        closed(&old).await;
+        let hand_back = {
+            let computer = computer.clone();
+            tokio::spawn(async move { computer.clear_after_secure_window().await })
+        };
+        release.send(Ok(fresh.clone())).ok();
+        replacing.await.unwrap();
+        hand_back.await.unwrap().unwrap();
+
+        assert!(computer.holds(&fresh));
+        assert!(new.sent_to(&tab).contains(&"Runtime.evaluate".to_string()));
+    }
+
+    #[tokio::test]
+    async fn answers_a_command_sent_during_a_failed_reopen_with_no_browser() {
+        let old = FakeBrowser::new();
+        let gone = old.stack();
+        let computer = computer_with(&gone);
+        let (release, launch) = held_launch();
+
+        let replacing = {
+            let computer = computer.clone();
+            tokio::spawn(async move { computer.replace_browser(&gone, launch).await })
+        };
+        closed(&old).await;
+        let browsing = {
+            let computer = computer.clone();
+            tokio::spawn(async move {
+                computer
+                    .browse(command(BrowserAction::SwitchTab, Some(5.0)))
+                    .await
+            })
+        };
+        release
+            .send(Err(anyhow::anyhow!(
+                "Browser exited before it was ready (code 21)"
+            )))
+            .ok();
+        replacing.await.unwrap();
+
+        assert_eq!(
+            browsing.await.unwrap().unwrap(),
+            BrowserResult::message(false, "There is no browser on this computer.")
+        );
+    }
+
+    #[tokio::test]
+    async fn stops_the_browser_that_finishes_starting_after_the_computer_stopped() {
+        let old = FakeBrowser::new();
+        let gone = old.stack();
+        let new = FakeBrowser::new();
+        let fresh = new.stack();
+        let computer = computer_with(&gone);
+        let (release, launch) = held_launch();
+
+        let replacing = {
+            let computer = computer.clone();
+            tokio::spawn(async move { computer.replace_browser(&gone, launch).await })
+        };
+        closed(&old).await;
+        computer.stop().await.unwrap();
+        release.send(Ok(fresh)).ok();
+        replacing.await.unwrap();
+
+        assert!(!new.is_connected());
+        assert!(computer.browser().is_none());
     }
 
     #[test]

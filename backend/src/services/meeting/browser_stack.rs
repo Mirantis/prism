@@ -148,13 +148,31 @@ pub struct BrowserStackOptions {
     /// browser that may run beside a live call uses its own, since Chromium refuses a
     /// second instance on one profile.
     pub profile_dir: Option<PathBuf>,
+    /// Where the window's top-left corner goes. Unset, the browser places the window itself.
+    pub window_position: Option<WindowPosition>,
 }
+
+/// A point on the virtual display, in pixels from its top-left corner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowPosition {
+    pub x: u32,
+    pub y: u32,
+}
+
+/// The browser window's width on the virtual display.
+pub const BROWSER_WINDOW_WIDTH: u32 = 1280;
+/// The browser window's height on the virtual display.
+pub const BROWSER_WINDOW_HEIGHT: u32 = 720;
 
 /// The browser's command line.
 ///
 /// Separate from `start()` so the media flags are assertable without a browser.
-pub fn build_browser_args(port: u16, user_data_dir: &str) -> Vec<String> {
-    vec![
+pub fn build_browser_args(
+    port: u16,
+    user_data_dir: &str,
+    window_position: Option<WindowPosition>,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
         format!("--remote-debugging-port={port}"),
         format!("--user-data-dir={user_data_dir}"),
         // Chromium's own sandbox needs unprivileged user namespaces, which the
@@ -207,13 +225,19 @@ pub fn build_browser_args(port: u16, user_data_dir: &str) -> Vec<String> {
         // a differently-worded lobby and break every selector in the provider.
         "--lang=en-US".into(),
         "--accept-lang=en-US,en".into(),
-        "--window-size=1280,720".into(),
+        format!("--window-size={BROWSER_WINDOW_WIDTH},{BROWSER_WINDOW_HEIGHT}"),
+        // Hides the offer to restore tabs after a stop that was not clean.
+        "--hide-crash-restore-bubble".into(),
         "--no-first-run".into(),
         "--no-default-browser-check".into(),
         // Force PulseAudio rather than letting Chrome pick ALSA and find nothing.
         "--alsa-output-device=pulse".into(),
-        "about:blank".into(),
-    ]
+    ];
+    if let Some(WindowPosition { x, y }) = window_position {
+        args.push(format!("--window-position={x},{y}"));
+    }
+    args.push("about:blank".into());
+    args
 }
 
 /// Camera and microphone permission for every origin the profile visits.
@@ -660,6 +684,8 @@ struct BrowserInner {
     targets: Mutex<HashMap<String, Arc<PageInner>>>,
     /// Raised when a tab finishes attaching or goes away.
     pages_changed: Notify,
+    /// Called once, when the connection to the browser ends.
+    disconnect_listeners: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl BrowserInner {
@@ -681,6 +707,7 @@ impl BrowserInner {
                 sessions: Mutex::new(HashMap::new()),
                 targets: Mutex::new(HashMap::new()),
                 pages_changed: Notify::new(),
+                disconnect_listeners: Mutex::new(Vec::new()),
             }
         })
     }
@@ -845,6 +872,19 @@ impl BrowserInner {
             page.mark_closed();
         }
         self.pages_changed.notify_waiters();
+        self.notify_disconnected();
+    }
+
+    /// Call the disconnect listeners once the connection has ended. Each one is taken out
+    /// as it is called, so it runs once.
+    fn notify_disconnected(&self) {
+        if self.connected.load(Ordering::SeqCst) {
+            return;
+        }
+        let listeners = std::mem::take(&mut *self.disconnect_listeners.lock());
+        for listener in listeners {
+            listener();
+        }
     }
 
     /// The tab with this target id once it has finished attaching, waiting up to `ms`.
@@ -1040,6 +1080,13 @@ impl BrowserHandle {
     pub fn ws_url(&self) -> &str {
         &self.inner.ws_url
     }
+
+    /// Call `listener` once when the connection to the browser ends: the browser quit, or
+    /// `close()` detached from it. A connection that has already ended calls it at once.
+    pub fn on_disconnected(&self, listener: Arc<dyn Fn() + Send + Sync>) {
+        self.inner.disconnect_listeners.lock().push(listener);
+        self.inner.notify_disconnected();
+    }
 }
 
 /// A listener for tabs a context opens, including ones a site opened for itself.
@@ -1135,6 +1182,21 @@ impl BrowserContextHandle {
             .wait_for_page(target_id, DEFAULT_TIMEOUT_MS)
             .await
             .map_err(|err| anyhow::anyhow!("browserContext.newPage: {err}"))
+    }
+
+    /// The context's open tabs that have finished attaching.
+    pub fn pages(&self) -> Vec<PageHandle> {
+        let Ok(browser) = self.browser() else {
+            return Vec::new();
+        };
+        let targets = browser.targets.lock();
+        targets
+            .values()
+            .filter(|page| page.context == *self && page.initialized.load(Ordering::SeqCst))
+            .map(|page| PageHandle {
+                inner: page.clone(),
+            })
+            .collect()
     }
 
     /// Call `listener` with every tab this context opens from now on.
@@ -2309,6 +2371,23 @@ impl PageHandle {
             .map_err(|err| anyhow::anyhow!("page.evaluate: {}", err.message()))
     }
 
+    /// Replace the document with `html`. The address stays as it was, so a tab on
+    /// `about:blank` keeps showing `about:blank`.
+    pub async fn set_content(&self, html: &str, timeout_ms: u64) -> anyhow::Result<()> {
+        let expression = format!(
+            "(html => {{ document.open(); document.write(html); document.close(); }})({})",
+            Value::from(html)
+        );
+        let write = self
+            .inner
+            .evaluate_in(&self.inner.target_id, World::Main, &expression);
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), write).await {
+            Err(_) => anyhow::bail!("page.setContent: Timeout {timeout_ms}ms exceeded."),
+            Ok(Err(err)) => anyhow::bail!("page.setContent: {}", err.message()),
+            Ok(Ok(_)) => Ok(()),
+        }
+    }
+
     /// A picture of the tab's viewport.
     pub async fn screenshot(&self, options: ScreenshotOptions) -> anyhow::Result<Vec<u8>> {
         let timeout_ms = options.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
@@ -3010,13 +3089,14 @@ struct BrowserStackState {
     browser: Option<BrowserHandle>,
     context: Option<BrowserContextHandle>,
     process: Option<Child>,
-    /// The meeting's own tab, kept so `front()` can answer before a second one exists.
+    /// The page `start()` returns, kept so `front()` can answer before any tab exists.
     main_page: Option<PageHandle>,
 }
 
 pub struct BrowserStack {
     state: Mutex<BrowserStackState>,
-    /// The tabs the agent browses in. The meeting's tab is never one of them.
+    /// The tabs the agent browses in. The page `start()` returns is one of them once it is
+    /// adopted.
     ///
     /// A tab the site opened itself is in here too — a link with `target="_blank"` makes a
     /// page the agent never asked for, and a list without it would report a click that did
@@ -3095,7 +3175,11 @@ impl BrowserStack {
         // the module comment: that launch path is what Meet answers 403 to.
         let mut command = tokio::process::Command::new(&executable_path);
         command
-            .args(build_browser_args(port, &user_data_dir.to_string_lossy()))
+            .args(build_browser_args(
+                port,
+                &user_data_dir.to_string_lossy(),
+                options.window_position,
+            ))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -3144,9 +3228,12 @@ impl BrowserStack {
         let page = context.new_page().await?;
         page.on_crash(Arc::new(|| log_error!("[Meeting] Browser page crashed")));
         self.state.lock().main_page = Some(page.clone());
+        // The blank tab the browser opened at launch, closed once this page exists so the
+        // window always has a tab.
+        close_other_pages(context.pages(), &page).await;
         // A page the site opens for itself — a link with `target="_blank"` — arrives here
-        // and nowhere else. Registered after the meeting's own page, so that one is never
-        // adopted as a tab the agent may navigate.
+        // and nowhere else. Registered after this page, so this page is a tab the agent may
+        // navigate only when the caller adopts it.
         let tabs = self.tabs.clone();
         context.on_page(Arc::new(move |opened| tabs.add(opened)));
 
@@ -3156,7 +3243,7 @@ impl BrowserStack {
     /// The tab the display is showing, which is the tab a screen share presents.
     ///
     /// Only the methods below bring a tab to the front. So the active tab is in front once
-    /// one exists, and before that the meeting tab is the only tab.
+    /// one exists, and before that the page `start()` returned is the only tab.
     pub fn front(&self) -> Option<PageHandle> {
         self.tabs
             .current()
@@ -3194,6 +3281,37 @@ impl BrowserStack {
         self.tabs.add(page.clone());
         page.bring_to_front().await?;
         Ok(page)
+    }
+
+    /// After `start()`, call `listener` when the browser disconnects while this stack still
+    /// holds it: a person closed its last window, or it crashed.
+    pub fn on_exit(self: &Arc<Self>, listener: Arc<dyn Fn() + Send + Sync>) {
+        let Some(attached) = self.state.lock().browser.clone() else {
+            return;
+        };
+        let stack = Arc::downgrade(self);
+        let watched = Arc::downgrade(&attached.inner);
+        attached.on_disconnected(Arc::new(move || {
+            let Some(stack) = stack.upgrade() else {
+                return;
+            };
+            // `stop()` takes the browser out before it closes it, so only a browser the
+            // stack still holds is reported.
+            let held = stack
+                .state
+                .lock()
+                .browser
+                .as_ref()
+                .is_some_and(|browser| Arc::as_ptr(&browser.inner) == watched.as_ptr());
+            if held {
+                listener();
+            }
+        }));
+    }
+
+    /// Make `page` a tab the agent works in, and the active one.
+    pub fn adopt_tab(&self, page: PageHandle) {
+        self.tabs.add(page);
     }
 
     /// The open tabs, oldest first. The active one is `front()`.
@@ -3353,6 +3471,15 @@ impl BrowserStack {
     }
 }
 
+/// Close every page except `keep`. A page that is already closed is skipped.
+async fn close_other_pages(pages: Vec<PageHandle>, keep: &PageHandle) {
+    for page in pages {
+        if page != *keep {
+            let _ = page.close().await;
+        }
+    }
+}
+
 /// First browser binary that actually exists on disk, best candidate first.
 pub async fn resolve_browser() -> anyhow::Result<String> {
     for candidate in BROWSER_CANDIDATES.iter() {
@@ -3448,6 +3575,8 @@ pub(crate) mod testing {
     pub(crate) struct FakeBrowser {
         pub browser: BrowserHandle,
         pub commands: Arc<Mutex<Vec<(Option<String>, String)>>>,
+        /// Methods answered with a protocol error instead of an empty result.
+        failing: Arc<Mutex<Vec<String>>>,
         next_target: AtomicU64,
     }
 
@@ -3457,6 +3586,8 @@ pub(crate) mod testing {
             let inner = BrowserInner::new(conn.clone(), "ws://fake".to_string());
             let commands: Arc<Mutex<Vec<(Option<String>, String)>>> = Arc::default();
             let recorded = commands.clone();
+            let failing: Arc<Mutex<Vec<String>>> = Arc::default();
+            let refused = failing.clone();
             let weak = Arc::downgrade(&inner);
             tokio::spawn(async move {
                 while let Some(message) = rx.recv().await {
@@ -3470,6 +3601,10 @@ pub(crate) mod testing {
                     let method = command["method"].as_str().unwrap_or_default().to_string();
                     let session = command["sessionId"].as_str().map(str::to_string);
                     recorded.lock().push((session, method.clone()));
+                    if refused.lock().contains(&method) {
+                        conn.resolve(id, Err(format!("{method} refused")));
+                        continue;
+                    }
                     conn.resolve(id, Ok(json!({})));
                     if method == "Target.closeTarget"
                         && let Some(browser) = weak.upgrade()
@@ -3489,6 +3624,7 @@ pub(crate) mod testing {
             FakeBrowser {
                 browser: BrowserHandle { inner },
                 commands,
+                failing,
                 next_target: AtomicU64::new(1),
             }
         }
@@ -3541,6 +3677,50 @@ pub(crate) mod testing {
             let session = page.inner.session_id.clone();
             self.browser.inner.dispatch(Some(&session), method, &params);
         }
+
+        /// A tab at `url` whose page runs scripts, so an evaluation in it gets an answer.
+        pub fn scripted_page(&self, url: &str) -> PageHandle {
+            let page = self.page(url);
+            let frame = page.target_id().to_string();
+            self.emit(
+                &page,
+                "Runtime.executionContextCreated",
+                json!({ "context": { "id": 1, "auxData": { "frameId": frame, "isDefault": true } } }),
+            );
+            page
+        }
+
+        /// A stack attached to this browser, as `start()` leaves one, with no process.
+        pub fn stack(&self) -> Arc<BrowserStack> {
+            stack_on(&self.browser)
+        }
+
+        /// Answer every later `method` command with a protocol error.
+        pub fn fail(&self, method: &str) {
+            self.failing.lock().push(method.to_string());
+        }
+
+        /// End the connection the way a browser that quits does.
+        pub fn quit(&self) {
+            self.browser.inner.conn.fail_all();
+            self.browser.inner.on_disconnected();
+        }
+
+        /// Whether the connection to this browser is still open.
+        pub fn is_connected(&self) -> bool {
+            self.browser.inner.connected.load(Ordering::SeqCst)
+        }
+    }
+
+    /// A stack attached to `browser` and its default context, with no process.
+    fn stack_on(browser: &BrowserHandle) -> Arc<BrowserStack> {
+        let stack = Arc::new(BrowserStack::new());
+        {
+            let mut state = stack.state.lock();
+            state.browser = Some(browser.clone());
+            state.context = browser.contexts().into_iter().next();
+        }
+        stack
     }
 
     /// A Chrome to run against: `PRISM_TEST_CHROME`, or one installed in the usual places.
@@ -3617,6 +3797,11 @@ pub(crate) mod testing {
             })
         }
 
+        /// A stack attached to this browser, as `start()` leaves one, with no process.
+        pub fn stack(&self) -> Arc<BrowserStack> {
+            stack_on(&self.browser)
+        }
+
         /// Load this markup into the tab.
         pub async fn show(&self, html: &str) {
             let url = format!("data:text/html;charset=utf-8,{}", urlencoding::encode(html));
@@ -3646,7 +3831,7 @@ mod tests {
 
     #[test]
     fn grants_camera_and_microphone_without_the_fake_ui_path() {
-        let args = build_browser_args(9222, "/tmp/profile");
+        let args = build_browser_args(9222, "/tmp/profile", None);
         assert!(args.contains(&"--auto-accept-camera-and-microphone-capture".to_string()));
         assert!(
             !args
@@ -3657,7 +3842,7 @@ mod tests {
 
     #[test]
     fn selects_the_whole_virtual_screen_so_no_picker_has_to_be_clicked() {
-        let args = build_browser_args(9222, "/tmp/profile");
+        let args = build_browser_args(9222, "/tmp/profile", None);
         assert!(args.contains(&"--auto-select-desktop-capture-source=Entire screen".to_string()));
         // The source name is English only because the browser's language is pinned.
         assert!(args.contains(&"--lang=en-US".to_string()));
@@ -3665,17 +3850,68 @@ mod tests {
 
     #[test]
     fn never_substitutes_a_fake_capture_device() {
-        let args = build_browser_args(9222, "/tmp/profile");
+        let args = build_browser_args(9222, "/tmp/profile", None);
         assert!(!args.iter().any(|arg| arg.contains("use-fake-device")));
     }
 
     #[test]
     fn carries_the_debugging_port_and_profile_it_was_given() {
-        let args = build_browser_args(41234, "/data/meeting-browser-profile");
+        let args = build_browser_args(41234, "/data/meeting-browser-profile", None);
         assert_eq!(args[0], "--remote-debugging-port=41234");
         assert_eq!(args[1], "--user-data-dir=/data/meeting-browser-profile");
         assert_eq!(args.last().map(String::as_str), Some("about:blank"));
         assert!(!args.iter().any(|arg| arg.starts_with("--headless")));
+    }
+
+    #[test]
+    fn places_the_window_where_it_was_asked_and_offers_no_restore() {
+        let args = build_browser_args(
+            9222,
+            "/tmp/profile",
+            Some(WindowPosition { x: 320, y: 180 }),
+        );
+        assert!(args.contains(&"--window-size=1280,720".to_string()));
+        assert!(args.contains(&"--window-position=320,180".to_string()));
+        assert!(args.contains(&"--hide-crash-restore-bubble".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("about:blank"));
+
+        let unplaced = build_browser_args(9222, "/tmp/profile", None);
+        assert!(
+            !unplaced
+                .iter()
+                .any(|arg| arg.starts_with("--window-position"))
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_a_browser_that_left_on_its_own() {
+        let fake = FakeBrowser::new();
+        let stack = fake.stack();
+        let exits = Arc::new(AtomicU64::new(0));
+        let counted = exits.clone();
+        stack.on_exit(Arc::new(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        fake.quit();
+
+        assert_eq!(exits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn reports_nothing_when_stop_closed_the_browser() {
+        let fake = FakeBrowser::new();
+        let stack = fake.stack();
+        let exits = Arc::new(AtomicU64::new(0));
+        let counted = exits.clone();
+        stack.on_exit(Arc::new(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        stack.stop().await;
+
+        assert!(!fake.is_connected());
+        assert_eq!(exits.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -3903,6 +4139,38 @@ mod tests {
     mod live {
         use super::super::testing::Live;
         use super::*;
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn closes_the_launch_tab_and_keeps_the_page_the_stack_opened() {
+            let Some(live) = Live::start().await else {
+                return;
+            };
+            let context = live.browser.contexts()[0].clone();
+            let closed = context.new_page().await.unwrap();
+            closed.close().await.unwrap();
+            let mut pages = context.pages();
+            assert_eq!(pages.len(), 2, "the launch tab and the stack's page");
+            pages.insert(0, closed);
+
+            close_other_pages(pages, &live.page).await;
+
+            assert_eq!(context.pages(), vec![live.page.clone()]);
+            live.stop().await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn writes_content_into_a_tab_and_keeps_its_address() {
+            let Some(live) = Live::start().await else {
+                return;
+            };
+            live.page
+                .set_content("<title>Written</title><p>Hello</p>", 10_000)
+                .await
+                .unwrap();
+            assert_eq!(live.page.title().await.unwrap(), "Written");
+            assert_eq!(live.page.url(), "about:blank");
+            live.stop().await;
+        }
 
         #[tokio::test(flavor = "multi_thread")]
         async fn finds_controls_by_role_name_label_text_and_placeholder() {
