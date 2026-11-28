@@ -729,6 +729,55 @@ pub struct ConversationMessageChangeset {
     pub created_at: Option<DbDateTime>,
 }
 
+// ---------------------------------------------------------------- ChannelMessage
+
+/// A person's message in a conversation whose history a channel keeps, as the last
+/// read of that history returned it.
+#[derive(Debug, Clone, PartialEq, Queryable, Selectable, Identifiable)]
+#[diesel(table_name = channel_messages, check_for_backend(Sqlite))]
+pub struct ChannelMessage {
+    pub id: String,
+    pub thread_id: String,
+    /// The message's id in the channel.
+    pub external_message_id: String,
+    pub sender_external_id: Option<String>,
+    pub sender_name: Option<String>,
+    pub content: String,
+    /// When the person sent it, by the channel's clock.
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// One `ChannelMessage` row to insert.
+#[derive(Debug, Clone, PartialEq, Insertable)]
+#[diesel(table_name = channel_messages, check_for_backend(Sqlite), treat_none_as_default_value = false)]
+pub struct NewChannelMessage {
+    pub id: String,
+    pub thread_id: String,
+    pub external_message_id: String,
+    pub sender_external_id: Option<String>,
+    pub sender_name: Option<String>,
+    pub content: String,
+    pub created_at: DbDateTime,
+    pub updated_at: DbDateTime,
+}
+
+// ---------------------------------------------------------------- MessageSearchEntry
+
+/// One message the conversation search can find. Boot-time triggers write these rows
+/// (`lib::message_search_index`); the runtime only reads them.
+#[derive(Debug, Clone, PartialEq, Queryable, Selectable, Identifiable)]
+#[diesel(table_name = message_search_entries, check_for_backend(Sqlite))]
+pub struct MessageSearchEntry {
+    pub id: i64,
+    pub message_id: Option<String>,
+    pub channel_message_id: Option<String>,
+    pub thread_id: String,
+    pub created_at_ms: i64,
+    pub person_message: bool,
+    pub automated: bool,
+}
+
 // ---------------------------------------------------------------- MessageAttachment
 
 /// Shared files uploaded by users (web drag-and-drop or Slack attachments).

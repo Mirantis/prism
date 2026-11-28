@@ -44,6 +44,8 @@ pub fn test_db() -> TestDb {
     let db = Arc::new(Database::open(Some(&url)).expect("open the test database"));
     db.run_sync(super::migrate)
         .expect("migrate the test database");
+    db.run_sync(crate::lib::message_search_index::ensure)
+        .expect("index the test database");
 
     crate::lib::sqlite_bootstrap::close_sqlite_vec();
     let previous = super::set_database(Some(Arc::clone(&db)));

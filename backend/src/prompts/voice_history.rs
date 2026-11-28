@@ -7,7 +7,7 @@
 use crate::db::models::MessageRole;
 use crate::prompts::context_builder::{ConversationMessage, break_tag};
 use crate::support::js::{len16, slice16, trim as js_trim};
-use crate::tools::conversation_history::COMPACTED_HISTORY_TOOL_NAME;
+use crate::tools::conversation_search::{CONVERSATION_SEARCH_TOOL_NAME, CURRENT_CONVERSATION};
 
 const TAG: &str = "conversation-so-far";
 
@@ -24,7 +24,7 @@ pub const VOICE_HISTORY_SUMMARY_CHARS: usize = 8_000;
 pub struct VoiceHistoryInput {
     pub compaction_summary: Option<String>,
     pub messages: Vec<ConversationMessage>,
-    /// Whether `read_compacted_history` can read this thread's compacted messages.
+    /// Whether `search_conversations` can read this thread's compacted messages.
     pub history_readable: bool,
 }
 
@@ -61,7 +61,9 @@ pub fn voice_history_content(input: &VoiceHistoryInput) -> Option<String> {
     }
 
     let lookup = if summary.is_some() && input.history_readable {
-        format!(" {COMPACTED_HISTORY_TOOL_NAME} reads the summarized messages word for word.")
+        format!(
+            " {CONVERSATION_SEARCH_TOOL_NAME} with conversation_id \"{CURRENT_CONVERSATION}\" reads the summarized messages word for word."
+        )
     } else {
         String::new()
     };
@@ -221,17 +223,17 @@ mod tests {
         assert!(
             history(vec![message(MessageRole::User, "hi")], summary, true)
                 .unwrap()
-                .contains("read_compacted_history")
+                .contains("search_conversations")
         );
         assert!(
             !history(vec![message(MessageRole::User, "hi")], summary, false)
                 .unwrap()
-                .contains("read_compacted_history")
+                .contains("search_conversations")
         );
         assert!(
             !history(vec![message(MessageRole::User, "hi")], None, true)
                 .unwrap()
-                .contains("read_compacted_history")
+                .contains("search_conversations")
         );
     }
 

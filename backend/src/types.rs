@@ -56,7 +56,7 @@ pub struct AgentContext {
     pub is_bootstrap_phase: bool,
     pub conversation_summary: Option<String>,
     /// Whether the messages the summary replaced are stored rows that
-    /// `read_compacted_history` reads. A thread read live from a channel keeps them
+    /// `search_conversations` reads. A thread read live from a channel keeps them
     /// in the channel instead.
     pub compacted_history_readable: bool,
     pub recent_messages: Vec<ConversationMessage>,

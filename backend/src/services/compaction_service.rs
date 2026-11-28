@@ -1086,6 +1086,7 @@ impl CompactionService {
                     origin_channel: None,
                     origin_channel_id: None,
                     posting_ceiling: None,
+                    heartbeat_triggered: false,
                     workspace_root: workspace_root.clone(),
                     task_invoker: never_invoke(),
                     register_attachment_injection: None,

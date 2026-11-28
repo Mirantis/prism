@@ -4,7 +4,8 @@
 //! name through `sql_name`.
 //!
 //! `memory_entry_vec` is the sqlite-vec index `lib::sqlite_bootstrap` builds at
-//! runtime; it has no model and no table here.
+//! runtime, and `message_search` the full-text index `lib::message_search_index`
+//! builds; neither has a model or a table here.
 
 diesel::table! {
     use diesel::sql_types::*;
@@ -163,6 +164,48 @@ diesel::table! {
         internal_step -> Bool,
         #[sql_name = "createdAt"]
         created_at -> PrismaDateTime,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+    use crate::db::sql_types::*;
+
+    channel_messages (id) {
+        id -> Text,
+        #[sql_name = "threadId"]
+        thread_id -> Text,
+        #[sql_name = "externalMessageId"]
+        external_message_id -> Text,
+        #[sql_name = "senderExternalId"]
+        sender_external_id -> Nullable<Text>,
+        #[sql_name = "senderName"]
+        sender_name -> Nullable<Text>,
+        content -> Text,
+        #[sql_name = "createdAt"]
+        created_at -> PrismaDateTime,
+        #[sql_name = "updatedAt"]
+        updated_at -> PrismaDateTime,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+    use crate::db::sql_types::*;
+
+    message_search_entries (id) {
+        id -> BigInt,
+        #[sql_name = "messageId"]
+        message_id -> Nullable<Text>,
+        #[sql_name = "channelMessageId"]
+        channel_message_id -> Nullable<Text>,
+        #[sql_name = "threadId"]
+        thread_id -> Text,
+        #[sql_name = "createdAtMs"]
+        created_at_ms -> BigInt,
+        #[sql_name = "personMessage"]
+        person_message -> Bool,
+        automated -> Bool,
     }
 }
 
@@ -663,6 +706,8 @@ diesel::joinable!(agent_workspace_revisions -> agent_workspaces (agent_id));
 diesel::joinable!(conversation_threads -> agent_workspaces (agent_id));
 diesel::joinable!(conversation_messages -> conversation_threads (thread_id));
 diesel::joinable!(message_attachments -> conversation_messages (message_id));
+diesel::joinable!(channel_messages -> conversation_threads (thread_id));
+diesel::joinable!(message_search_entries -> conversation_messages (message_id));
 diesel::joinable!(conversation_participants -> conversation_threads (thread_id));
 diesel::joinable!(cron_tasks -> agent_workspaces (agent_id));
 diesel::joinable!(cron_tasks -> conversation_threads (thread_id));
@@ -689,6 +734,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     agent_workspace_revisions,
     conversation_threads,
     conversation_messages,
+    channel_messages,
+    message_search_entries,
     message_attachments,
     conversation_participants,
     cron_tasks,

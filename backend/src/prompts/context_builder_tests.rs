@@ -250,7 +250,7 @@ fn adds_the_conversation_summary_as_one_user_message_with_no_reply_after_it() {
 }
 
 #[test]
-fn names_the_compacted_history_tool_only_where_it_can_read_the_replaced_messages() {
+fn names_the_conversation_search_tool_only_where_it_can_read_the_replaced_messages() {
     let mut stored = test_context(Vec::new());
     stored.conversation_summary = Some("S.".into());
     stored.compacted_history_readable = true;
@@ -259,8 +259,8 @@ fn names_the_compacted_history_tool_only_where_it_can_read_the_replaced_messages
 
     let stored_text = text_of(&build_conversation_history(&stored, &[], None, false).messages[0]);
     let live_text = text_of(&build_conversation_history(&live, &[], None, false).messages[0]);
-    assert!(stored_text.contains("read_compacted_history"));
-    assert!(!live_text.contains("read_compacted_history"));
+    assert!(stored_text.contains("search_conversations"));
+    assert!(!live_text.contains("search_conversations"));
 }
 
 #[test]

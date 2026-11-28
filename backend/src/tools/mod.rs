@@ -4,7 +4,7 @@ pub mod ask_questions;
 pub mod attachments;
 pub mod coding_agent_sign_in;
 pub mod computer;
-pub mod conversation_history;
+pub mod conversation_search;
 pub mod cron;
 pub mod goals;
 pub mod meeting;

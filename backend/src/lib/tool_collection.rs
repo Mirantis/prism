@@ -12,7 +12,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::ai::{ModelMessage, ToolSet};
 use crate::config::CONFIG;
-use crate::db::models::ThreadSource;
 use crate::lib::coding_agents::availability::ensure_coding_agents_detected;
 use crate::lib::execution_environments::get_execution_environment::get_execution_environment;
 use crate::lib::llm_providers::llm_provider::{
@@ -29,7 +28,7 @@ use crate::services::channel_adapter_interface::ChannelName;
 use crate::services::coding_agent_sign_in::coding_agent_account::installed_clis;
 use crate::services::computer::computer_access::ComputerUse;
 use crate::services::computer::supported::has_computer_for_mode;
-use crate::services::conversation_service::CONVERSATION_SERVICE;
+use crate::services::conversation_search_service::{CONVERSATION_SEARCH_SERVICE, SearchScope};
 use crate::services::delivery_target_service::PostingCeiling;
 use crate::services::outbound_message_service::SEND_MESSAGE_TOOL_NAME;
 use crate::services::plugin_mcp_service::PLUGIN_MCP_SERVICE;
@@ -39,7 +38,9 @@ use crate::tools::ask_questions::get_ask_questions_tools;
 use crate::tools::attachments::get_attachment_tools;
 use crate::tools::coding_agent_sign_in::get_coding_agent_sign_in_tools;
 use crate::tools::computer::get_computer_tools;
-use crate::tools::conversation_history::get_conversation_history_tools;
+use crate::tools::conversation_search::{
+    ConversationSearchToolsInput, get_conversation_search_tools,
+};
 use crate::tools::cron::get_cron_tools;
 use crate::tools::goals::get_goal_tools;
 use crate::tools::meeting::{
@@ -73,6 +74,10 @@ pub struct CollectToolsInput {
     pub origin_channel: Option<ChannelName>,
     pub origin_channel_id: Option<String>,
     pub posting_ceiling: Option<PostingCeiling>,
+    /// A heartbeat run that channel messages triggered. Any member of the channel
+    /// writes those messages, and they are in the run's prompt, so the run searches
+    /// only its own conversation (see `conversation_search_scope`).
+    pub heartbeat_triggered: bool,
     pub workspace_root: Option<String>,
     /// Runs a subagent Task; injected so this module never imports `invoke.rs`.
     pub task_invoker: Invoker,
@@ -140,7 +145,7 @@ pub struct CollectedTools {
 ///    computer), cron, goals, coding-agent sign-in, ask questions (chat only),
 ///    agent config, shell, share file, send message (left out when the posting
 ///    ceiling reaches nowhere: neither web chat nor any target), attachments, web fetch, conversation
-///    history (when the thread is stored in the database), skills, meeting (when
+///    search (scoped by `conversation_search_scope`), skills, meeting (when
 ///    available; `in_meeting_session` is `mode == "meeting"`).
 /// 3. Fetches the platform MCP tools (`CONFIG.nexus_mcp_url`) and the plugin tools,
 ///    and merges each after the built-ins without overriding a taken name, logging
@@ -269,14 +274,22 @@ pub async fn collect_tools(input: CollectToolsInput) -> anyhow::Result<Collected
         input.register_attachment_injection.clone(),
     ));
     built_in_tools.extend(get_web_fetch_tools(&input.user_id, &input.agent_id));
-    // Every run bound to a stored thread gets it, so the thread keeps one tool list
-    // across its modes. A thread read live from a channel keeps its compacted
-    // messages there.
-    if let Some(thread_id) = thread_id
-        && CONVERSATION_SERVICE.get_thread_source(thread_id).await? == Some(ThreadSource::Database)
-    {
-        built_in_tools.extend(get_conversation_history_tools(thread_id, workspace_root));
-    }
+    built_in_tools.extend(get_conversation_search_tools(
+        ConversationSearchToolsInput {
+            agent_id: input.agent_id.clone(),
+            user_id: input.user_id.clone(),
+            thread_id: thread_id.map(str::to_string),
+            workspace_root: workspace_root.map(str::to_string),
+            scope: conversation_search_scope(
+                mode,
+                input.heartbeat_triggered,
+                thread_id,
+                origin_channel,
+                origin_channel_id,
+            )
+            .await?,
+        },
+    ));
     // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md body on
     // demand. The workspace root merges the repo's skills with the global ones.
     // Empty (and omitted) when no skills are available.
@@ -517,6 +530,40 @@ fn omit(tools: ToolSet, names: &HashSet<&str>) -> ToolSet {
         .collect()
 }
 
+/// The conversations a run may search: the audience of the run sees what it finds.
+/// A voice meeting, where anyone with the link can speak, a webhook run, whose
+/// payload anyone can write, and a heartbeat run that channel messages triggered,
+/// whose prompt holds what any member of the channel wrote, reach only their own
+/// conversation (a heartbeat has none, so the tool says so). A timer heartbeat with
+/// no trigger messages follows only the owner's checks. A run in a channel's
+/// conversation, or one a channel started, reaches that channel's conversations and
+/// its own. A run on the owner's own surfaces reaches every conversation.
+async fn conversation_search_scope(
+    mode: &str,
+    heartbeat_triggered: bool,
+    thread_id: Option<&str>,
+    origin_channel: ChannelName,
+    origin_channel_id: Option<&str>,
+) -> anyhow::Result<SearchScope> {
+    if mode == "meeting" || mode == "webhook" || (mode == "heartbeat" && heartbeat_triggered) {
+        return Ok(SearchScope::Current);
+    }
+    let held_in = match thread_id {
+        Some(thread_id) => {
+            CONVERSATION_SEARCH_SERVICE
+                .conversation_channel(thread_id)
+                .await?
+        }
+        None => None,
+    };
+    let origin = origin_channel_id
+        .filter(|_| origin_channel != ChannelName::Websocket)
+        .map(str::to_string);
+    Ok(held_in
+        .or(origin)
+        .map_or(SearchScope::All, SearchScope::Channel))
+}
+
 /// Filter the assembled tool set by invocation mode.
 ///
 /// Named for built-ins because that is what it omits, but it runs over every tool —
@@ -648,6 +695,37 @@ pub fn filter_tools_by_mode(tools: ToolSet, mode: &str) -> ToolSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_meeting_a_webhook_and_a_triggered_heartbeat_search_only_their_own_conversation() {
+        let scope = |mode: &'static str, triggered: bool, channel: ChannelName| async move {
+            conversation_search_scope(mode, triggered, None, channel, Some("C1"))
+                .await
+                .unwrap()
+        };
+        for mode in ["meeting", "webhook"] {
+            assert_eq!(
+                scope(mode, false, ChannelName::Slack).await,
+                SearchScope::Current
+            );
+        }
+        assert_eq!(
+            scope("heartbeat", true, ChannelName::Websocket).await,
+            SearchScope::Current
+        );
+        assert_eq!(
+            scope("heartbeat", false, ChannelName::Websocket).await,
+            SearchScope::All
+        );
+        assert_eq!(
+            scope("chat", false, ChannelName::Slack).await,
+            SearchScope::Channel("C1".into())
+        );
+        assert_eq!(
+            scope("chat", false, ChannelName::Websocket).await,
+            SearchScope::All
+        );
+    }
     use crate::ai::Tool;
     use crate::lib::llm_providers::llm_provider::{
         ANTHROPIC_CACHE_POINT, provider_options, provider_options_json,

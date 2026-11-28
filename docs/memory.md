@@ -70,7 +70,9 @@ You don't manage memory directly — the agent does, through three
 
 In practice this is invisible: you tell the agent something, and it decides
 whether to fold it into curated memory, drop it into searchable memory, or both.
-Later, in an unrelated conversation, it can search and recall it.
+Later, in an unrelated conversation, it can search and recall it. What it did not
+record, it can still find in the conversation where it was said, with its
+[conversation search](tools.md#conversation-search).
 
 ## Telling the agent to remember
 

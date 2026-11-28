@@ -13,6 +13,7 @@ pub mod computer;
 pub mod context_service;
 pub mod context_usage_service;
 pub mod conversation_engine_service;
+pub mod conversation_search_service;
 pub mod conversation_service;
 pub mod conversation_thread_activity_service;
 pub mod cron_schedule;

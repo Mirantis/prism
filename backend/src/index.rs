@@ -130,6 +130,10 @@ pub fn main() {
             std::process::exit(1);
         }
     }
+    if let Err(err) = crate::db::run_sync(crate::lib::message_search_index::ensure) {
+        eprintln!("[prism-server] fatal startup error {err:#}");
+        std::process::exit(1);
+    }
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()

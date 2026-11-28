@@ -196,7 +196,8 @@ to clear.
   Diesel's query builder or a service, not through hand-written SQL strings. Raw
   SQL is for schema DDL, migrations, database bootstrap (`lib/sqlite_bootstrap.rs`),
   and the narrow primitives the query builder cannot express — the `sqlite-vec`
-  vector search in `services/memory_store.rs` — and the read-only `runtime_state`
+  vector search in `services/memory_store.rs`, and the FTS5 message index and its
+  one search in `lib/message_search_index.rs` — and the read-only `runtime_state`
   read of the subscription switch in `lib/coding_agents/terminal.rs`, which the
   desktop terminal's wrapper (`scripts/coding_agent_exec.rs`) runs as a separate
   process that does not open the database pool. Each such site is a named exception.
@@ -847,8 +848,11 @@ The tree under `backend/src/` and each file's header comment describe the module
 - An outbound read (`lib/public_url.rs`) connects only to public internet
   addresses, and every DNS answer is checked.
 - `lib/tool_output_store.rs` keeps no database row; the file's mtime is its
-  whole lifecycle. Compaction keeps those files, since `read_compacted_history`
+  whole lifecycle. Compaction keeps those files, since `search_conversations`
   returns the notices that name them.
+- `lib/message_search_index.rs` owns the full-text index of the messages. It
+  creates the index's triggers at every boot, because a migration that rebuilds a
+  table drops that table's triggers, so a migration needs nothing for the index.
 
 ## Startup Sequence
 

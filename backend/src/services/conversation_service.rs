@@ -14,7 +14,7 @@ use diesel::sqlite::{Sqlite, SqliteConnection};
 use indexmap::IndexMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::config::{CONFIG, ThreadMode};
 use crate::db::models::{
@@ -26,10 +26,11 @@ use crate::db::schema::conversation_threads::{self, dsl as t};
 use crate::db::sql_types::DbDateTime;
 use crate::lib::agent_message_kind::agent_message_kind;
 use crate::lib::context_window::{ContextUsageSnapshot, build_context_snapshot};
+use crate::lib::log_redaction::err_json;
 use crate::lib::telemetry::{agent_props, track_event};
-use crate::log_info;
 use crate::protocol::chat_protocol::AgentMessageKind;
 use crate::services::attachment_service::{ATTACHMENT_SERVICE, HasMessageId, WithAttachments};
+use crate::services::conversation_search_service::CONVERSATION_SEARCH_SERVICE;
 use crate::services::providers::database_thread_provider::DatabaseThreadProvider;
 use crate::services::runtime_state_service::{RUNTIME_STATE_SERVICE, SINGLE_THREAD};
 use crate::services::thread_provider_interface::{
@@ -38,39 +39,7 @@ use crate::services::thread_provider_interface::{
 use crate::services::web_thread::web_thread;
 use crate::support::js;
 use crate::utils::thread_title::derive_thread_title;
-
-/// A message a compaction summary replaced, and its index among the thread's
-/// compacted messages, oldest first.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompactedMessage {
-    pub id: String,
-    pub role: MessageRole,
-    pub content: String,
-    pub tool_calls: Option<Value>,
-    pub internal_step: bool,
-    #[serde(with = "crate::support::serde_iso")]
-    pub created_at: DateTime<Utc>,
-    pub position: i64,
-}
-
-/// One page of compacted messages, and whether more follow.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompactedPage {
-    pub messages: Vec<CompactedMessage>,
-    pub more: bool,
-}
-
-/// Which compacted messages `list_compacted_messages` reads.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompactedListOptions {
-    /// Keep the messages whose text or tool calls hold it, ignoring case.
-    pub query: Option<String>,
-    pub offset: i64,
-    pub limit: i64,
-}
-
-const COMPACTED_SEARCH_BATCH: i64 = 200;
+use crate::{log_info, log_warn};
 
 // ============================================================================
 // Types
@@ -381,29 +350,6 @@ fn props<const N: usize>(entries: [(&str, String); N]) -> IndexMap<String, Strin
         .into_iter()
         .map(|(key, value)| (key.to_string(), value))
         .collect()
-}
-
-/// The order that defines a compacted message's position, and the fields a read returns.
-type CompactedRow = (
-    String,
-    MessageRole,
-    String,
-    Option<Value>,
-    bool,
-    DateTime<Utc>,
-);
-
-fn compacted(row: CompactedRow, position: i64) -> CompactedMessage {
-    let (id, role, content, tool_calls, internal_step, created_at) = row;
-    CompactedMessage {
-        id,
-        role,
-        content,
-        tool_calls,
-        internal_step,
-        created_at,
-        position,
-    }
 }
 
 /// The row of a message `input` adds to `thread_id`.
@@ -1499,88 +1445,23 @@ impl ConversationService {
             .provider_for(Some(thread_source))
             .get_messages(thread_id, None)
             .await?;
+        // A channel keeps this history, so the search keeps a copy of its person messages.
+        if thread_source != ThreadSource::Database
+            && let Err(error) = CONVERSATION_SEARCH_SERVICE
+                .record_channel_messages(thread_id, &messages)
+                .await
+        {
+            log_warn!(
+                json!({ "threadId": thread_id, "err": err_json(&error) }),
+                "[ConversationService] could not keep the channel's messages for search"
+            );
+        }
 
         Ok(StoredThreadContext {
             compaction_summary: thread.and_then(|(summary, _)| summary),
             thread_source,
             messages,
         })
-    }
-
-    /// One page of the messages a compaction summary replaced, oldest first, and
-    /// whether more follow. `query` keeps the messages whose text or tool calls hold
-    /// it, ignoring case. Internal steps are included, since they hold tool calls.
-    /// `offset` counts the messages the page skips: without a query it is the first
-    /// message's position.
-    ///
-    /// The search reads the thread's compacted rows in batches and matches in code:
-    /// the tool calls are a JSON array, which no SQL filter on SQLite searches. Each
-    /// page reads from the thread's first compacted row again, which a long
-    /// conversation pays for with a full read per page.
-    pub async fn list_compacted_messages(
-        &self,
-        thread_id: &str,
-        options: CompactedListOptions,
-    ) -> anyhow::Result<CompactedPage> {
-        let want = options.offset + options.limit + 1;
-
-        let found: Vec<CompactedMessage> = match options.query.as_deref().filter(|q| !q.is_empty())
-        {
-            None => {
-                let rows =
-                    read_compacted(thread_id, None, options.offset, options.limit + 1).await?;
-                rows.into_iter()
-                    .enumerate()
-                    .map(|(i, row)| compacted(row, options.offset + i as i64))
-                    .collect()
-            }
-            Some(query) => {
-                let needle = query.to_lowercase();
-                let mut matches: Vec<CompactedMessage> = Vec::new();
-                let mut after: Option<(DateTime<Utc>, String)> = None;
-                let mut position = 0i64;
-                while (matches.len() as i64) < want {
-                    let batch =
-                        read_compacted(thread_id, after.clone(), 0, COMPACTED_SEARCH_BATCH).await?;
-                    let batch_len = batch.len() as i64;
-                    let last = batch.last().map(|row| (row.5, row.0.clone()));
-                    for row in batch {
-                        let mut text = vec![row.2.clone()];
-                        if let Some(tool_calls) = &row.3 {
-                            text.extend(strings_in(tool_calls));
-                        }
-                        if text.join("\n").to_lowercase().contains(&needle) {
-                            matches.push(compacted(row, position));
-                        }
-                        position += 1;
-                    }
-                    if batch_len < COMPACTED_SEARCH_BATCH {
-                        break;
-                    }
-                    after = last;
-                }
-                matches
-                    .into_iter()
-                    .skip(usize::try_from(options.offset).unwrap_or(0))
-                    .collect()
-            }
-        };
-        let limit = usize::try_from(options.limit).unwrap_or(0);
-        let more = found.len() > limit;
-        Ok(CompactedPage {
-            messages: found.into_iter().take(limit).collect(),
-            more,
-        })
-    }
-
-    /// The compacted message at `position`, or `None` past the last one.
-    pub async fn get_compacted_message(
-        &self,
-        thread_id: &str,
-        position: i64,
-    ) -> anyhow::Result<Option<CompactedMessage>> {
-        let rows = read_compacted(thread_id, None, position, 1).await?;
-        Ok(rows.into_iter().next().map(|row| compacted(row, position)))
     }
 
     /// The threads idle compaction may have to finish after a restart: large, and used since `since`.
@@ -1658,64 +1539,6 @@ async fn insert_thread(row: NewConversationThread) -> anyhow::Result<Conversatio
             .get_result(conn)?)
     })
     .await
-}
-
-/// Up to `take` compacted rows of a thread in position order, after skipping `skip`,
-/// starting after the row `after` names when given.
-async fn read_compacted(
-    thread_id: &str,
-    after: Option<(DateTime<Utc>, String)>,
-    skip: i64,
-    take: i64,
-) -> anyhow::Result<Vec<CompactedRow>> {
-    let id = thread_id.to_string();
-    crate::db::run(move |conn| {
-        let mut query = m::conversation_messages
-            .filter(m::thread_id.eq(id))
-            .filter(m::is_compacted.eq(true))
-            .into_boxed();
-        if let Some((created_at, after_id)) = after {
-            query = query.filter(
-                m::created_at.gt(DbDateTime(created_at)).or(m::created_at
-                    .eq(DbDateTime(created_at))
-                    .and(m::id.gt(after_id))),
-            );
-        }
-        Ok(query
-            .order((m::created_at.asc(), m::id.asc()))
-            .offset(skip)
-            .limit(take)
-            .select((
-                m::id,
-                m::role,
-                m::content,
-                m::tool_calls,
-                m::internal_step,
-                m::created_at,
-            ))
-            .load::<CompactedRow>(conn)?)
-    })
-    .await
-}
-
-/// Every key and value a stored tool call holds, as written, not as `JSON.stringify` escapes them.
-fn strings_in(value: &Value) -> Vec<String> {
-    match value {
-        Value::String(text) => vec![text.clone()],
-        Value::Number(number) => vec![
-            number
-                .as_f64()
-                .map(crate::support::js::number_text)
-                .unwrap_or_else(|| number.to_string()),
-        ],
-        Value::Bool(flag) => vec![flag.to_string()],
-        Value::Array(items) => items.iter().flat_map(strings_in).collect(),
-        Value::Object(entries) => entries
-            .iter()
-            .flat_map(|(key, item)| std::iter::once(key.clone()).chain(strings_in(item)))
-            .collect(),
-        Value::Null => Vec::new(),
-    }
 }
 
 pub static CONVERSATION_SERVICE: LazyLock<ConversationService> =
