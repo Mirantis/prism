@@ -98,12 +98,34 @@ Then('a question card waits with {string}', async ({ page }, title: string) => {
   await expect(card(page).getByRole('heading', { name: title, exact: true })).toBeVisible();
 });
 
-Then('the answer button is disabled', async ({ page }) => {
-  await expect(card(page).getByRole('button', { name: 'Send answers' })).toBeDisabled();
+Then('the Next button is disabled', async ({ page }) => {
+  await expect(card(page).getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
+});
+
+When('I go to the next question', async ({ page }) => {
+  await card(page).getByRole('button', { name: 'Next', exact: true }).click();
 });
 
 When('I choose {string} on the question card', async ({ page }, label: string) => {
   await card(page).getByTestId('question-card-option').filter({ hasText: label }).click();
+});
+
+When('I skip the question', async ({ page }) => {
+  await card(page).getByRole('button', { name: 'Skip', exact: true }).click();
+});
+
+When('I go back to the previous question', async ({ page }) => {
+  await card(page).getByRole('button', { name: 'Back', exact: true }).click();
+});
+
+When('I press {string} on the question card', async ({ page }, key: string) => {
+  // A step change leaves focus on the question text, so the key arrives at the card.
+  await expect(card(page).locator(':focus')).toHaveCount(1);
+  await page.keyboard.press(key);
+});
+
+When('I write my own response {string}', async ({ page }, text: string) => {
+  await card(page).getByPlaceholder('Or write your own response').fill(text);
 });
 
 Then('the question card status reads {string}', async ({ page }, status: string) => {
